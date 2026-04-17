@@ -49,6 +49,29 @@ export type TestResult = {
 
 export type Status = { home: string; version: string; dev: boolean };
 
+export type SessionStatus = "provisioning" | "running" | "exited" | "failed_to_start";
+export type AgentKind = "generic-cmd" | "claude-code";
+export type Session = {
+  id: string;
+  machine: string;
+  workdir: string;
+  agent_kind: AgentKind;
+  cmd: string;
+  tmux_session: string;
+  status: SessionStatus;
+  created_at: string;
+  started_at?: string;
+  exited_at?: string;
+  exit_code?: number;
+  remote_events_offset?: number;
+  remote_raw_offset?: number;
+};
+export type SessionEventRecord = {
+  ts: string;
+  kind: string;
+  [k: string]: unknown;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -105,4 +128,26 @@ export const api = {
     }),
   deleteSecret: (name: string) =>
     request<{ ok: true }>(`/api/secrets/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  listSessions: () => request<Session[]>("/api/sessions"),
+  getSession: (id: string) => request<Session>(`/api/sessions/${encodeURIComponent(id)}`),
+  createSession: (body: { machine: string; workdir: string; agent_kind: AgentKind; cmd: string }) =>
+    request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
+  stopSession: (id: string) =>
+    request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
+  deleteSession: (id: string) =>
+    request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getSessionEvents: (id: string, offset = 0) =>
+    request<{ records: SessionEventRecord[]; nextOffset: number }>(
+      `/api/sessions/${encodeURIComponent(id)}/events?offset=${offset}`,
+    ),
+  getSessionRaw: (id: string, offset = 0, max = 65536) =>
+    request<{ data: string; nextOffset: number; size: number }>(
+      `/api/sessions/${encodeURIComponent(id)}/raw?offset=${offset}&max=${max}`,
+    ),
 };
+
+export function sessionWatchUrl(id: string): string {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/watch`;
+}

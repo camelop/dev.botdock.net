@@ -7,7 +7,10 @@ import { Router, json, error, HttpError } from "./router.ts";
 import { mountKeys } from "./handlers/keys.ts";
 import { mountMachines } from "./handlers/machines.ts";
 import { mountSecrets } from "./handlers/secrets.ts";
+import { mountSessions } from "./handlers/sessions.ts";
 import { embeddedFiles } from "./embedded.ts";
+import { SessionPoller } from "../domain/session-poller.ts";
+import { readEvents, readRawRange, sessionExists } from "../domain/sessions.ts";
 
 type ServerConfig = {
   server?: { bind?: string; port?: number };
@@ -34,11 +37,40 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   const port = cfg.server?.port ?? 4717;
   const token = cfg.auth?.bearer_token?.trim() || undefined;
 
+  const poller = new SessionPoller(dir);
+  poller.resumeAll();
+
   const router = new Router();
   router.get("/api/status", () => json({ home: dir.root, version: "0.0.1", dev: !!opts.dev }));
   mountKeys(router, dir);
   mountMachines(router, dir);
   mountSecrets(router, dir);
+  mountSessions(router, dir, poller);
+
+  // Per-session WebSocket subscriptions: { sessionId → set of ws }
+  type WsData = { sessionId: string; evOffset: number; rawOffset: number };
+  const subs = new Map<string, Set<Bun.ServerWebSocket<WsData>>>();
+
+  poller.on("update", (sessionId: string) => {
+    const set = subs.get(sessionId);
+    if (!set || set.size === 0) return;
+    for (const ws of set) pushDelta(ws);
+  });
+
+  function pushDelta(ws: Bun.ServerWebSocket<WsData>): void {
+    const { sessionId } = ws.data;
+    if (!sessionExists(dir, sessionId)) return;
+    const ev = readEvents(dir, sessionId, ws.data.evOffset);
+    if (ev.records.length > 0) {
+      ws.send(JSON.stringify({ type: "events", records: ev.records, nextOffset: ev.nextOffset }));
+      ws.data.evOffset = ev.nextOffset;
+    }
+    const raw = readRawRange(dir, sessionId, ws.data.rawOffset, 131072);
+    if (raw.data.length > 0) {
+      ws.send(JSON.stringify({ type: "raw", data: raw.data, nextOffset: raw.nextOffset }));
+      ws.data.rawOffset = raw.nextOffset;
+    }
+  }
 
   const distDir = resolve(import.meta.dir, "..", "..", "web", "dist");
 
@@ -46,11 +78,25 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
     hostname: bind,
     port,
     websocket: {
-      open(ws) {
-        ws.send(JSON.stringify({ type: "hello", home: dir.root }));
+      open(ws: Bun.ServerWebSocket<WsData>) {
+        if (!ws.data?.sessionId) {
+          ws.send(JSON.stringify({ type: "hello", home: dir.root }));
+          return;
+        }
+        const set = subs.get(ws.data.sessionId) ?? new Set();
+        set.add(ws);
+        subs.set(ws.data.sessionId, set);
+        ws.send(JSON.stringify({ type: "hello", session: ws.data.sessionId }));
+        // Initial snapshot so the client starts with state in hand.
+        pushDelta(ws);
       },
-      message(_ws, _msg) {
-        // v1 stub — event push comes once sessions land.
+      close(ws: Bun.ServerWebSocket<WsData>) {
+        const set = ws.data?.sessionId ? subs.get(ws.data.sessionId) : undefined;
+        set?.delete(ws);
+        if (set && set.size === 0 && ws.data?.sessionId) subs.delete(ws.data.sessionId);
+      },
+      message() {
+        // Clients don't need to send anything for M2.
       },
     },
     async fetch(req, srv) {
@@ -62,9 +108,20 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
         if (hdr !== `Bearer ${token}`) return error(401, "unauthorized");
       }
 
-      // WebSocket upgrade.
+      // WebSocket upgrades: /api/events (lobby) and /api/sessions/:id/watch
       if (url.pathname === "/api/events") {
-        if (srv.upgrade(req)) return new Response(null);
+        if (srv.upgrade(req, { data: { sessionId: "", evOffset: 0, rawOffset: 0 } })) {
+          return new Response(null);
+        }
+        return error(400, "expected websocket");
+      }
+      const watchMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/watch$/);
+      if (watchMatch) {
+        const sessionId = decodeURIComponent(watchMatch[1]!);
+        if (!sessionExists(dir, sessionId)) return error(404, "session not found");
+        if (srv.upgrade(req, { data: { sessionId, evOffset: 0, rawOffset: 0 } })) {
+          return new Response(null);
+        }
         return error(400, "expected websocket");
       }
 

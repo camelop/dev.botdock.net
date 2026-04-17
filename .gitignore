@@ -5,6 +5,7 @@ bun.lockb
 
 # local test data dir
 scratch/
+my_test/
 
 # Vite build output
 web/dist/

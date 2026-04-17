@@ -55,6 +55,11 @@ export function buildSshConfig(dir: DataDir, machine: Machine): {
   }
   lines.push("");
 
+  // Reuse TCP connections across ssh invocations targeting the same machine.
+  // This matters a lot for session state polling (see src/lib/remote.ts).
+  dir.ensureDir("private", "ssh-control");
+  const controlPath = dir.path("private", "ssh-control", "cm-%C");
+
   lines.push(
     `Host *`,
     `  BatchMode yes`,
@@ -62,6 +67,9 @@ export function buildSshConfig(dir: DataDir, machine: Machine): {
     `  StrictHostKeyChecking accept-new`,
     `  UserKnownHostsFile ${knownHostsPath(dir)}`,
     `  ServerAliveInterval 30`,
+    `  ControlMaster auto`,
+    `  ControlPath ${controlPath}`,
+    `  ControlPersist 5m`,
     "",
   );
 

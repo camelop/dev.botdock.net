@@ -1,17 +1,26 @@
 import { useEffect, useState } from "react";
-import { api, type KeyMeta, type Machine, type SecretMeta } from "../api";
+import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
 
 export function DashboardPage() {
   const [keys, setKeys] = useState<KeyMeta[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [secrets, setSecrets] = useState<SecretMeta[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [err, setErr] = useState<string>("");
 
-  useEffect(() => {
-    Promise.all([api.listKeys(), api.listMachines(), api.listSecrets()])
-      .then(([k, m, s]) => { setKeys(k); setMachines(m); setSecrets(s); })
+  const refresh = () =>
+    Promise.all([api.listKeys(), api.listMachines(), api.listSecrets(), api.listSessions()])
+      .then(([k, m, s, ss]) => { setKeys(k); setMachines(m); setSecrets(s); setSessions(ss); })
       .catch((e) => setErr(String(e?.message ?? e)));
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
   }, []);
+
+  const running = sessions.filter((s) => s.status === "running").length;
+  const recent = sessions.slice(0, 6);
 
   return (
     <div>
@@ -22,22 +31,40 @@ export function DashboardPage() {
           <Stat label="Keys" value={keys.length} />
           <Stat label="Machines" value={machines.length} />
           <Stat label="Secrets" value={secrets.length} />
-          <Stat label="Sessions" value={0} />
+          <Stat label="Sessions (running)" value={running} total={sessions.length} />
         </div>
       </div>
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Sessions</h2>
-        <div className="empty">Session orchestration lands in M2 / M3.</div>
+      <div className="card" style={{ padding: 0 }}>
+        <h2 style={{ margin: "12px 16px 8px" }}>Recent sessions</h2>
+        {recent.length === 0 ? (
+          <div className="empty" style={{ padding: 24 }}>Nothing yet. Go to Sessions to launch one.</div>
+        ) : (
+          <table className="table">
+            <tbody>
+              {recent.map((s) => (
+                <tr key={s.id}>
+                  <td className="mono">{s.id}</td>
+                  <td><span className={`pill ${s.status === "running" ? "ok" : s.status === "failed_to_start" ? "err" : ""}`}>{s.status}</span></td>
+                  <td>{s.machine}</td>
+                  <td className="mono" style={{ maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cmd}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, total }: { label: string; value: number; total?: number }) {
   return (
     <div>
       <div className="muted" style={{ fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
+      <div style={{ fontSize: 24, fontWeight: 600 }}>
+        {value}
+        {total !== undefined && <span className="muted" style={{ fontSize: 14, marginLeft: 4 }}>/ {total}</span>}
+      </div>
     </div>
   );
 }
