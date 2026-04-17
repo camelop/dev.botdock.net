@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api, type Machine, type JumpHop, type KeyMeta, type TestResult } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type Machine, type JumpHop, type KeyMeta, type Session, type TestResult } from "../api";
 import { Modal } from "../components/Modal";
 
 type EditTarget = { mode: "new" } | { mode: "edit"; name: string } | null;
@@ -7,6 +7,7 @@ type EditTarget = { mode: "new" } | { mode: "edit"; name: string } | null;
 export function MachinesPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [keys, setKeys] = useState<KeyMeta[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [err, setErr] = useState("");
   const [edit, setEdit] = useState<EditTarget>(null);
   const [testing, setTesting] = useState<string | null>(null);
@@ -14,11 +15,25 @@ export function MachinesPage() {
 
   const refresh = async () => {
     try {
-      const [ms, ks] = await Promise.all([api.listMachines(), api.listKeys()]);
-      setMachines(ms); setKeys(ks);
+      const [ms, ks, ss] = await Promise.all([api.listMachines(), api.listKeys(), api.listSessions()]);
+      setMachines(ms); setKeys(ks); setSessions(ss);
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const sessionCounts = useMemo(() => {
+    const counts: Record<string, { running: number; total: number }> = {};
+    for (const s of sessions) {
+      if (!counts[s.machine]) counts[s.machine] = { running: 0, total: 0 };
+      counts[s.machine]!.total++;
+      if (s.status === "running") counts[s.machine]!.running++;
+    }
+    return counts;
+  }, [sessions]);
 
   const onDelete = async (name: string) => {
     if (!confirm(`Remove machine "${name}"?`)) return;
@@ -56,17 +71,26 @@ export function MachinesPage() {
                 <th>Address</th>
                 <th>Key</th>
                 <th>Hops</th>
+                <th>Sessions</th>
                 <th>Tags</th>
                 <th style={{ width: 240 }}></th>
               </tr>
             </thead>
             <tbody>
-              {machines.map((m) => (
+              {machines.map((m) => {
+                const counts = sessionCounts[m.name] ?? { running: 0, total: 0 };
+                return (
                 <tr key={m.name}>
                   <td>{m.name}</td>
                   <td className="mono">{m.user}@{m.host}:{m.port ?? 22}</td>
                   <td className="mono">{m.key}</td>
                   <td>{m.jump?.length ?? 0}</td>
+                  <td className="mono">
+                    <span className={counts.running > 0 ? "pill ok" : "muted"} style={{ marginRight: 6 }}>
+                      {counts.running} running
+                    </span>
+                    <span className="muted">/ {counts.total}</span>
+                  </td>
                   <td>{m.tags?.map((t) => <span key={t} className="pill" style={{ marginRight: 4 }}>{t}</span>)}</td>
                   <td>
                     <div className="actions">
@@ -78,7 +102,8 @@ export function MachinesPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

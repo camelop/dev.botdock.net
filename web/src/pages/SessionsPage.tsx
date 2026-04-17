@@ -193,40 +193,62 @@ function AgentKindPicker({ value, onChange }: { value: AgentKind; onChange: (v: 
   );
 }
 
+/**
+ * Return the "parent directory" portion of a user-typed path. Treats a bare
+ * "~" as if it were "~/" so autocomplete fires before the user adds a slash.
+ */
+function parentOf(v: string): string {
+  if (v === "~") return "~/";
+  const i = v.lastIndexOf("/");
+  return i < 0 ? "" : v.slice(0, i + 1);
+}
+
 function WorkdirPicker(props: {
   machine: string;
   value: string;
   onChange: (v: string) => void;
   onRegen: () => void;
 }) {
-  const [entries, setEntries] = useState<Array<{ name: string; kind: "dir" | "file" }>>([]);
+  type Entry = { name: string; kind: "dir" | "file" };
+  // Remember which parent dir the fetched entries belong to. Prevents stale
+  // suggestions from showing when the user navigates into a new level — the
+  // old list would otherwise be joined onto the new parent, yielding
+  // nonsense entries like "~/blog.seedclaw.net/.bun".
+  const [state, setState] = useState<{ parent: string; entries: Entry[] }>({ parent: "", entries: [] });
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const parent = parentOf(props.value);
 
-  // Debounced fetch of the parent dir's listing.
   useEffect(() => {
-    if (!props.machine || !props.value) { setEntries([]); return; }
+    if (!props.machine || !props.value) return;
     let cancelled = false;
     const handle = setTimeout(async () => {
       try {
         const r = await api.browseMachine(props.machine, props.value);
         if (cancelled) return;
-        setEntries(r.entries ?? []);
-      } catch { setEntries([]); }
-    }, 250);
+        setState({ parent, entries: r.entries ?? [] });
+      } catch {
+        if (!cancelled) setState({ parent, entries: [] });
+      }
+    }, 150);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [props.machine, props.value]);
+  }, [props.machine, props.value, parent]);
 
-  // Suggestions = subset of entries whose name starts with the typed leaf.
   const suggestions = useMemo(() => {
-    const lastSlash = props.value.lastIndexOf("/");
-    const parent = props.value.slice(0, lastSlash + 1);
-    const leaf = props.value.slice(lastSlash + 1).toLowerCase();
-    return entries
+    // If the stored entries are for a different parent than currently typed,
+    // don't show anything — waiting on fetch is better than showing junk.
+    if (state.parent !== parent) return [] as string[];
+    const leaf = props.value.slice(parent.length).toLowerCase();
+    return state.entries
       .filter((e) => e.kind === "dir" && e.name.toLowerCase().startsWith(leaf))
-      .slice(0, 8)
+      .slice(0, 10)
       .map((e) => parent + e.name);
-  }, [entries, props.value]);
+  }, [state, props.value, parent]);
+
+  const choose = (s: string) => {
+    props.onChange(s + "/");
+    inputRef.current?.focus();
+  };
 
   return (
     <label style={{ position: "relative", marginBottom: 10 }}>
@@ -257,7 +279,7 @@ function WorkdirPicker(props: {
             background: "var(--bg-elev)",
             border: "1px solid var(--border)",
             borderRadius: 6,
-            maxHeight: 180,
+            maxHeight: 220,
             overflowY: "auto",
             zIndex: 20,
             fontFamily: "var(--mono)",
@@ -267,8 +289,8 @@ function WorkdirPicker(props: {
           {suggestions.map((s) => (
             <div
               key={s}
-              onMouseDown={(e) => { e.preventDefault(); props.onChange(s + "/"); inputRef.current?.focus(); }}
-              style={{ padding: "4px 10px", cursor: "pointer" }}
+              onMouseDown={(e) => { e.preventDefault(); choose(s); }}
+              style={{ padding: "5px 10px", cursor: "pointer" }}
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#2a2f38")}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
             >
@@ -284,7 +306,7 @@ function WorkdirPicker(props: {
   );
 }
 
-function SessionDetailModal(props: {
+export function SessionDetailModal(props: {
   id: string;
   onClose: () => void;
   onChange: () => void | Promise<void>;
@@ -404,11 +426,23 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
     const t = setInterval(() => setTick((v) => v + 1), 5000);
     return () => clearInterval(t);
   }, []);
+  // Defensive sort (oldest first). Clock skew between basedock and remote
+  // can otherwise let a late-arriving event land out of place.
+  const sorted = useMemo(
+    () => [...events].sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? "")),
+    [events],
+  );
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Scroll the container to the bottom on mount and whenever new events land.
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [sorted.length]);
   return (
-    <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+    <div ref={scrollRef} style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
       <table className="table" style={{ fontSize: 11.5 }}>
         <tbody>
-          {events.map((ev, i) => (
+          {sorted.map((ev, i) => (
             <tr key={i}>
               <td className="muted" style={{ whiteSpace: "nowrap", width: 110 }} title={fullTime(ev.ts)}>
                 {relativeTime(ev.ts)}
