@@ -1,5 +1,5 @@
-import { writeFileSync, mkdtempSync, chmodSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, mkdtempSync, mkdirSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { DataDir } from "../storage/index.ts";
 import type { Machine } from "../domain/machines.ts";
@@ -57,8 +57,13 @@ export function buildSshConfig(dir: DataDir, machine: Machine): {
 
   // Reuse TCP connections across ssh invocations targeting the same machine.
   // This matters a lot for session state polling (see src/lib/remote.ts).
-  dir.ensureDir("private", "ssh-control");
-  const controlPath = dir.path("private", "ssh-control", "cm-%C");
+  // The socket lives under /tmp because the kernel caps Unix-domain socket
+  // paths at 108 chars; nesting it inside the data dir blew through that
+  // limit once ssh appends its random temp suffix.
+  const cmDir = join(tmpdir(), `botdock-cm-${userInfo().uid}`);
+  mkdirSync(cmDir, { recursive: true, mode: 0o700 });
+  try { chmodSync(cmDir, 0o700); } catch {}
+  const controlPath = join(cmDir, "%C");
 
   lines.push(
     `Host *`,
