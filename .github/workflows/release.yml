@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (for manual runs)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp version
+        run: |
+          cat > src/version.ts <<EOF
+          // Stamped by the release workflow at build time.
+          export const BOTDOCK_VERSION = "${{ steps.version.outputs.version }}";
+          EOF
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend
+        run: bun run web:build
+
+      - name: Embed frontend
+        run: bun scripts/embed-dist.ts
+
+      - name: Cross-compile binaries
+        run: |
+          mkdir -p dist-bin
+          for entry in \
+            "bun-linux-x64:botdock-linux-x64" \
+            "bun-linux-arm64:botdock-linux-arm64" \
+            "bun-darwin-x64:botdock-darwin-x64" \
+            "bun-darwin-arm64:botdock-darwin-arm64"; do
+            target="${entry%%:*}"
+            outname="${entry##*:}"
+            echo ">> $outname ($target)"
+            bun build \
+              --compile --minify \
+              --target="$target" \
+              --outfile "dist-bin/$outname" \
+              src/cli.ts
+          done
+          ls -lh dist-bin/
+
+      - name: Checksums
+        working-directory: dist-bin
+        run: sha256sum botdock-* > SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist-bin/botdock-linux-x64
+            dist-bin/botdock-linux-arm64
+            dist-bin/botdock-darwin-x64
+            dist-bin/botdock-darwin-arm64
+            dist-bin/SHA256SUMS

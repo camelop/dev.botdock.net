@@ -1,0 +1,13 @@
+node_modules/
+bun.lockb
+*.log
+.DS_Store
+
+# local test data dir
+scratch/
+
+# Vite build output
+web/dist/
+
+# Compiled binaries
+dist-bin/
