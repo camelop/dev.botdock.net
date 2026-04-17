@@ -37,18 +37,29 @@ esac
 ASSET="botdock-${OS_TAG}-${ARCH_TAG}"
 
 # --- resolve release -------------------------------------------------------
+# We resolve the tag via the REST API and build the download URL explicitly.
+# The /releases/latest/download/* redirect is convenient but lags by a minute
+# or two after a fresh release is published, which would silently install the
+# previous version.
 if [ "$REQUESTED_VERSION" = "latest" ]; then
-  URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  RESOLVED_TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+    | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+    | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  if [ -z "${RESOLVED_TAG:-}" ]; then
+    die "could not resolve latest tag from ${REPO} (see https://github.com/${REPO}/releases)"
+  fi
+  RESOLVED_VERSION="$RESOLVED_TAG"
 else
-  URL="https://github.com/${REPO}/releases/download/${REQUESTED_VERSION}/${ASSET}"
+  RESOLVED_VERSION="$REQUESTED_VERSION"
 fi
+URL="https://github.com/${REPO}/releases/download/${RESOLVED_VERSION}/${ASSET}"
 
 # --- prereq checks ---------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 need curl
 
 # --- download atomically ---------------------------------------------------
-info "Target: $ASSET ($REQUESTED_VERSION) from $REPO"
+info "Target: $ASSET ($RESOLVED_VERSION) from $REPO"
 info "URL:    $URL"
 
 mkdir -p "$INSTALL_DIR"
