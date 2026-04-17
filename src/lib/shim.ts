@@ -34,6 +34,14 @@ WORKDIR="${wq}"
 TMUX_NAME="${tq}"
 CMD_B64="${cmdB64}"
 
+# Expand a leading "~/" against $HOME so the user can supply either an
+# absolute path or a home-relative one.
+case "$WORKDIR" in
+  "~")   WORKDIR="$HOME" ;;
+  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+mkdir -p "$WORKDIR"
+
 SDIR="$WORKDIR/.botdock/session"
 mkdir -p "$SDIR" \
   "$WORKDIR/.botdock/resources" \

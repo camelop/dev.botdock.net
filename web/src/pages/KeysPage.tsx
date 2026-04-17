@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type KeyMeta } from "../api";
 import { Modal } from "../components/Modal";
+import { relativeTime, fullTime } from "../lib/time";
 
 export function KeysPage() {
   const [keys, setKeys] = useState<KeyMeta[]>([]);
@@ -47,7 +48,7 @@ export function KeysPage() {
                   <td>
                     <span className={`pill ${k.source === "generated" ? "" : "warn"}`}>{k.source}</span>
                   </td>
-                  <td className="muted">{new Date(k.created_at).toLocaleString()}</td>
+                  <td className="muted" title={fullTime(k.created_at)}>{relativeTime(k.created_at)}</td>
                   <td>
                     <div className="actions">
                       <button className="secondary" onClick={() => setInspect(k.nickname)}>View</button>

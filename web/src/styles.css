@@ -79,8 +79,15 @@ button {
 }
 button:hover { background: var(--accent-hover); }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
-button.secondary { background: var(--bg-card); color: var(--fg); border: 1px solid var(--border); }
-button.secondary:hover { background: #262a33; }
+button.secondary {
+  background: #323844;
+  color: var(--fg);
+  border: 1px solid #3f4754;
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.18);
+}
+button.secondary:hover { background: #3b4250; border-color: #4c5464; }
+button.secondary:active { background: #2d3340; }
+button.secondary:disabled { background: #2a2f38; color: var(--fg-dim); border-color: var(--border); box-shadow: none; }
 button.danger { background: var(--danger); color: #2a0a0a; }
 
 input, textarea, select {

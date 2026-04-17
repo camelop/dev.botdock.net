@@ -34,8 +34,10 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     if (body.agent_kind !== "generic-cmd" && body.agent_kind !== "claude-code") {
       throw new HttpError(400, "unknown agent_kind");
     }
-    if (!body.workdir.startsWith("/")) {
-      throw new HttpError(400, "workdir must be an absolute path");
+    // Accept either an absolute path or a "~/..." style path that will be
+    // expanded on the remote against $HOME.
+    if (!body.workdir.startsWith("/") && !body.workdir.startsWith("~/") && body.workdir !== "~") {
+      throw new HttpError(400, "workdir must be an absolute path or start with ~/");
     }
     const s = createSessionRecord(dir, {
       machine: body.machine,

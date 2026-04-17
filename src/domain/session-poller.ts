@@ -29,7 +29,12 @@ function pollScript(workdir: string, tmuxName: string, evOffset: number, rawOffs
   // wrap values in quotes to avoid word-splitting surprises.
   return `
 set -u
-SDIR=${shQ(workdir)}/.botdock/session
+WORKDIR=${shQ(workdir)}
+case "$WORKDIR" in
+  "~")   WORKDIR="$HOME" ;;
+  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+SDIR="$WORKDIR/.botdock/session"
 EV_PATH="$SDIR/events.ndjson"
 RAW_PATH="$SDIR/raw.log"
 EV_SIZE=0; [ -f "$EV_PATH" ] && EV_SIZE=$(wc -c < "$EV_PATH" | tr -d ' ')

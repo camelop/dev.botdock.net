@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   sessionWatchUrl,
+  type AgentKind,
   type Machine,
   type Session,
   type SessionEventRecord,
   type SessionStatus,
 } from "../api";
 import { Modal } from "../components/Modal";
+import { relativeTime, fullTime } from "../lib/time";
+import { twoWordSlug } from "../lib/slug";
 
 export function SessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -61,7 +64,7 @@ export function SessionsPage() {
                   <td><StatusPill status={s.status} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cmd}</td>
-                  <td className="muted">{s.started_at ? new Date(s.started_at).toLocaleTimeString() : "—"}</td>
+                  <td className="muted" title={fullTime(s.started_at)}>{relativeTime(s.started_at)}</td>
                   <td className="mono">{s.exit_code ?? (s.status === "running" ? "…" : "—")}</td>
                   <td>
                     <button className="secondary" onClick={(e) => { e.stopPropagation(); setSelected(s.id); }}>Open</button>
@@ -102,20 +105,18 @@ function NewSessionModal(props: {
   onDone: (id: string) => void | Promise<void>;
 }) {
   const [machine, setMachine] = useState(props.machines[0]?.name ?? "");
-  const [workdir, setWorkdir] = useState("~/botdock-session");
+  const [workdir, setWorkdir] = useState(() => `~/.botdock/projects/${twoWordSlug()}`);
+  const [agentKind, setAgentKind] = useState<AgentKind>("generic-cmd");
   const [cmd, setCmd] = useState('echo "hello from BotDock"; sleep 1; date');
   const [err, setErr] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const regenSlug = () => setWorkdir(`~/.botdock/projects/${twoWordSlug()}`);
+
   const submit = async () => {
     setErr(""); setSubmitting(true);
     try {
-      const s = await api.createSession({
-        machine,
-        workdir,
-        agent_kind: "generic-cmd",
-        cmd,
-      });
+      const s = await api.createSession({ machine, workdir, agent_kind: agentKind, cmd });
       await props.onDone(s.id);
     } catch (e) {
       setErr(String((e as Error).message ?? e));
@@ -132,16 +133,22 @@ function NewSessionModal(props: {
           {props.machines.map((m) => <option key={m.name} value={m.name}>{m.name} — {m.user}@{m.host}</option>)}
         </select>
       </label>
-      <label>
-        <span>Working directory (absolute, on the machine)</span>
-        <input value={workdir} onChange={(e) => setWorkdir(e.target.value)} placeholder="/home/…" />
-      </label>
+
+      <AgentKindPicker value={agentKind} onChange={setAgentKind} />
+
+      <WorkdirPicker
+        machine={machine}
+        value={workdir}
+        onChange={setWorkdir}
+        onRegen={regenSlug}
+      />
+
       <label>
         <span>Command</span>
         <textarea rows={4} value={cmd} onChange={(e) => setCmd(e.target.value)} />
       </label>
       <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-        The command runs inside a tmux session. BotDock will mirror stdout / stderr and lifecycle events back.
+        The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist.
       </div>
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
@@ -149,6 +156,131 @@ function NewSessionModal(props: {
         <button disabled={submitting || !machine || !workdir || !cmd} onClick={submit}>Create &amp; launch</button>
       </div>
     </Modal>
+  );
+}
+
+function AgentKindPicker({ value, onChange }: { value: AgentKind; onChange: (v: AgentKind) => void }) {
+  const kinds: Array<{ id: AgentKind; label: string; disabled?: boolean; hint?: string }> = [
+    { id: "generic-cmd", label: "Generic command", hint: "any shell command inside tmux" },
+    { id: "claude-code", label: "Claude Code", disabled: true, hint: "coming in M3" },
+  ];
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Agent kind</div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        {kinds.map((k) => {
+          const selected = value === k.id;
+          return (
+            <button
+              key={k.id}
+              type="button"
+              className="secondary"
+              disabled={k.disabled}
+              onClick={() => !k.disabled && onChange(k.id)}
+              style={{
+                borderColor: selected ? "var(--accent)" : undefined,
+                boxShadow: selected ? "inset 0 0 0 1px var(--accent)" : undefined,
+                opacity: k.disabled ? 0.55 : 1,
+              }}
+              title={k.hint}
+            >
+              {k.label}{k.disabled ? " (soon)" : ""}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WorkdirPicker(props: {
+  machine: string;
+  value: string;
+  onChange: (v: string) => void;
+  onRegen: () => void;
+}) {
+  const [entries, setEntries] = useState<Array<{ name: string; kind: "dir" | "file" }>>([]);
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Debounced fetch of the parent dir's listing.
+  useEffect(() => {
+    if (!props.machine || !props.value) { setEntries([]); return; }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const r = await api.browseMachine(props.machine, props.value);
+        if (cancelled) return;
+        setEntries(r.entries ?? []);
+      } catch { setEntries([]); }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [props.machine, props.value]);
+
+  // Suggestions = subset of entries whose name starts with the typed leaf.
+  const suggestions = useMemo(() => {
+    const lastSlash = props.value.lastIndexOf("/");
+    const parent = props.value.slice(0, lastSlash + 1);
+    const leaf = props.value.slice(lastSlash + 1).toLowerCase();
+    return entries
+      .filter((e) => e.kind === "dir" && e.name.toLowerCase().startsWith(leaf))
+      .slice(0, 8)
+      .map((e) => parent + e.name);
+  }, [entries, props.value]);
+
+  return (
+    <label style={{ position: "relative", marginBottom: 10 }}>
+      <span>Working directory (on the machine)</span>
+      <div className="row" style={{ gap: 6 }}>
+        <input
+          ref={inputRef}
+          className="grow"
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setTimeout(() => setFocused(false), 150)}
+          placeholder="/home/... or ~/..."
+          spellCheck={false}
+          autoCorrect="off"
+          style={{ fontFamily: "var(--mono)", fontSize: 12.5 }}
+        />
+        <button type="button" className="secondary" title="Generate a new random name" onClick={props.onRegen}>↻</button>
+      </div>
+      {focused && suggestions.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "100%",
+            marginTop: 2,
+            background: "var(--bg-elev)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            maxHeight: 180,
+            overflowY: "auto",
+            zIndex: 20,
+            fontFamily: "var(--mono)",
+            fontSize: 12.5,
+          }}
+        >
+          {suggestions.map((s) => (
+            <div
+              key={s}
+              onMouseDown={(e) => { e.preventDefault(); props.onChange(s + "/"); inputRef.current?.focus(); }}
+              style={{ padding: "4px 10px", cursor: "pointer" }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#2a2f38")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+            >
+              {s}/
+            </div>
+          ))}
+        </div>
+      )}
+      <span className="muted" style={{ fontSize: 11 }}>
+        BotDock will create this path if missing. ~ expands to the remote user's home.
+      </span>
+    </label>
   );
 }
 
@@ -258,33 +390,53 @@ function SessionDetailModal(props: {
         </div>
 
         <h2>Events</h2>
-        <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
-          <table className="table" style={{ fontSize: 11.5 }}>
-            <tbody>
-              {events.map((ev, i) => (
-                <tr key={i}>
-                  <td className="muted" style={{ whiteSpace: "nowrap", width: 170 }}>{ev.ts}</td>
-                  <td><span className="pill">{ev.kind}</span></td>
-                  <td className="mono">{renderEventPayload(ev)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <EventsTable events={events} />
       </div>
     </div>
   );
 }
 
+function EventsTable({ events }: { events: SessionEventRecord[] }) {
+  // Tick once every 5s so the relative timestamps don't feel stale while the
+  // modal is open.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((v) => v + 1), 5000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+      <table className="table" style={{ fontSize: 11.5 }}>
+        <tbody>
+          {events.map((ev, i) => (
+            <tr key={i}>
+              <td className="muted" style={{ whiteSpace: "nowrap", width: 110 }} title={fullTime(ev.ts)}>
+                {relativeTime(ev.ts)}
+              </td>
+              <td><span className="pill">{ev.kind}</span></td>
+              <td className="mono">{renderEventPayload(ev)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Meta({ s }: { s: Session }) {
-  const fmt = (v?: string) => (v ? new Date(v).toLocaleString() : "—");
+  const T = ({ t }: { t?: string }) => (
+    <span title={fullTime(t)}>{relativeTime(t)}</span>
+  );
   return (
     <div className="card" style={{ padding: 12, fontSize: 12.5 }}>
       <Row k="cmd"><span className="mono">{s.cmd}</span></Row>
       <Row k="tmux"><span className="mono">{s.tmux_session}</span></Row>
-      <Row k="created">{fmt(s.created_at)}</Row>
-      <Row k="started">{fmt(s.started_at)}</Row>
-      <Row k="exited">{fmt(s.exited_at)}{s.exit_code !== undefined ? ` (code ${s.exit_code})` : ""}</Row>
+      <Row k="created"><T t={s.created_at} /></Row>
+      <Row k="started"><T t={s.started_at} /></Row>
+      <Row k="exited">
+        <T t={s.exited_at} />
+        {s.exit_code !== undefined ? ` (code ${s.exit_code})` : ""}
+      </Row>
     </div>
   );
 }

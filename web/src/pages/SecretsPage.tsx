@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type SecretMeta } from "../api";
 import { Modal } from "../components/Modal";
+import { relativeTime, fullTime } from "../lib/time";
 
 export function SecretsPage() {
   const [secrets, setSecrets] = useState<SecretMeta[]>([]);
@@ -44,7 +45,7 @@ export function SecretsPage() {
                   <td>{s.name}</td>
                   <td className="muted">{s.description || <span className="muted">—</span>}</td>
                   <td className="mono">{s.byte_length}B</td>
-                  <td className="muted">{new Date(s.updated_at).toLocaleString()}</td>
+                  <td className="muted" title={fullTime(s.updated_at)}>{relativeTime(s.updated_at)}</td>
                   <td>
                     <div className="actions">
                       <button className="secondary" onClick={() => setRevealing(s.name)}>Reveal</button>

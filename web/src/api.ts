@@ -114,6 +114,10 @@ export const api = {
     request<{ ok: true }>(`/api/machines/${encodeURIComponent(name)}`, { method: "DELETE" }),
   testMachine: (name: string) =>
     request<TestResult>(`/api/machines/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  browseMachine: (name: string, path: string) =>
+    request<{ expanded: string; dir: string; entries: Array<{ name: string; kind: "dir" | "file" }>; error?: string }>(
+      `/api/machines/${encodeURIComponent(name)}/browse?path=${encodeURIComponent(path)}`,
+    ),
 
   listSecrets: () => request<SecretMeta[]>("/api/secrets"),
   getSecret: (name: string) => request<SecretMeta>(`/api/secrets/${encodeURIComponent(name)}`),
