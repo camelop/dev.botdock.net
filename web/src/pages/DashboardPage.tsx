@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
-import { api, type Session } from "../api";
+import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
 import { SessionDetailModal } from "./SessionsPage";
 import { relativeTime, fullTime } from "../lib/time";
 
 export function DashboardPage() {
+  const [keys, setKeys] = useState<KeyMeta[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [secrets, setSecrets] = useState<SecretMeta[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
 
   const refresh = () =>
-    api.listSessions().then(setSessions).catch((e) => setErr(String(e?.message ?? e)));
+    Promise.all([api.listKeys(), api.listMachines(), api.listSecrets(), api.listSessions()])
+      .then(([k, m, s, ss]) => { setKeys(k); setMachines(m); setSecrets(s); setSessions(ss); })
+      .catch((e) => setErr(String(e?.message ?? e)));
 
   useEffect(() => {
     refresh();
@@ -27,7 +32,11 @@ export function DashboardPage() {
       {err && <div className="error-banner">{err}</div>}
 
       <div className="card">
-        <div className="row" style={{ gap: 40 }}>
+        <div className="row" style={{ gap: 40, flexWrap: "wrap" }}>
+          <Stat label="Keys" value={keys.length} />
+          <Stat label="Machines" value={machines.length} />
+          <Stat label="Secrets" value={secrets.length} />
+          <Separator />
           <Stat label="Running sessions" value={running} accent="ok" />
           <Stat label="Pending" value={pending} accent={pending > 0 ? "warn" : undefined} />
         </div>
@@ -87,4 +96,8 @@ function Stat({ label, value, accent }: { label: string; value: number; accent?:
       <div style={{ fontSize: 26, fontWeight: 600, color }}>{value}</div>
     </div>
   );
+}
+
+function Separator() {
+  return <div style={{ width: 1, background: "var(--border)", alignSelf: "stretch" }} />;
 }

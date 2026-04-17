@@ -241,7 +241,6 @@ function WorkdirPicker(props: {
     const leaf = props.value.slice(parent.length).toLowerCase();
     return state.entries
       .filter((e) => e.kind === "dir" && e.name.toLowerCase().startsWith(leaf))
-      .slice(0, 10)
       .map((e) => parent + e.name);
   }, [state, props.value, parent]);
 
@@ -270,6 +269,7 @@ function WorkdirPicker(props: {
       </div>
       {focused && suggestions.length > 0 && (
         <div
+          className="scroll-panel"
           style={{
             position: "absolute",
             left: 0,
@@ -279,8 +279,7 @@ function WorkdirPicker(props: {
             background: "var(--bg-elev)",
             border: "1px solid var(--border)",
             borderRadius: 6,
-            maxHeight: 220,
-            overflowY: "auto",
+            maxHeight: 260,
             zIndex: 20,
             fontFamily: "var(--mono)",
             fontSize: 12.5,
@@ -393,14 +392,13 @@ export function SessionDetailModal(props: {
         <h2>Live log</h2>
         <div
           ref={logRef}
-          className="mono"
+          className="mono scroll-panel"
           style={{
             background: "#0a0c10",
             border: "1px solid var(--border)",
             borderRadius: 6,
             padding: 10,
             height: 260,
-            overflowY: "auto",
             whiteSpace: "pre-wrap",
             fontSize: 12,
           }}
@@ -439,7 +437,7 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [sorted.length]);
   return (
-    <div ref={scrollRef} style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+    <div ref={scrollRef} className="scroll-panel" style={{ maxHeight: 220, border: "1px solid var(--border)", borderRadius: 6 }}>
       <table className="table" style={{ fontSize: 11.5 }}>
         <tbody>
           {sorted.map((ev, i) => (

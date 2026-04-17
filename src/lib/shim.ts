@@ -1,23 +1,30 @@
 /**
- * Remote shim: a pure-shell wrapper we write to `<workdir>/.botdock/session/shim.sh`.
- * tmux pipe-pane captures the pane output separately; this script only tracks
- * lifecycle events (started / exited).
+ * Remote shim: pure-shell wrapper for a generic-cmd agent session.
+ *
+ * The shim is the tmux pane's first-and-only command — no interactive bash
+ * sits between tmux and the user command. This avoids the classic
+ * "send-keys + readline" race where the command line gets echoed twice into
+ * the captured log (once raw before readline initializes, once after).
+ *
+ * Because the shim is the pane's command, we redirect the user command's
+ * stdout/stderr into raw.log directly; pipe-pane is no longer needed.
  */
 export const REMOTE_SHIM_SH = String.raw`#!/bin/sh
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 EVENTS="$DIR/events.ndjson"
+RAW="$DIR/raw.log"
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$}" >> "$EVENTS"
-sh "$DIR/cmd.sh"
+sh "$DIR/cmd.sh" >"$RAW" 2>&1
 EC=$?
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"
 `;
 
 /**
- * Build the provisioning bash script that runs on the remote over ssh stdin.
- * Stdin: a bash script that receives workdir, tmux session name, base64-encoded
- * user command, and lays down the `.botdock/session/` skeleton + tmux session.
+ * Provisioning script uploaded over `ssh bash -s`. Lays down .botdock/
+ * skeleton, writes shim.sh + cmd.sh, starts a detached tmux session whose
+ * pane runs the shim directly.
  */
 export function provisioningScript(opts: {
   workdir: string;
@@ -34,8 +41,8 @@ WORKDIR="${wq}"
 TMUX_NAME="${tq}"
 CMD_B64="${cmdB64}"
 
-# Expand a leading "~/" against $HOME so the user can supply either an
-# absolute path or a home-relative one.
+# Expand a leading "~/" (or bare "~") against $HOME so the user can supply
+# either an absolute path or a home-relative one.
 case "$WORKDIR" in
   "~")   WORKDIR="$HOME" ;;
   "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
@@ -48,7 +55,7 @@ mkdir -p "$SDIR" \
   "$WORKDIR/.botdock/secrets" \
   "$WORKDIR/.botdock/tasks"
 
-# Shim: lifecycle events only. pipe-pane captures raw output separately.
+# Shim: lifecycle events + stdout/stderr redirect.
 cat > "$SDIR/shim.sh" <<'__BOTDOCK_SHIM__'
 ${REMOTE_SHIM_SH}__BOTDOCK_SHIM__
 
@@ -56,20 +63,19 @@ ${REMOTE_SHIM_SH}__BOTDOCK_SHIM__
 printf '%s' "$CMD_B64" | base64 -d > "$SDIR/cmd.sh"
 chmod +x "$SDIR/shim.sh" "$SDIR/cmd.sh"
 
-# Make sure the raw log file exists before pipe-pane attaches.
+# Pre-create raw.log so the poller can tail it without a race.
 : > "$SDIR/raw.log"
 
-# Ensure tmux is available.
+# Require tmux on the remote.
 if ! command -v tmux >/dev/null 2>&1; then
   echo "ERROR: tmux not installed on remote" >&2
   exit 127
 fi
 
-# Launch detached. Start a plain shell in the workdir, then pipe-pane, then send
-# the shim as the first command so its full output lands in the raw log.
-tmux new-session -d -s "$TMUX_NAME" -c "$WORKDIR"
-tmux pipe-pane -t "$TMUX_NAME" -o "cat >> $SDIR/raw.log"
-tmux send-keys -t "$TMUX_NAME" "$SDIR/shim.sh; exit" Enter
+# Start the tmux session with the shim as the pane's initial (and only)
+# command. When cmd.sh exits, shim exits, pane exits, session ends — that's
+# how we detect "done".
+tmux new-session -d -s "$TMUX_NAME" -c "$WORKDIR" "$SDIR/shim.sh"
 
 echo "BOTDOCK_PROVISIONED"
 `;
