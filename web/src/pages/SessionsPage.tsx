@@ -317,15 +317,16 @@ export function SessionDetailModal(props: {
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Initial load.
+  // WebSocket is the single source of truth for events + raw. The server's
+  // initial snapshot on open already covers everything up to "now", so we
+  // don't do a parallel HTTP fetch (doing so races with the WS snapshot and
+  // double-counts the raw log).
   useEffect(() => {
+    setEvents([]);
+    setRawText("");
+    setErr("");
     api.getSession(props.id).then(setSession).catch((e) => setErr(String(e.message ?? e)));
-    api.getSessionEvents(props.id).then((r) => setEvents(r.records)).catch(() => {});
-    api.getSessionRaw(props.id).then((r) => setRawText(r.data)).catch(() => {});
-  }, [props.id]);
 
-  // WebSocket subscription.
-  useEffect(() => {
     const ws = new WebSocket(sessionWatchUrl(props.id));
     wsRef.current = ws;
     ws.addEventListener("message", (e) => {
