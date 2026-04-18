@@ -12,12 +12,35 @@ import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
 import { twoWordSlug } from "../lib/slug";
 
+type SessionDraft = {
+  machine: string;
+  workdir: string;
+  agent_kind: AgentKind;
+  cmd: string;
+};
+
+function freshDraft(machines: Machine[]): SessionDraft {
+  return {
+    machine: machines[0]?.name ?? "",
+    workdir: `~/.botdock/projects/${twoWordSlug()}`,
+    agent_kind: "claude-code",
+    cmd: "",
+  };
+}
+
 export function SessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [draft, setDraft] = useState<SessionDraft | null>(null);
   const [machines, setMachines] = useState<Machine[]>([]);
+
+  // Open the modal with either the persisted draft or a fresh one.
+  const openNew = () => {
+    setDraft((cur) => cur ?? freshDraft(machines));
+    setNewOpen(true);
+  };
 
   const refresh = async () => {
     try {
@@ -35,7 +58,7 @@ export function SessionsPage() {
     <div>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Sessions</h1>
-        <button onClick={() => setNewOpen(true)} disabled={machines.length === 0}>
+        <button onClick={openNew} disabled={machines.length === 0}>
           {machines.length === 0 ? "Add a machine first" : "New session"}
         </button>
       </div>
@@ -76,11 +99,18 @@ export function SessionsPage() {
         )}
       </div>
 
-      {newOpen && (
+      {newOpen && draft && (
         <NewSessionModal
           machines={machines}
-          onClose={() => setNewOpen(false)}
-          onDone={async (id) => { setNewOpen(false); await refresh(); setSelected(id); }}
+          draft={draft}
+          onDraft={setDraft}
+          onCancel={() => setNewOpen(false)}
+          onDone={async (id) => {
+            setNewOpen(false);
+            setDraft(null);  // clear on successful submit only
+            await refresh();
+            setSelected(id);
+          }}
         />
       )}
       {selected && (
@@ -101,22 +131,22 @@ function StatusPill({ status }: { status: SessionStatus }) {
 
 function NewSessionModal(props: {
   machines: Machine[];
-  onClose: () => void;
+  draft: SessionDraft;
+  onDraft: (d: SessionDraft) => void;
+  onCancel: () => void;
   onDone: (id: string) => void | Promise<void>;
 }) {
-  const [machine, setMachine] = useState(props.machines[0]?.name ?? "");
-  const [workdir, setWorkdir] = useState(() => `~/.botdock/projects/${twoWordSlug()}`);
-  const [agentKind, setAgentKind] = useState<AgentKind>("generic-cmd");
-  const [cmd, setCmd] = useState('echo "hello from BotDock"; sleep 1; date');
   const [err, setErr] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { draft, onDraft } = props;
+  const patch = (p: Partial<SessionDraft>) => onDraft({ ...draft, ...p });
 
-  const regenSlug = () => setWorkdir(`~/.botdock/projects/${twoWordSlug()}`);
+  const regenSlug = () => patch({ workdir: `~/.botdock/projects/${twoWordSlug()}` });
 
   const submit = async () => {
     setErr(""); setSubmitting(true);
     try {
-      const s = await api.createSession({ machine, workdir, agent_kind: agentKind, cmd });
+      const s = await api.createSession(draft);
       await props.onDone(s.id);
     } catch (e) {
       setErr(String((e as Error).message ?? e));
@@ -126,44 +156,44 @@ function NewSessionModal(props: {
   };
 
   return (
-    <Modal title="New session" onClose={props.onClose}>
+    <Modal title="New session" onClose={props.onCancel}>
       <label>
         <span>Machine</span>
-        <select value={machine} onChange={(e) => setMachine(e.target.value)}>
+        <select value={draft.machine} onChange={(e) => patch({ machine: e.target.value })}>
           {props.machines.map((m) => <option key={m.name} value={m.name}>{m.name} — {m.user}@{m.host}</option>)}
         </select>
       </label>
 
-      <AgentKindPicker value={agentKind} onChange={setAgentKind} />
+      <AgentKindPicker value={draft.agent_kind} onChange={(v) => patch({ agent_kind: v })} />
 
       <WorkdirPicker
-        machine={machine}
-        value={workdir}
-        onChange={setWorkdir}
+        machine={draft.machine}
+        value={draft.workdir}
+        onChange={(v) => patch({ workdir: v })}
         onRegen={regenSlug}
       />
 
       <label>
-        <span>{agentKind === "claude-code" ? "Initial prompt (optional)" : "Command"}</span>
+        <span>{draft.agent_kind === "claude-code" ? "Initial prompt (optional)" : "Command"}</span>
         <textarea
           rows={4}
-          value={cmd}
-          onChange={(e) => setCmd(e.target.value)}
-          placeholder={agentKind === "claude-code"
+          value={draft.cmd}
+          onChange={(e) => patch({ cmd: e.target.value })}
+          placeholder={draft.agent_kind === "claude-code"
             ? "e.g. Explain this repo's README"
             : 'echo "hello"; sleep 1'}
         />
       </label>
       <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-        {agentKind === "claude-code"
+        {draft.agent_kind === "claude-code"
           ? "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote."
           : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
-        <button className="secondary" onClick={props.onClose}>Cancel</button>
+        <button className="secondary" onClick={props.onCancel}>Cancel (keep draft)</button>
         <button
-          disabled={submitting || !machine || !workdir || (agentKind !== "claude-code" && !cmd)}
+          disabled={submitting || !draft.machine || !draft.workdir || (draft.agent_kind !== "claude-code" && !draft.cmd)}
           onClick={submit}
         >Create &amp; launch</button>
       </div>
@@ -378,7 +408,7 @@ export function SessionDetailModal(props: {
   };
 
   return (
-    <div className="modal-backdrop" onClick={props.onClose}>
+    <div className="modal-backdrop">
       <div className="modal" style={{ minWidth: 800, maxWidth: 1100 }} onClick={(e) => e.stopPropagation()}>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
@@ -531,9 +561,12 @@ function SendInput({ id }: { id: string }) {
 
 function Row({ k, children }: { k: string; children: React.ReactNode }) {
   return (
-    <div className="row" style={{ gap: 12, marginBottom: 2 }}>
-      <span className="muted" style={{ width: 64, fontSize: 11, textTransform: "uppercase" }}>{k}</span>
-      <span>{children}</span>
+    <div className="row" style={{ gap: 12, marginBottom: 2, alignItems: "flex-start" }}>
+      <span
+        className="muted"
+        style={{ width: 64, fontSize: 11, textTransform: "uppercase", flex: "none", paddingTop: 2 }}
+      >{k}</span>
+      <span style={{ flex: 1, minWidth: 0, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>{children}</span>
     </div>
   );
 }

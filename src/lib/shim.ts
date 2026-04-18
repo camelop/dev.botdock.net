@@ -33,8 +33,26 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 EVENTS="$DIR/events.ndjson"
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# ssh non-interactive shells often don't source ~/.bashrc or ~/.profile,
+# which is where ~/.local/bin and similar get added to PATH. The official
+# claude installer drops a symlink under ~/.local/bin, so without this
+# PATH extension the command would silently be "not found" on boxes where
+# it's actually installed fine.
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+
+# Try to pick up login-shell environment too, in case the user put custom
+# installs under other prefixes. Best-effort — don't die on missing files.
+for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+  if [ -f "$f" ]; then
+    # shellcheck disable=SC1090
+    . "$f" >/dev/null 2>&1 || true
+  fi
+done
+
 if ! command -v claude >/dev/null 2>&1; then
-  printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"failed_to_start\",\"error\":\"claude CLI not installed on remote\"}" >> "$EVENTS"
+  # Escape PATH for JSON: backslash + double-quote.
+  ESCAPED_PATH=$(printf '%s' "$PATH" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+  printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"failed_to_start\",\"error\":\"claude CLI not found\",\"path\":\"$ESCAPED_PATH\"}" >> "$EVENTS"
   exit 127
 fi
 
