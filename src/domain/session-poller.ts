@@ -205,21 +205,38 @@ export class SessionPoller extends EventEmitter {
       changed = true;
     }
 
-    // tmux disappeared → session ended. If no "exited" event was ever written,
-    // synthesize one so the UI has a timeline entry.
+    // tmux disappeared → session ended. Distinguish three cases:
+    //  - shim wrote an `exited` event  → normal exit
+    //  - shim wrote `failed_to_start`  → boot error, carry the reason
+    //  - shim wrote neither            → crashed mid-boot; best hint we have
+    //                                    is whatever landed in shim.stderr
+    //                                    on the remote
     if (!report.tmuxAlive) {
       const cur = readSession(this.dir, s.id);
-      if (cur.status === "running") {
-        const hasExit = /"kind":\s*"exited"/.test(report.eventsDelta ?? "");
-        if (!hasExit) {
-          appendEvent(this.dir, s.id, {
-            ts: new Date().toISOString(),
-            kind: "exited",
-            exit_code: -1,
-            note: "tmux session vanished without writing exit event",
+      if (cur.status === "running" || cur.status === "provisioning") {
+        const delta = report.eventsDelta ?? "";
+        const hasExit         = /"kind":\s*"exited"/.test(delta);
+        const hasFailedToStart = /"kind":\s*"failed_to_start"/.test(delta);
+
+        if (hasFailedToStart) {
+          updateSession(this.dir, s.id, {
+            status: "failed_to_start",
+            exited_at: new Date().toISOString(),
+          });
+        } else {
+          if (!hasExit) {
+            appendEvent(this.dir, s.id, {
+              ts: new Date().toISOString(),
+              kind: "exited",
+              exit_code: -1,
+              note: "tmux session vanished without writing exit event (check .botdock/session/shim.stderr on the remote)",
+            });
+          }
+          updateSession(this.dir, s.id, {
+            status: "exited",
+            exited_at: new Date().toISOString(),
           });
         }
-        updateSession(this.dir, s.id, { status: "exited", exited_at: new Date().toISOString() });
         changed = true;
         this.unwatch(s.id);
       }

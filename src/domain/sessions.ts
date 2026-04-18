@@ -47,6 +47,8 @@ export type SessionEvent = {
     | "user_task"    // user sent a task through file-drop channel
     | "user_input"   // user sent a task via tmux send-keys channel
     | "cc_session"   // claude-code transcript jsonl discovered
+    | "shim_boot"    // the shim script reached its first line
+    | "pre_claude"   // about to exec claude (carries resolved binary path)
     | "error";
   [k: string]: unknown;
 };

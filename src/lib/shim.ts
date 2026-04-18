@@ -28,20 +28,28 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EV
  * path in session meta for later sync.
  */
 const CLAUDE_CODE_SHIM = String.raw`#!/bin/sh
-set -u
+# Note: no "set -u" here on purpose. Sourcing a user's .bashrc / .zshrc with
+# strict unbound-variable checking turned on routinely kills the shim — those
+# files freely reference vars that may not be set in a non-interactive ssh
+# shell.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 EVENTS="$DIR/events.ndjson"
+# Route shim's own stderr to a sibling file so even a very early crash leaves
+# a trail we can surface back. tmux pipe-pane only captures pane output; this
+# catches shell errors that happen before any command prints anything.
+exec 2>>"$DIR/shim.stderr"
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# First breadcrumb — if events.ndjson lacks this line, the shim never even ran.
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"shim_boot\",\"agent\":\"claude-code\",\"pid\":$$}" >> "$EVENTS"
+
 # ssh non-interactive shells often don't source ~/.bashrc or ~/.profile,
-# which is where ~/.local/bin and similar get added to PATH. The official
-# claude installer drops a symlink under ~/.local/bin, so without this
-# PATH extension the command would silently be "not found" on boxes where
-# it's actually installed fine.
+# which is where ~/.local/bin and similar get added to PATH. Prepend the
+# usual suspects so the claude installer's symlink resolves.
 export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
 
-# Try to pick up login-shell environment too, in case the user put custom
-# installs under other prefixes. Best-effort — don't die on missing files.
+# Best-effort source of login-shell dotfiles for users who put installs
+# under other prefixes. Errors here must not kill the shim.
 for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   if [ -f "$f" ]; then
     # shellcheck disable=SC1090
@@ -50,11 +58,14 @@ for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
 done
 
 if ! command -v claude >/dev/null 2>&1; then
-  # Escape PATH for JSON: backslash + double-quote.
   ESCAPED_PATH=$(printf '%s' "$PATH" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
   printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"failed_to_start\",\"error\":\"claude CLI not found\",\"path\":\"$ESCAPED_PATH\"}" >> "$EVENTS"
   exit 127
 fi
+
+CLAUDE_BIN=$(command -v claude)
+ESCAPED_BIN=$(printf '%s' "$CLAUDE_BIN" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"pre_claude\",\"bin\":\"$ESCAPED_BIN\"}" >> "$EVENTS"
 
 SESSION_EPOCH=$(date +%s)
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"claude-code\"}" >> "$EVENTS"
