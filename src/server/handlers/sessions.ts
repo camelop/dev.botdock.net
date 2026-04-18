@@ -10,7 +10,7 @@ import {
   sessionExists,
   type AgentKind,
 } from "../../domain/sessions.ts";
-import { launchSession, stopSession } from "../../domain/session-launcher.ts";
+import { launchSession, stopSession, sendInputToSession } from "../../domain/session-launcher.ts";
 import type { SessionPoller } from "../../domain/session-poller.ts";
 
 export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller): void {
@@ -56,6 +56,16 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
     const s = await stopSession(dir, params.id!);
     return json(s);
+  });
+
+  router.post("/api/sessions/:id/input", async ({ req, params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const body = await parseJsonBody<{ text: string }>(req);
+    if (typeof body.text !== "string" || body.text.length === 0) {
+      throw new HttpError(400, "text required");
+    }
+    await sendInputToSession(dir, params.id!, body.text);
+    return json({ ok: true });
   });
 
   router.delete("/api/sessions/:id", ({ params }) => {

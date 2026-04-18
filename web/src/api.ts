@@ -65,6 +65,8 @@ export type Session = {
   exit_code?: number;
   remote_events_offset?: number;
   remote_raw_offset?: number;
+  cc_session_file?: string;
+  cc_session_uuid?: string;
 };
 export type SessionEventRecord = {
   ts: string;
@@ -139,6 +141,11 @@ export const api = {
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
+  sendSessionInput: (id: string, text: string) =>
+    request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/input`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
   deleteSession: (id: string) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getSessionEvents: (id: string, offset = 0) =>

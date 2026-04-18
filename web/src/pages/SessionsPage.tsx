@@ -144,16 +144,28 @@ function NewSessionModal(props: {
       />
 
       <label>
-        <span>Command</span>
-        <textarea rows={4} value={cmd} onChange={(e) => setCmd(e.target.value)} />
+        <span>{agentKind === "claude-code" ? "Initial prompt (optional)" : "Command"}</span>
+        <textarea
+          rows={4}
+          value={cmd}
+          onChange={(e) => setCmd(e.target.value)}
+          placeholder={agentKind === "claude-code"
+            ? "e.g. Explain this repo's README"
+            : 'echo "hello"; sleep 1'}
+        />
       </label>
       <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-        The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist.
+        {agentKind === "claude-code"
+          ? "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote."
+          : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
         <button className="secondary" onClick={props.onClose}>Cancel</button>
-        <button disabled={submitting || !machine || !workdir || !cmd} onClick={submit}>Create &amp; launch</button>
+        <button
+          disabled={submitting || !machine || !workdir || (agentKind !== "claude-code" && !cmd)}
+          onClick={submit}
+        >Create &amp; launch</button>
       </div>
     </Modal>
   );
@@ -162,7 +174,7 @@ function NewSessionModal(props: {
 function AgentKindPicker({ value, onChange }: { value: AgentKind; onChange: (v: AgentKind) => void }) {
   const kinds: Array<{ id: AgentKind; label: string; disabled?: boolean; hint?: string }> = [
     { id: "generic-cmd", label: "Generic command", hint: "any shell command inside tmux" },
-    { id: "claude-code", label: "Claude Code", disabled: true, hint: "coming in M3" },
+    { id: "claude-code", label: "Claude Code", hint: "interactive `claude` CLI; initial prompt optional" },
   ];
   return (
     <div style={{ marginBottom: 10 }}>
@@ -389,6 +401,7 @@ export function SessionDetailModal(props: {
 
         {err && <div className="error-banner">{err}</div>}
         {session && <Meta s={session} />}
+        {session?.status === "running" && <SendInput id={session.id} />}
 
         <h2>Live log</h2>
         <div
@@ -460,9 +473,11 @@ function Meta({ s }: { s: Session }) {
   const T = ({ t }: { t?: string }) => (
     <span title={fullTime(t)}>{relativeTime(t)}</span>
   );
+  const cmdLabel = s.agent_kind === "claude-code" ? "prompt" : "cmd";
   return (
     <div className="card" style={{ padding: 12, fontSize: 12.5 }}>
-      <Row k="cmd"><span className="mono">{s.cmd}</span></Row>
+      <Row k="kind"><span className="mono">{s.agent_kind}</span></Row>
+      <Row k={cmdLabel}><span className="mono">{s.cmd || <span className="muted">(none)</span>}</span></Row>
       <Row k="tmux"><span className="mono">{s.tmux_session}</span></Row>
       <Row k="created"><T t={s.created_at} /></Row>
       <Row k="started"><T t={s.started_at} /></Row>
@@ -470,6 +485,46 @@ function Meta({ s }: { s: Session }) {
         <T t={s.exited_at} />
         {s.exit_code !== undefined ? ` (code ${s.exit_code})` : ""}
       </Row>
+      {s.cc_session_file && (
+        <Row k="cc file"><span className="mono" style={{ wordBreak: "break-all" }}>{s.cc_session_file}</span></Row>
+      )}
+    </div>
+  );
+}
+
+function SendInput({ id }: { id: string }) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState("");
+  const onSend = async () => {
+    if (!text.trim()) return;
+    setSending(true); setErr("");
+    try {
+      await api.sendSessionInput(id, text);
+      setText("");
+    } catch (e) { setErr(String((e as Error).message ?? e)); }
+    finally { setSending(false); }
+  };
+  const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(); }
+  };
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+        Send input (tmux send-keys + Enter). <span className="mono">⌘/Ctrl+Enter</span> to send.
+      </div>
+      <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
+        <textarea
+          className="grow"
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="message to the running agent…"
+        />
+        <button disabled={sending || !text.trim()} onClick={onSend}>Send</button>
+      </div>
+      {err && <div className="error-banner" style={{ marginTop: 6 }}>{err}</div>}
     </div>
   );
 }

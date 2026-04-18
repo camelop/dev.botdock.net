@@ -7,7 +7,7 @@ import {
   updateSession,
 } from "./sessions.ts";
 import { sshExec } from "../lib/remote.ts";
-import { provisioningScript } from "../lib/shim.ts";
+import { provisioningScript, buildCmdB64 } from "../lib/shim.ts";
 
 /**
  * Launch a session that was freshly created in `provisioning` status.
@@ -22,11 +22,12 @@ export async function launchSession(dir: DataDir, id: string): Promise<Session> 
   appendEvent(dir, id, { ts: new Date().toISOString(), kind: "provisioning" });
   const machine = readMachine(dir, s.machine);
 
-  const cmdB64 = Buffer.from(s.cmd, "utf8").toString("base64");
+  const cmdB64 = buildCmdB64(s.agent_kind, s.cmd);
   const bootstrap = provisioningScript({
     workdir: s.workdir,
     tmuxSession: s.tmux_session,
     cmdB64,
+    agentKind: s.agent_kind,
   });
 
   const r = sshExec(dir, machine, "bash -s", bootstrap, 60_000);
@@ -43,6 +44,33 @@ export async function launchSession(dir: DataDir, id: string): Promise<Session> 
   return updateSession(dir, id, {
     status: "running",
     started_at: new Date().toISOString(),
+  });
+}
+
+/**
+ * Send a user task into the running session's tmux pane via send-keys + Enter.
+ * Records a `user_input` event locally for the timeline.
+ */
+export async function sendInputToSession(dir: DataDir, id: string, text: string): Promise<void> {
+  const s = readSession(dir, id);
+  if (s.status !== "running") throw new Error(`session ${id} is not running`);
+  const machine = readMachine(dir, s.machine);
+  // Send-keys does the right thing with multi-line text if we quote it;
+  // Literal mode (-l) avoids meta-key interpretation.
+  const script = [
+    `tmux send-keys -l -t ${shQ(s.tmux_session)} ${shQ(text)}`,
+    `tmux send-keys -t ${shQ(s.tmux_session)} Enter`,
+    `echo BOTDOCK_SENT`,
+  ].join("\n");
+  const r = sshExec(dir, machine, "bash -s", script, 10_000);
+  if (r.code !== 0 || !r.stdout.includes("BOTDOCK_SENT")) {
+    throw new Error(`send-keys failed: ${r.stderr.trim() || r.stdout.trim()}`);
+  }
+  appendEvent(dir, id, {
+    ts: new Date().toISOString(),
+    kind: "user_input",
+    channel: "tmux",
+    text,
   });
 }
 

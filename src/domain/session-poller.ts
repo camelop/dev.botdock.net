@@ -178,6 +178,12 @@ export class SessionPoller extends EventEmitter {
           if (ev.kind === "exited" && typeof ev.exit_code === "number") {
             exitCodeFromEvent = ev.exit_code;
           }
+          if (ev.kind === "cc_session" && typeof ev.file === "string") {
+            updateSession(this.dir, s.id, {
+              cc_session_file: ev.file,
+              ...(typeof ev.uuid === "string" ? { cc_session_uuid: ev.uuid } : {}),
+            });
+          }
         } catch {
           // Malformed line — preserve verbatim for debugging.
           appendEvent(this.dir, s.id, {

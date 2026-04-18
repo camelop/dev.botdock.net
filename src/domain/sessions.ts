@@ -27,6 +27,10 @@ export type Session = {
   /** tail offsets for the remote files we mirror */
   remote_events_offset?: number;
   remote_raw_offset?: number;
+  /** For claude-code: absolute path on remote to the claude transcript JSONL. */
+  cc_session_file?: string;
+  /** For claude-code: the session UUID (basename of the transcript file). */
+  cc_session_uuid?: string;
 };
 
 export type SessionEvent = {
@@ -42,6 +46,7 @@ export type SessionEvent = {
     | "stopped"
     | "user_task"    // user sent a task through file-drop channel
     | "user_input"   // user sent a task via tmux send-keys channel
+    | "cc_session"   // claude-code transcript jsonl discovered
     | "error";
   [k: string]: unknown;
 };

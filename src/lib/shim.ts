@@ -1,15 +1,12 @@
+import type { AgentKind } from "../domain/sessions.ts";
+
 /**
- * Remote shim: pure-shell wrapper for a generic-cmd agent session.
- *
- * The shim is the tmux pane's first-and-only command — no interactive bash
- * sits between tmux and the user command. This avoids the classic
- * "send-keys + readline" race where the command line gets echoed twice into
- * the captured log (once raw before readline initializes, once after).
- *
- * Because the shim is the pane's command, we redirect the user command's
- * stdout/stderr into raw.log directly; pipe-pane is no longer needed.
+ * Remote shim for `generic-cmd`: single-shot command wrapper. Redirects
+ * stdout/stderr into raw.log itself so tmux pipe-pane isn't needed — this
+ * avoids the "shell echoes send-keys twice" class of bug entirely. When the
+ * command exits, the pane exits and the tmux session ends.
  */
-export const REMOTE_SHIM_SH = String.raw`#!/bin/sh
+const GENERIC_CMD_SHIM = String.raw`#!/bin/sh
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 EVENTS="$DIR/events.ndjson"
@@ -22,18 +19,103 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EV
 `;
 
 /**
+ * Remote shim for `claude-code`: keeps an interactive pane alive running
+ * the `claude` CLI. Because claude needs a real TTY (it handles its own
+ * rendering), we rely on `tmux pipe-pane` to mirror pane output to raw.log
+ * instead of self-redirect. A small background helper waits for claude to
+ * settle, then finds the jsonl it just opened under ~/.claude/projects/
+ * and emits a `cc_session` event so the poller can store the transcript
+ * path in session meta for later sync.
+ */
+const CLAUDE_CODE_SHIM = String.raw`#!/bin/sh
+set -u
+DIR="$(cd "$(dirname "$0")" && pwd)"
+EVENTS="$DIR/events.ndjson"
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+if ! command -v claude >/dev/null 2>&1; then
+  printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"failed_to_start\",\"error\":\"claude CLI not installed on remote\"}" >> "$EVENTS"
+  exit 127
+fi
+
+SESSION_EPOCH=$(date +%s)
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"claude-code\"}" >> "$EVENTS"
+
+# Background: wait a moment, then find the transcript jsonl that claude just
+# opened. ~/.claude/projects/<dir-hash>/<uuid>.jsonl is the layout as of
+# current claude-code versions; we filter by mtime > session start so we
+# don't pick up an older session file.
+(
+  sleep 2
+  FILE=$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null \
+         | head -1)
+  if [ -n "$FILE" ]; then
+    UUID=$(basename "$FILE" .jsonl)
+    printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"cc_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
+  fi
+) &
+
+# Run claude with the initial prompt (if provided). cmd.sh is sourced to
+# pick up shell-quoted args; its content is a single line like:
+#   PROMPT='...'
+# An empty PROMPT means launch claude interactively with no preloaded msg.
+PROMPT=""
+# shellcheck disable=SC1091
+. "$DIR/cmd.sh"
+if [ -n "$PROMPT" ]; then
+  claude "$PROMPT"
+else
+  claude
+fi
+EC=$?
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"
+`;
+
+function shimFor(kind: AgentKind): string {
+  switch (kind) {
+    case "generic-cmd": return GENERIC_CMD_SHIM;
+    case "claude-code": return CLAUDE_CODE_SHIM;
+  }
+}
+
+/**
+ * The cmd.sh content for each kind. For generic-cmd the user's script is
+ * base64-encoded verbatim. For claude-code we wrap the prompt in a single
+ * POSIX-quoted `PROMPT='...'` assignment so the shim can `. cmd.sh` safely.
+ */
+export function buildCmdB64(kind: AgentKind, cmd: string): string {
+  const content = kind === "claude-code"
+    ? `PROMPT=${shSingleQuote(cmd)}\n`
+    : cmd;
+  return Buffer.from(content, "utf8").toString("base64");
+}
+
+function shSingleQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+/**
  * Provisioning script uploaded over `ssh bash -s`. Lays down .botdock/
- * skeleton, writes shim.sh + cmd.sh, starts a detached tmux session whose
- * pane runs the shim directly.
+ * skeleton, writes shim.sh + cmd.sh, starts a detached tmux session.
+ *
+ * For claude-code we add `tmux pipe-pane` to capture the interactive
+ * pane's output. Generic-cmd doesn't need pipe-pane because its shim
+ * self-redirects into raw.log.
  */
 export function provisioningScript(opts: {
   workdir: string;
   tmuxSession: string;
   cmdB64: string;
+  agentKind: AgentKind;
 }): string {
-  const { workdir, tmuxSession, cmdB64 } = opts;
+  const { workdir, tmuxSession, cmdB64, agentKind } = opts;
   const wq = shDouble(workdir);
   const tq = shDouble(tmuxSession);
+  const shim = shimFor(agentKind);
+  const pipePane = agentKind === "claude-code"
+    ? `tmux pipe-pane -t "$TMUX_NAME" -o "cat >> $SDIR/raw.log"`
+    : `# generic-cmd shim redirects to raw.log itself; pipe-pane skipped.`;
+
   return String.raw`#!/bin/bash
 set -euo pipefail
 
@@ -41,8 +123,6 @@ WORKDIR="${wq}"
 TMUX_NAME="${tq}"
 CMD_B64="${cmdB64}"
 
-# Expand a leading "~/" (or bare "~") against $HOME so the user can supply
-# either an absolute path or a home-relative one.
 case "$WORKDIR" in
   "~")   WORKDIR="$HOME" ;;
   "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
@@ -55,27 +135,22 @@ mkdir -p "$SDIR" \
   "$WORKDIR/.botdock/secrets" \
   "$WORKDIR/.botdock/tasks"
 
-# Shim: lifecycle events + stdout/stderr redirect.
 cat > "$SDIR/shim.sh" <<'__BOTDOCK_SHIM__'
-${REMOTE_SHIM_SH}__BOTDOCK_SHIM__
+${shim}__BOTDOCK_SHIM__
 
-# User command (base64-encoded to sidestep all shell quoting).
 printf '%s' "$CMD_B64" | base64 -d > "$SDIR/cmd.sh"
-chmod +x "$SDIR/shim.sh" "$SDIR/cmd.sh"
+chmod +x "$SDIR/shim.sh"
+chmod +x "$SDIR/cmd.sh" 2>/dev/null || true
 
-# Pre-create raw.log so the poller can tail it without a race.
 : > "$SDIR/raw.log"
 
-# Require tmux on the remote.
 if ! command -v tmux >/dev/null 2>&1; then
   echo "ERROR: tmux not installed on remote" >&2
   exit 127
 fi
 
-# Start the tmux session with the shim as the pane's initial (and only)
-# command. When cmd.sh exits, shim exits, pane exits, session ends — that's
-# how we detect "done".
 tmux new-session -d -s "$TMUX_NAME" -c "$WORKDIR" "$SDIR/shim.sh"
+${pipePane}
 
 echo "BOTDOCK_PROVISIONED"
 `;
