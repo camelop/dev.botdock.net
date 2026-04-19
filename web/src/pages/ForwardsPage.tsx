@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   forwardsApi,
   api,
@@ -43,6 +43,16 @@ export function ForwardsPage() {
     catch (e) { setErr(String((e as Error).message ?? e)); }
   };
 
+  const { userForwards, systemForwards } = useMemo(() => {
+    const user: ForwardWithStatus[] = [];
+    const sys:  ForwardWithStatus[] = [];
+    for (const f of forwards) {
+      if (f.managed_by && f.managed_by.startsWith("system:")) sys.push(f);
+      else user.push(f);
+    }
+    return { userForwards: user, systemForwards: sys };
+  }, [forwards]);
+
   return (
     <div>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
@@ -53,11 +63,59 @@ export function ForwardsPage() {
       </div>
       {err && <div className="error-banner">{err}</div>}
 
+      <ForwardSection
+        title="User forwards"
+        hint="Forwards you create yourself."
+        forwards={userForwards}
+        onStart={onStart} onStop={onStop} onDelete={onDelete}
+        onEdit={(name) => setEdit({ mode: "edit", name })}
+        emptyHint="No user forwards yet. Local, reverse, and dynamic (SOCKS) SSH tunnels can be managed here."
+        readOnlyActions={false}
+      />
+
+      <ForwardSection
+        title="Managed by BotDock"
+        hint="Forwards auto-created by features like per-machine terminals. These are reconciled by the system — edit the owning feature rather than these directly."
+        forwards={systemForwards}
+        onStart={onStart} onStop={onStop} onDelete={onDelete}
+        onEdit={(name) => setEdit({ mode: "edit", name })}
+        emptyHint="No system-managed forwards yet. Start a terminal from the Machines page to spawn one."
+        readOnlyActions={true}
+      />
+
+      {edit && (
+        <ForwardEditor
+          target={edit}
+          machines={machines}
+          onClose={() => setEdit(null)}
+          onDone={async () => { setEdit(null); await refresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+type ForwardActionHandlers = {
+  onStart: (name: string) => void | Promise<void>;
+  onStop: (name: string) => void | Promise<void>;
+  onDelete: (name: string) => void | Promise<void>;
+  onEdit: (name: string) => void;
+};
+
+function ForwardSection(props: ForwardActionHandlers & {
+  title: string;
+  hint: string;
+  forwards: ForwardWithStatus[];
+  emptyHint: string;
+  readOnlyActions: boolean;
+}) {
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2 style={{ marginBottom: 4, color: "var(--fg)" }}>{props.title}</h2>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{props.hint}</div>
       <div className="card" style={{ padding: 0 }}>
-        {forwards.length === 0 ? (
-          <div className="empty">
-            No forwards yet. Local, reverse, and dynamic (SOCKS) SSH tunnels can be managed from this page.
-          </div>
+        {props.forwards.length === 0 ? (
+          <div className="empty">{props.emptyHint}</div>
         ) : (
           <table className="table">
             <thead>
@@ -70,10 +128,11 @@ export function ForwardsPage() {
               </tr>
             </thead>
             <tbody>
-              {forwards.map((f) => (
+              {props.forwards.map((f) => (
                 <tr key={f.name}>
                   <td>
                     {f.name}
+                    {f.managed_by && <span className="pill" style={{ marginLeft: 6, fontSize: 10 }}>{f.managed_by}</span>}
                     {f.description && <div className="muted" style={{ fontSize: 11 }}>{f.description}</div>}
                   </td>
                   <td><StatePill state={f.status.state} />{f.status.last_error && (
@@ -86,13 +145,17 @@ export function ForwardsPage() {
                   <td>
                     <div className="actions">
                       {f.status.state !== "running" && f.status.state !== "starting" && (
-                        <button className="secondary" onClick={() => onStart(f.name)}>Start</button>
+                        <button className="secondary" onClick={() => props.onStart(f.name)}>Start</button>
                       )}
                       {(f.status.state === "running" || f.status.state === "starting") && (
-                        <button className="secondary" onClick={() => onStop(f.name)}>Stop</button>
+                        <button className="secondary" onClick={() => props.onStop(f.name)}>Stop</button>
                       )}
-                      <button className="secondary" onClick={() => setEdit({ mode: "edit", name: f.name })}>Edit</button>
-                      <button className="secondary" onClick={() => onDelete(f.name)}>Delete</button>
+                      {!props.readOnlyActions && (
+                        <>
+                          <button className="secondary" onClick={() => props.onEdit(f.name)}>Edit</button>
+                          <button className="secondary" onClick={() => props.onDelete(f.name)}>Delete</button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -101,15 +164,6 @@ export function ForwardsPage() {
           </table>
         )}
       </div>
-
-      {edit && (
-        <ForwardEditor
-          target={edit}
-          machines={machines}
-          onClose={() => setEdit(null)}
-          onDone={async () => { setEdit(null); await refresh(); }}
-        />
-      )}
     </div>
   );
 }

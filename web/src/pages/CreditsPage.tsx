@@ -3,14 +3,56 @@ import { creditsApi, type CreditAccount } from "../api";
 import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
 
-const PROVIDER_PRESETS: Array<{ id: string; label: string; unitHint?: string }> = [
-  { id: "claude",      label: "Claude (Anthropic)", unitHint: "usd" },
-  { id: "anthropic-api", label: "Anthropic API",    unitHint: "usd" },
-  { id: "openai",      label: "OpenAI",             unitHint: "usd" },
-  { id: "cloudflare",  label: "Cloudflare",         unitHint: "requests" },
-  { id: "gcp",         label: "Google Cloud",       unitHint: "usd" },
-  { id: "other",       label: "Other",              unitHint: undefined },
+type ProviderPreset = {
+  id: string;
+  label: string;
+  unitHint?: string;
+  /** Shown in the add-account modal so the user knows what to paste. */
+  credentialHint?: string;
+  guide?: string;
+  refreshable?: boolean;
+};
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: "anthropic-api",
+    label: "Anthropic API",
+    unitHint: "usd",
+    refreshable: true,
+    credentialHint: "sk-ant-admin01-… (Admin API key)",
+    guide:
+      "BotDock fetches usage via the organization cost_report endpoint, which requires an ADMIN API key " +
+      "(not a regular sk-ant-api… key). Create one under your Anthropic Console → Admin Keys, paste it below, " +
+      "then hit the ↻ button on the card to pull the last 30 days.",
+  },
+  {
+    id: "claude",
+    label: "Claude (Pro / Max subscription)",
+    unitHint: "usd",
+    refreshable: false,
+    guide:
+      "Monthly subscription accounts don't currently expose a programmatic balance endpoint. You can still " +
+      "track them here — BotDock just won't auto-refresh. Drop a rough monthly allotment as a note if you want.",
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    unitHint: "usd",
+    guide: "OpenAI auto-refresh is on the roadmap. For now, add the account to track it manually.",
+  },
+  {
+    id: "cloudflare",
+    label: "Cloudflare",
+    unitHint: "requests",
+    guide: "Cloudflare auto-refresh is on the roadmap.",
+  },
+  { id: "gcp",   label: "Google Cloud", unitHint: "usd" },
+  { id: "other", label: "Other" },
 ];
+
+function presetFor(id: string): ProviderPreset | undefined {
+  return PROVIDER_PRESETS.find((p) => p.id === id);
+}
 
 export function CreditsPage() {
   const [accounts, setAccounts] = useState<CreditAccount[]>([]);
@@ -191,12 +233,7 @@ function AccountEditor(props: {
 }) {
   const isNew = props.target.mode === "new";
   const [nickname, setNickname] = useState(isNew ? "" : (props.target as { nickname: string }).nickname);
-  const [provider, setProvider] = useState("claude");
-  const [description, setDescription] = useState("");
-  const [unit, setUnit] = useState("usd");
-  const [period, setPeriod] = useState("monthly");
-  const [balance, setBalance] = useState<string>("");
-  const [limit, setLimit] = useState<string>("");
+  const [provider, setProvider] = useState(isNew ? "anthropic-api" : "");
   const [credential, setCredential] = useState("");
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState("");
@@ -206,31 +243,24 @@ function AccountEditor(props: {
     if (!isNew) {
       creditsApi.get((props.target as { nickname: string }).nickname).then((a) => {
         setProvider(a.provider);
-        setDescription(a.description);
-        setUnit(a.unit ?? "");
-        setPeriod(a.period ?? "");
-        setBalance(a.balance !== undefined ? String(a.balance) : "");
-        setLimit(a.limit !== undefined ? String(a.limit) : "");
         setNotes(a.notes ?? "");
       }).catch((e) => setErr(String(e.message ?? e)));
     }
   }, []);
 
+  const preset = presetFor(provider);
+
   const submit = async () => {
     setErr(""); setSubmitting(true);
     try {
-      const numOrUndef = (s: string) => s === "" ? undefined : Number(s);
+      // description intentionally omitted — we don't ask the user for it
+      // anymore; the provider label is enough context on the card.
       const payload = {
         nickname,
         provider,
-        description,
+        description: "",
         added_at: new Date().toISOString(),
-        unit: unit || undefined,
-        period: period || undefined,
-        balance: numOrUndef(balance),
-        limit: numOrUndef(limit),
         notes: notes || undefined,
-        last_checked_at: (balance !== "" || limit !== "") ? new Date().toISOString() : undefined,
         credential: credential || undefined,
       };
       if (isNew) await creditsApi.create(payload);
@@ -248,43 +278,45 @@ function AccountEditor(props: {
       </label>
       <label>
         <span>Provider</span>
-        <select value={provider} onChange={(e) => {
-          setProvider(e.target.value);
-          const preset = PROVIDER_PRESETS.find((p) => p.id === e.target.value);
-          if (preset?.unitHint && !unit) setUnit(preset.unitHint);
-        }}>
+        <select value={provider} onChange={(e) => setProvider(e.target.value)}>
           {PROVIDER_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
         </select>
       </label>
-      <label>
-        <span>Description (optional)</span>
-        <input value={description} onChange={(e) => setDescription(e.target.value)} />
-      </label>
 
-      <div className="row" style={{ gap: 10 }}>
-        <label className="grow">
-          <span>Balance</span>
-          <input type="number" value={balance} onChange={(e) => setBalance(e.target.value)} />
-        </label>
-        <label className="grow">
-          <span>Limit</span>
-          <input type="number" value={limit} onChange={(e) => setLimit(e.target.value)} />
-        </label>
-        <label style={{ width: 120 }}>
-          <span>Unit</span>
-          <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="usd" />
-        </label>
-        <label style={{ width: 120 }}>
-          <span>Period</span>
-          <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="monthly" />
-        </label>
-      </div>
+      {preset?.guide && (
+        <div
+          className="card"
+          style={{
+            background: "rgba(106,164,255,0.08)",
+            borderColor: "rgba(106,164,255,0.3)",
+            padding: 10,
+            fontSize: 12.5,
+            lineHeight: 1.45,
+            marginBottom: 10,
+          }}
+        >
+          <div className="muted" style={{ fontSize: 11, marginBottom: 4, textTransform: "uppercase" }}>
+            How this connects
+          </div>
+          {preset.guide}
+          {preset.refreshable === false && (
+            <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>
+              (No auto-refresh — this account is tracked as a placeholder.)
+            </div>
+          )}
+        </div>
+      )}
 
       <label>
-        <span>Credential (API key / token — stored locally under private/credit_accounts)</span>
+        <span>Credential {preset?.credentialHint ? `(${preset.credentialHint})` : "(API key / token)"}</span>
         <textarea rows={2} value={credential} onChange={(e) => setCredential(e.target.value)}
-          placeholder={isNew ? "sk-ant-... or similar" : "leave blank to keep existing"} />
+          placeholder={isNew ? preset?.credentialHint ?? "paste the API key / token" : "leave blank to keep existing"} />
+        <span className="muted" style={{ fontSize: 11 }}>
+          Stored locally under <span className="mono">private/credit_accounts/{nickname || "…"}/credential</span> with
+          0600 perms. Never leaves your machine except to hit the provider's API on refresh.
+        </span>
       </label>
+
       <label>
         <span>Notes (optional)</span>
         <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />

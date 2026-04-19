@@ -30,6 +30,12 @@ export type Forward = {
   local_host?: string;    // remote only; defaults to "localhost"
   auto_start?: boolean;
   description?: string;
+  /**
+   * Who owns this forward. Absent or "user" = user-created.
+   * System-managed forwards use strings like "system:machine-terminal" so
+   * different system features can keep their records separate.
+   */
+  managed_by?: string;
 };
 
 function forwardsDir(dir: DataDir): string {
@@ -96,6 +102,7 @@ export function writeForward(dir: DataDir, f: Forward): void {
   if (f.local_host) data.local_host = f.local_host;
   if (f.auto_start !== undefined) data.auto_start = f.auto_start;
   if (f.description) data.description = f.description;
+  if (f.managed_by) data.managed_by = f.managed_by;
 
   dir.ensureDir("forwards");
   writeToml(forwardFile(dir, f.name), data);

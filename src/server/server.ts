@@ -49,7 +49,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   const router = new Router();
   router.get("/api/status", () => json({ home: dir.root, version: "0.0.1", dev: !!opts.dev }));
   mountKeys(router, dir);
-  mountMachines(router, dir);
+  mountMachines(router, dir, forwardManager);
   mountSecrets(router, dir);
   mountSessions(router, dir, poller);
   mountForwards(router, dir, forwardManager);

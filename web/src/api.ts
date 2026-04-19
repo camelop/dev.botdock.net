@@ -120,6 +120,12 @@ export const api = {
     request<{ expanded: string; dir: string; entries: Array<{ name: string; kind: "dir" | "file" }>; error?: string }>(
       `/api/machines/${encodeURIComponent(name)}/browse?path=${encodeURIComponent(path)}`,
     ),
+  startMachineTerminal: (name: string) =>
+    request<{ forward: Forward; status: ForwardWithStatus["status"]; url: string }>(
+      `/api/machines/${encodeURIComponent(name)}/terminal/start`, { method: "POST" },
+    ),
+  stopMachineTerminal: (name: string) =>
+    request<{ ok: true }>(`/api/machines/${encodeURIComponent(name)}/terminal/stop`, { method: "POST" }),
 
   listSecrets: () => request<SecretMeta[]>("/api/secrets"),
   getSecret: (name: string) => request<SecretMeta>(`/api/secrets/${encodeURIComponent(name)}`),
@@ -175,6 +181,7 @@ export type Forward = {
   local_host?: string;
   auto_start?: boolean;
   description?: string;
+  managed_by?: string;
 };
 export type ForwardWithStatus = Forward & {
   description_line: string;

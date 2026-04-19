@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Machine, type JumpHop, type KeyMeta, type Session, type TestResult } from "../api";
+import {
+  api,
+  forwardsApi,
+  type ForwardWithStatus,
+  type Machine,
+  type JumpHop,
+  type KeyMeta,
+  type Session,
+  type TestResult,
+} from "../api";
 import { Modal } from "../components/Modal";
 
 type EditTarget = { mode: "new" } | { mode: "edit"; name: string } | null;
@@ -8,15 +17,19 @@ export function MachinesPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [keys, setKeys] = useState<KeyMeta[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [forwards, setForwards] = useState<ForwardWithStatus[]>([]);
   const [err, setErr] = useState("");
   const [edit, setEdit] = useState<EditTarget>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [spawningTerminal, setSpawningTerminal] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ name: string; result: TestResult } | null>(null);
 
   const refresh = async () => {
     try {
-      const [ms, ks, ss] = await Promise.all([api.listMachines(), api.listKeys(), api.listSessions()]);
-      setMachines(ms); setKeys(ks); setSessions(ss);
+      const [ms, ks, ss, fs] = await Promise.all([
+        api.listMachines(), api.listKeys(), api.listSessions(), forwardsApi.list(),
+      ]);
+      setMachines(ms); setKeys(ks); setSessions(ss); setForwards(fs);
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
   useEffect(() => {
@@ -24,6 +37,28 @@ export function MachinesPage() {
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
   }, []);
+
+  const terminalByMachine = useMemo(() => {
+    const map: Record<string, ForwardWithStatus> = {};
+    for (const f of forwards) {
+      if (f.managed_by === "system:machine-terminal") map[f.machine] = f;
+    }
+    return map;
+  }, [forwards]);
+
+  const onStartTerminal = async (name: string) => {
+    setSpawningTerminal(name); setErr("");
+    try {
+      await api.startMachineTerminal(name);
+      await refresh();
+    } catch (e) { setErr(String((e as Error).message ?? e)); }
+    finally { setSpawningTerminal(null); }
+  };
+
+  const onStopTerminal = async (name: string) => {
+    try { await api.stopMachineTerminal(name); await refresh(); }
+    catch (e) { setErr(String((e as Error).message ?? e)); }
+  };
 
   const sessionCounts = useMemo(() => {
     const counts: Record<string, { running: number; total: number }> = {};
@@ -72,6 +107,7 @@ export function MachinesPage() {
                 <th>Key</th>
                 <th>Hops</th>
                 <th>Sessions</th>
+                <th>Terminal</th>
                 <th>Tags</th>
                 <th style={{ width: 240 }}></th>
               </tr>
@@ -79,6 +115,8 @@ export function MachinesPage() {
             <tbody>
               {machines.map((m) => {
                 const counts = sessionCounts[m.name] ?? { running: 0, total: 0 };
+                const term = terminalByMachine[m.name];
+                const termRunning = term?.status.state === "running";
                 return (
                 <tr key={m.name}>
                   <td>{m.name}</td>
@@ -90,6 +128,32 @@ export function MachinesPage() {
                       {counts.running} running
                     </span>
                     <span className="muted">/ {counts.total}</span>
+                  </td>
+                  <td>
+                    {termRunning ? (
+                      <div className="row" style={{ gap: 4 }}>
+                        <a
+                          href={`http://127.0.0.1:${term!.local_port}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="pill ok"
+                          style={{ textDecoration: "none" }}
+                        >open :{term!.local_port}</a>
+                        <button
+                          className="secondary"
+                          style={{ padding: "2px 8px", fontSize: 11 }}
+                          onClick={() => onStopTerminal(m.name)}
+                        >stop</button>
+                      </div>
+                    ) : (
+                      <button
+                        className="secondary"
+                        style={{ padding: "3px 10px", fontSize: 12 }}
+                        disabled={spawningTerminal === m.name}
+                        onClick={() => onStartTerminal(m.name)}
+                        title="install ttyd if missing and spawn a default tmux+ttyd on the remote"
+                      >{spawningTerminal === m.name ? "starting…" : "Start"}</button>
+                    )}
                   </td>
                   <td>{m.tags?.map((t) => <span key={t} className="pill" style={{ marginRight: 4 }}>{t}</span>)}</td>
                   <td>
