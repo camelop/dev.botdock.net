@@ -42,9 +42,13 @@ export type InstalledState = {
 /** Read the ~/.botdock/installed.toml marker plus live tool availability. */
 export function readInstalledState(dir: DataDir, machine: Machine): InstalledState {
   // Tiny script that emits key=value pairs — easier to parse than wrangling
-  // a remote toml parser from shell.
+  // a remote toml parser from shell. The availability check is deliberately
+  // generous: a non-interactive ssh shell starts with a bare-bones PATH
+  // (often just /bin:/usr/bin), so we extend with the usual user-local and
+  // package-manager locations AND best-effort source the user's dotfiles.
+  // Missing that sourcing was the root cause of the "why does it insist on
+  // installing tmux when I already have tmux?" bug.
   const script = `
-set -u
 MARKER="$HOME/.botdock/installed.toml"
 TTYD_PATH=""
 TTYD_VERSION=""
@@ -55,7 +59,32 @@ if [ -f "$MARKER" ]; then
   TTYD_INSTALLED_AT=$(awk -F ' = ' '/^ttyd_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
 fi
 
-export PATH="$HOME/.botdock/bin:$HOME/.local/bin:$PATH"
+# Collect every plausible PATH first. These won't cost us anything if a
+# directory doesn't exist; exporting unreadable dirs is harmless.
+for p in \\
+  "$HOME/.botdock/bin" \\
+  "$HOME/.local/bin" \\
+  "$HOME/.bun/bin" \\
+  "$HOME/.cargo/bin" \\
+  "$HOME/bin" \\
+  /usr/local/bin \\
+  /usr/local/sbin \\
+  /opt/homebrew/bin \\
+  /opt/homebrew/sbin \\
+  /home/linuxbrew/.linuxbrew/bin \\
+  /home/linuxbrew/.linuxbrew/sbin \\
+  /snap/bin; do
+  case ":$PATH:" in *":$p:"*) ;; *) PATH="$p:$PATH" ;; esac
+done
+export PATH
+
+# Also source the user's dotfiles — best-effort, never fatal. This picks
+# up custom PATH additions (asdf, mise, conda, etc.) without us needing
+# to know about each one.
+for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+  [ -f "$f" ] && . "$f" >/dev/null 2>&1 || true
+done
+
 TTYD_BIN=$(command -v ttyd 2>/dev/null || true)
 TMUX_BIN=$(command -v tmux 2>/dev/null || true)
 CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
@@ -63,7 +92,9 @@ CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
 printf 'TTYD_PATH=%s\n'          "\${TTYD_PATH:-$TTYD_BIN}"
 printf 'TTYD_VERSION=%s\n'       "$TTYD_VERSION"
 printf 'TTYD_INSTALLED_AT=%s\n'  "$TTYD_INSTALLED_AT"
+printf 'TMUX_BIN=%s\n'           "$TMUX_BIN"
 printf 'TMUX_AVAILABLE=%s\n'     "$([ -n "$TMUX_BIN" ] && echo 1 || echo 0)"
+printf 'CLAUDE_BIN=%s\n'         "$CLAUDE_BIN"
 printf 'CLAUDE_AVAILABLE=%s\n'   "$([ -n "$CLAUDE_BIN" ] && echo 1 || echo 0)"
 `;
   const r = sshExec(dir, machine, "bash -s", script, 10_000);
