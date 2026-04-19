@@ -60,11 +60,16 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
 
   router.post("/api/sessions/:id/input", async ({ req, params }) => {
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
-    const body = await parseJsonBody<{ text: string }>(req);
-    if (typeof body.text !== "string" || body.text.length === 0) {
-      throw new HttpError(400, "text required");
+    const body = await parseJsonBody<{ text?: string; keys?: string[] }>(req);
+    const hasText = typeof body.text === "string";
+    const hasKeys = Array.isArray(body.keys) && body.keys.length > 0;
+    if (!hasText && !hasKeys) {
+      throw new HttpError(400, "text or keys required");
     }
-    await sendInputToSession(dir, params.id!, body.text);
+    await sendInputToSession(dir, params.id!, {
+      text: hasText ? body.text : undefined,
+      keys: hasKeys ? body.keys : undefined,
+    });
     return json({ ok: true });
   });
 

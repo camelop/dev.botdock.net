@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   sessionWatchUrl,
@@ -11,6 +11,7 @@ import {
 import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
 import { twoWordSlug } from "../lib/slug";
+import { parseAnsi, spanStyle } from "../lib/ansi";
 
 type SessionDraft = {
   machine: string;
@@ -526,22 +527,43 @@ function SendInput({ id }: { id: string }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
-  const onSend = async () => {
-    if (!text.trim()) return;
+
+  const sendText = async () => {
     setSending(true); setErr("");
     try {
-      await api.sendSessionInput(id, text);
+      await api.sendSessionInput(id, { text });
       setText("");
     } catch (e) { setErr(String((e as Error).message ?? e)); }
     finally { setSending(false); }
   };
-  const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(); }
+
+  const sendKey = async (key: string) => {
+    setSending(true); setErr("");
+    try { await api.sendSessionInput(id, { keys: [key] }); }
+    catch (e) { setErr(String((e as Error).message ?? e)); }
+    finally { setSending(false); }
   };
+
+  const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendText(); }
+  };
+
+  const Key = ({ k, label, title }: { k: string; label: string; title?: string }) => (
+    <button
+      type="button"
+      className="secondary"
+      disabled={sending}
+      onClick={() => sendKey(k)}
+      title={title ?? `send ${k}`}
+      style={{ padding: "4px 10px", fontSize: 12 }}
+    >{label}</button>
+  );
+
   return (
     <div style={{ marginTop: 12 }}>
       <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-        Send input (tmux send-keys + Enter). <span className="mono">⌘/Ctrl+Enter</span> to send.
+        Send input to the running pane. <span className="mono">⌘/Ctrl+Enter</span> sends the text box + Enter;
+        Send with empty text sends just Enter.
       </div>
       <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
         <textarea
@@ -552,7 +574,21 @@ function SendInput({ id }: { id: string }) {
           onKeyDown={onKeyDown}
           placeholder="message to the running agent…"
         />
-        <button disabled={sending || !text.trim()} onClick={onSend}>Send</button>
+        <button disabled={sending} onClick={sendText} title="send-keys: text (if any) then Enter">
+          {text ? "Send ↩" : "Enter ↩"}
+        </button>
+      </div>
+      <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+        <span className="muted" style={{ fontSize: 11, marginRight: 4 }}>Quick keys:</span>
+        <Key k="Escape" label="Esc" />
+        <Key k="Up" label="↑" />
+        <Key k="Down" label="↓" />
+        <Key k="Left" label="←" />
+        <Key k="Right" label="→" />
+        <Key k="Tab" label="Tab" />
+        <Key k="BSpace" label="⌫ Backspace" />
+        <Key k="C-c" label="Ctrl-C" title="interrupt" />
+        <Key k="C-d" label="Ctrl-D" title="EOF / exit" />
       </div>
       {err && <div className="error-banner" style={{ marginTop: 6 }}>{err}</div>}
     </div>
@@ -582,10 +618,19 @@ function renderEventPayload(ev: SessionEventRecord): string {
 }
 
 /**
- * Minimal ANSI stripper so terminal color codes don't render as garbage.
- * This doesn't interpret them — just filters them out. Good enough for M2.
+ * Render ANSI-styled pane output. Colors + bold/italic/underline are
+ * honored; cursor-move / clear-screen / OSC sequences are stripped because
+ * we're rendering to a scrollback div, not a terminal emulator.
  */
 function AnsiText({ text }: { text: string }) {
-  const cleaned = useMemo(() => text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "").replace(/\[\?[0-9]+[hl]/g, ""), [text]);
-  return <>{cleaned}</>;
+  const spans = useMemo(() => parseAnsi(text), [text]);
+  return (
+    <>
+      {spans.map((s, i) =>
+        Object.keys(s.style).length === 0
+          ? <React.Fragment key={i}>{s.text}</React.Fragment>
+          : <span key={i} style={spanStyle(s.style)}>{s.text}</span>
+      )}
+    </>
+  );
 }

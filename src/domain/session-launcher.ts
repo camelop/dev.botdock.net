@@ -48,29 +48,57 @@ export async function launchSession(dir: DataDir, id: string): Promise<Session> 
 }
 
 /**
- * Send a user task into the running session's tmux pane via send-keys + Enter.
- * Records a `user_input` event locally for the timeline.
+ * Send a user task into the running session's tmux pane.
+ *
+ * Two modes:
+ *   - text mode: send-keys -l (literal) followed by Enter. Any text, even
+ *     empty, results in a bare Enter being delivered — useful for default
+ *     "press Enter to confirm" prompts.
+ *   - keys mode: a list of tmux key names (e.g. "Enter", "Escape", "C-c",
+ *     "Up", "BSpace"). Sent with send-keys WITHOUT -l so tmux's key-name
+ *     parser is active.
+ *
+ * The two are mutually exclusive per call.
  */
-export async function sendInputToSession(dir: DataDir, id: string, text: string): Promise<void> {
+export async function sendInputToSession(
+  dir: DataDir,
+  id: string,
+  payload: { text?: string; keys?: string[] },
+): Promise<void> {
   const s = readSession(dir, id);
   if (s.status !== "running") throw new Error(`session ${id} is not running`);
   const machine = readMachine(dir, s.machine);
-  // Send-keys does the right thing with multi-line text if we quote it;
-  // Literal mode (-l) avoids meta-key interpretation.
-  const script = [
-    `tmux send-keys -l -t ${shQ(s.tmux_session)} ${shQ(text)}`,
-    `tmux send-keys -t ${shQ(s.tmux_session)} Enter`,
-    `echo BOTDOCK_SENT`,
-  ].join("\n");
-  const r = sshExec(dir, machine, "bash -s", script, 10_000);
+  const lines: string[] = [];
+  let summaryKind: "text" | "keys";
+  let summary: unknown;
+
+  if (payload.keys && payload.keys.length > 0) {
+    summaryKind = "keys";
+    summary = payload.keys;
+    for (const k of payload.keys) {
+      lines.push(`tmux send-keys -t ${shQ(s.tmux_session)} ${shQ(k)}`);
+    }
+  } else {
+    summaryKind = "text";
+    summary = payload.text ?? "";
+    const text = payload.text ?? "";
+    if (text.length > 0) {
+      lines.push(`tmux send-keys -l -t ${shQ(s.tmux_session)} ${shQ(text)}`);
+    }
+    lines.push(`tmux send-keys -t ${shQ(s.tmux_session)} Enter`);
+  }
+  lines.push(`echo BOTDOCK_SENT`);
+
+  const r = sshExec(dir, machine, "bash -s", lines.join("\n"), 10_000);
   if (r.code !== 0 || !r.stdout.includes("BOTDOCK_SENT")) {
     throw new Error(`send-keys failed: ${r.stderr.trim() || r.stdout.trim()}`);
   }
+
   appendEvent(dir, id, {
     ts: new Date().toISOString(),
     kind: "user_input",
     channel: "tmux",
-    text,
+    ...(summaryKind === "keys" ? { keys: summary as string[] } : { text: summary as string }),
   });
 }
 

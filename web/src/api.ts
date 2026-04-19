@@ -141,10 +141,10 @@ export const api = {
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
-  sendSessionInput: (id: string, text: string) =>
+  sendSessionInput: (id: string, body: { text?: string; keys?: string[] }) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/input`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     }),
   deleteSession: (id: string) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
