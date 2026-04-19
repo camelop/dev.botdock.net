@@ -41,13 +41,6 @@ export type InstalledState = {
 
 /** Read the ~/.botdock/installed.toml marker plus live tool availability. */
 export function readInstalledState(dir: DataDir, machine: Machine): InstalledState {
-  // Tiny script that emits key=value pairs — easier to parse than wrangling
-  // a remote toml parser from shell. The availability check is deliberately
-  // generous: a non-interactive ssh shell starts with a bare-bones PATH
-  // (often just /bin:/usr/bin), so we extend with the usual user-local and
-  // package-manager locations AND best-effort source the user's dotfiles.
-  // Missing that sourcing was the root cause of the "why does it insist on
-  // installing tmux when I already have tmux?" bug.
   const script = `
 MARKER="$HOME/.botdock/installed.toml"
 TTYD_PATH=""
@@ -59,35 +52,15 @@ if [ -f "$MARKER" ]; then
   TTYD_INSTALLED_AT=$(awk -F ' = ' '/^ttyd_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
 fi
 
-# Collect every plausible PATH first. These won't cost us anything if a
-# directory doesn't exist; exporting unreadable dirs is harmless.
-for p in \\
-  "$HOME/.botdock/bin" \\
-  "$HOME/.local/bin" \\
-  "$HOME/.bun/bin" \\
-  "$HOME/.cargo/bin" \\
-  "$HOME/bin" \\
-  /usr/local/bin \\
-  /usr/local/sbin \\
-  /opt/homebrew/bin \\
-  /opt/homebrew/sbin \\
-  /home/linuxbrew/.linuxbrew/bin \\
-  /home/linuxbrew/.linuxbrew/sbin \\
-  /snap/bin; do
-  case ":$PATH:" in *":$p:"*) ;; *) PATH="$p:$PATH" ;; esac
-done
-export PATH
-
-# Also source the user's dotfiles — best-effort, never fatal. This picks
-# up custom PATH additions (asdf, mise, conda, etc.) without us needing
-# to know about each one.
-for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
-  [ -f "$f" ] && . "$f" >/dev/null 2>&1 || true
-done
-
-TTYD_BIN=$(command -v ttyd 2>/dev/null || true)
-TMUX_BIN=$(command -v tmux 2>/dev/null || true)
-CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
+# Look up each tool. which searches PATH; whereis looks in standard system
+# locations regardless of PATH (covers the "ssh shell has a minimal PATH
+# but the binary is installed at /usr/bin" case).
+find_bin() {
+  which "$1" 2>/dev/null || whereis -b "$1" 2>/dev/null | awk '/:/ {print $2}'
+}
+TTYD_BIN=$(find_bin ttyd)
+TMUX_BIN=$(find_bin tmux)
+CLAUDE_BIN=$(find_bin claude)
 
 printf 'TTYD_PATH=%s\n'          "\${TTYD_PATH:-$TTYD_BIN}"
 printf 'TTYD_VERSION=%s\n'       "$TTYD_VERSION"
