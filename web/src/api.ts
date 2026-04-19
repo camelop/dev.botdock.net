@@ -162,3 +162,68 @@ export function sessionWatchUrl(id: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/watch`;
 }
+
+export type ForwardDirection = "local" | "remote" | "dynamic";
+export type ForwardState = "stopped" | "starting" | "running" | "failed";
+export type Forward = {
+  name: string;
+  machine: string;
+  direction: ForwardDirection;
+  local_port: number;
+  remote_host?: string;
+  remote_port?: number;
+  local_host?: string;
+  auto_start?: boolean;
+  description?: string;
+};
+export type ForwardWithStatus = Forward & {
+  description_line: string;
+  status: {
+    name: string;
+    state: ForwardState;
+    pid?: number;
+    started_at?: string;
+    stopped_at?: string;
+    exit_code?: number | null;
+    last_error?: string;
+  };
+};
+
+export type CreditAccount = {
+  nickname: string;
+  provider: string;
+  description: string;
+  added_at: string;
+  last_checked_at?: string;
+  balance?: number;
+  limit?: number;
+  unit?: string;
+  period?: string;
+  notes?: string;
+};
+
+export const creditsApi = {
+  list: () => request<CreditAccount[]>("/api/credits"),
+  get: (nickname: string) => request<CreditAccount>(`/api/credits/${encodeURIComponent(nickname)}`),
+  create: (body: CreditAccount & { credential?: string }) =>
+    request<CreditAccount>("/api/credits", { method: "POST", body: JSON.stringify(body) }),
+  update: (nickname: string, body: Partial<CreditAccount> & { credential?: string }) =>
+    request<CreditAccount>(`/api/credits/${encodeURIComponent(nickname)}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  remove: (nickname: string) =>
+    request<{ ok: true }>(`/api/credits/${encodeURIComponent(nickname)}`, { method: "DELETE" }),
+  getCredential: (nickname: string) =>
+    request<{ credential: string }>(`/api/credits/${encodeURIComponent(nickname)}/credential`),
+};
+
+export const forwardsApi = {
+  list: () => request<ForwardWithStatus[]>("/api/forwards"),
+  get: (name: string) => request<ForwardWithStatus>(`/api/forwards/${encodeURIComponent(name)}`),
+  create: (f: Forward) => request<ForwardWithStatus>("/api/forwards", { method: "POST", body: JSON.stringify(f) }),
+  update: (name: string, f: Forward) =>
+    request<ForwardWithStatus>(`/api/forwards/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(f) }),
+  remove: (name: string) => request<{ ok: true }>(`/api/forwards/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  start:  (name: string) => request<unknown>(`/api/forwards/${encodeURIComponent(name)}/start`, { method: "POST" }),
+  stop:   (name: string) => request<unknown>(`/api/forwards/${encodeURIComponent(name)}/stop`,  { method: "POST" }),
+};

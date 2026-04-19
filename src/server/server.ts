@@ -8,9 +8,12 @@ import { mountKeys } from "./handlers/keys.ts";
 import { mountMachines } from "./handlers/machines.ts";
 import { mountSecrets } from "./handlers/secrets.ts";
 import { mountSessions } from "./handlers/sessions.ts";
+import { mountForwards } from "./handlers/forwards.ts";
+import { mountCredits } from "./handlers/credits.ts";
 import { embeddedFiles } from "./embedded.ts";
 import { SessionPoller } from "../domain/session-poller.ts";
 import { readEvents, readRawRange, sessionExists } from "../domain/sessions.ts";
+import { ForwardManager } from "../domain/forward-manager.ts";
 
 type ServerConfig = {
   server?: { bind?: string; port?: number };
@@ -40,12 +43,17 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   const poller = new SessionPoller(dir);
   poller.resumeAll();
 
+  const forwardManager = new ForwardManager(dir);
+  forwardManager.startAutoForwards();
+
   const router = new Router();
   router.get("/api/status", () => json({ home: dir.root, version: "0.0.1", dev: !!opts.dev }));
   mountKeys(router, dir);
   mountMachines(router, dir);
   mountSecrets(router, dir);
   mountSessions(router, dir, poller);
+  mountForwards(router, dir, forwardManager);
+  mountCredits(router, dir);
 
   // Per-session WebSocket subscriptions: { sessionId → set of ws }
   type WsData = { sessionId: string; evOffset: number; rawOffset: number };

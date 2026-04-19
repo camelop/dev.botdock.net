@@ -434,25 +434,50 @@ export function SessionDetailModal(props: {
         {session && <Meta s={session} />}
         {session?.status === "running" && <SendInput id={session.id} />}
 
-        <h2>Live log</h2>
-        <div
-          ref={logRef}
-          className="mono scroll-panel"
-          style={{
-            background: "#0a0c10",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            padding: 10,
-            height: 260,
-            whiteSpace: "pre-wrap",
-            fontSize: 12,
-          }}
-        >
-          <AnsiText text={rawText} />
-          {session?.status === "running" && (
-            <span className="pill ok" style={{ fontSize: 10, marginTop: 8, display: "inline-block" }}>streaming</span>
-          )}
-        </div>
+        {session?.agent_kind === "claude-code" ? (
+          <>
+            <h2>Terminal</h2>
+            <div className="card" style={{ padding: 16 }}>
+              <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+                <strong>Live log is disabled for Claude Code sessions.</strong><br/>
+                Claude's TUI uses heavy cursor-positioning that doesn't render meaningfully in a
+                scrollback viewer. An <span className="mono">ttyd</span> integration is on the way
+                — it'll serve the tmux pane through a port-forward and show it here as a real
+                terminal embed.
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                In the meantime, to interact directly:
+                <pre className="code" style={{ marginTop: 6 }}>
+{`ssh ${session.machine === "local" ? "<machine>" : session.machine} \\
+  -t tmux attach -t ${session.tmux_session}`}
+                </pre>
+                Send-keys from the input box above still works if you don't want to attach.
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2>Live log</h2>
+            <div
+              ref={logRef}
+              className="mono scroll-panel"
+              style={{
+                background: "#0a0c10",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                padding: 10,
+                height: 260,
+                whiteSpace: "pre-wrap",
+                fontSize: 12,
+              }}
+            >
+              <AnsiText text={rawText} />
+              {session?.status === "running" && (
+                <span className="pill ok" style={{ fontSize: 10, marginTop: 8, display: "inline-block" }}>streaming</span>
+              )}
+            </div>
+          </>
+        )}
 
         <h2>Events</h2>
         <EventsTable events={events} />

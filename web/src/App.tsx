@@ -5,12 +5,16 @@ import { MachinesPage } from "./pages/MachinesPage";
 import { SecretsPage } from "./pages/SecretsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SessionsPage } from "./pages/SessionsPage";
+import { ForwardsPage } from "./pages/ForwardsPage";
+import { CreditsPage } from "./pages/CreditsPage";
 
-type Tab = "dashboard" | "sessions" | "keys" | "machines" | "secrets";
+type Tab = "dashboard" | "sessions" | "forwards" | "credits" | "keys" | "machines" | "secrets";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "dashboard", label: "Dashboard" },
   { id: "sessions", label: "Sessions" },
+  { id: "forwards", label: "Forwards" },
+  { id: "credits", label: "Credits" },
   { id: "keys", label: "Keys" },
   { id: "machines", label: "Machines" },
   { id: "secrets", label: "Secrets" },
@@ -58,6 +62,8 @@ export function App() {
         {err && <div className="error-banner">connection error: {err}</div>}
         {tab === "dashboard" && <DashboardPage />}
         {tab === "sessions" && <SessionsPage />}
+        {tab === "forwards" && <ForwardsPage />}
+        {tab === "credits" && <CreditsPage />}
         {tab === "keys" && <KeysPage />}
         {tab === "machines" && <MachinesPage />}
         {tab === "secrets" && <SecretsPage />}
