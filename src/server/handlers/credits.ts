@@ -9,6 +9,7 @@ import {
   writeCreditAccount,
   type CreditAccount,
 } from "../../domain/credit-accounts.ts";
+import { refreshCreditAccount } from "../../domain/credit-refresher.ts";
 
 type AccountInput = Partial<CreditAccount> & { credential?: string };
 
@@ -57,6 +58,7 @@ export function mountCredits(router: Router, dir: DataDir): void {
       description: body.description ?? cur.description,
       last_checked_at: body.last_checked_at ?? cur.last_checked_at,
       balance: body.balance !== undefined ? body.balance : cur.balance,
+      used: body.used !== undefined ? body.used : cur.used,
       limit: body.limit !== undefined ? body.limit : cur.limit,
       unit: body.unit ?? cur.unit,
       period: body.period ?? cur.period,
@@ -64,6 +66,18 @@ export function mountCredits(router: Router, dir: DataDir): void {
     };
     writeCreditAccount(dir, merged, body.credential);
     return json(merged);
+  });
+
+  router.post("/api/credits/:nickname/refresh", async ({ params }) => {
+    if (!creditAccountExists(dir, params.nickname!)) throw new HttpError(404, "not found");
+    try {
+      const updated = await refreshCreditAccount(dir, params.nickname!);
+      return json(updated);
+    } catch (err) {
+      // The refresher already persisted the error onto the account; surface
+      // the message to the caller so the UI can toast it.
+      throw new HttpError(502, err instanceof Error ? err.message : String(err));
+    }
   });
 
   router.delete("/api/credits/:nickname", ({ params }) => {

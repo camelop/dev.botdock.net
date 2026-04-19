@@ -22,11 +22,18 @@ export type CreditAccount = {
   description: string;
   added_at: string;
   last_checked_at?: string;
-  balance?: number;              // current available
-  limit?: number;                // cap / plan allotment
+  /** Remaining amount. Some providers expose this directly; others only
+   * expose `used`, in which case the UI computes limit - used. */
+  balance?: number;
+  /** Consumed amount in the current period (populated by refreshers). */
+  used?: number;
+  /** Plan cap / allotment. Often user-set unless provider exposes it. */
+  limit?: number;
   unit?: string;                 // "usd", "credits", "requests", "GB-month", …
   period?: string;               // "monthly", "one-time", …
   notes?: string;
+  /** Surface from the last refresh attempt, if it failed. Cleared on success. */
+  last_refresh_error?: string;
 };
 
 function paths(dir: DataDir, nickname: string) {
@@ -92,10 +99,12 @@ export function writeCreditAccount(
   };
   if (account.last_checked_at) meta.last_checked_at = account.last_checked_at;
   if (account.balance !== undefined) meta.balance = account.balance;
+  if (account.used !== undefined) meta.used = account.used;
   if (account.limit !== undefined) meta.limit = account.limit;
   if (account.unit) meta.unit = account.unit;
   if (account.period) meta.period = account.period;
   if (account.notes) meta.notes = account.notes;
+  if (account.last_refresh_error) meta.last_refresh_error = account.last_refresh_error;
 
   writeToml(p.meta, meta);
   return account;

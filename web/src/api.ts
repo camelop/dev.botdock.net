@@ -196,10 +196,12 @@ export type CreditAccount = {
   added_at: string;
   last_checked_at?: string;
   balance?: number;
+  used?: number;
   limit?: number;
   unit?: string;
   period?: string;
   notes?: string;
+  last_refresh_error?: string;
 };
 
 export const creditsApi = {
@@ -215,6 +217,8 @@ export const creditsApi = {
     request<{ ok: true }>(`/api/credits/${encodeURIComponent(nickname)}`, { method: "DELETE" }),
   getCredential: (nickname: string) =>
     request<{ credential: string }>(`/api/credits/${encodeURIComponent(nickname)}/credential`),
+  refresh: (nickname: string) =>
+    request<CreditAccount>(`/api/credits/${encodeURIComponent(nickname)}/refresh`, { method: "POST" }),
 };
 
 export const forwardsApi = {

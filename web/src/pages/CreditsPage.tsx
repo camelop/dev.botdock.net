@@ -64,6 +64,7 @@ export function CreditsPage() {
               account={a}
               onEdit={() => setEdit({ mode: "edit", nickname: a.nickname })}
               onDelete={() => onDelete(a.nickname)}
+              onRefreshed={refresh}
             />
           ))}
         </div>
@@ -80,16 +81,37 @@ export function CreditsPage() {
   );
 }
 
+const REFRESHABLE_PROVIDERS = new Set(["anthropic-api", "claude"]);
+
 function AccountCard(props: {
   account: CreditAccount;
   onEdit: () => void;
   onDelete: () => void;
+  onRefreshed: () => void;
 }) {
   const { account: a } = props;
-  const pct = (a.balance !== undefined && a.limit && a.limit > 0)
-    ? Math.min(100, Math.max(0, (a.balance / a.limit) * 100))
+
+  // Derive a "remaining" + "pct" for the progress bar. Prefer an explicit
+  // balance; otherwise compute from limit - used when both present.
+  const remaining = a.balance !== undefined
+    ? a.balance
+    : (a.limit !== undefined && a.used !== undefined ? a.limit - a.used : undefined);
+  const pct = (remaining !== undefined && a.limit && a.limit > 0)
+    ? Math.min(100, Math.max(0, (remaining / a.limit) * 100))
     : undefined;
   const low = pct !== undefined && pct < 20;
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshErr, setRefreshErr] = useState("");
+  const canRefresh = REFRESHABLE_PROVIDERS.has(a.provider);
+
+  const onRefresh = async () => {
+    setRefreshing(true); setRefreshErr("");
+    try { await creditsApi.refresh(a.nickname); props.onRefreshed(); }
+    catch (e) { setRefreshErr(String((e as Error).message ?? e)); }
+    finally { setRefreshing(false); }
+  };
+
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -98,17 +120,26 @@ function AccountCard(props: {
           <div className="muted" style={{ fontSize: 11 }}>{a.provider}{a.period ? ` · ${a.period}` : ""}</div>
         </div>
         <div className="actions">
+          {canRefresh && (
+            <button
+              className="secondary"
+              style={{ padding: "3px 8px", fontSize: 12 }}
+              onClick={onRefresh}
+              disabled={refreshing}
+              title="fetch usage from the provider API"
+            >{refreshing ? "…" : "↻"}</button>
+          )}
           <button className="secondary" style={{ padding: "3px 8px", fontSize: 12 }} onClick={props.onEdit}>Edit</button>
           <button className="secondary" style={{ padding: "3px 8px", fontSize: 12 }} onClick={props.onDelete}>×</button>
         </div>
       </div>
       {a.description && <div className="muted" style={{ fontSize: 12 }}>{a.description}</div>}
 
-      {a.balance !== undefined || a.limit !== undefined ? (
+      {remaining !== undefined || a.used !== undefined || a.limit !== undefined ? (
         <>
           <div className="row" style={{ alignItems: "baseline", gap: 6, marginTop: 4 }}>
             <span style={{ fontSize: 22, fontWeight: 600, color: low ? "var(--danger)" : undefined }}>
-              {a.balance?.toLocaleString() ?? "—"}
+              {remaining !== undefined ? remaining.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
             </span>
             <span className="muted" style={{ fontSize: 12 }}>
               {a.limit !== undefined ? `/ ${a.limit.toLocaleString()}` : ""} {a.unit ?? ""}
@@ -125,10 +156,22 @@ function AccountCard(props: {
               }} />
             </div>
           )}
+          {a.used !== undefined && (
+            <div className="muted" style={{ fontSize: 11 }}>
+              used {a.used.toLocaleString(undefined, { maximumFractionDigits: 2 })} {a.unit ?? ""}
+              {a.period ? ` in the last ${a.period === "monthly" ? "30d" : a.period}` : " in the last 30d"}
+            </div>
+          )}
         </>
       ) : (
         <div className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>
-          No balance recorded yet — Edit to set one.
+          No balance recorded yet — Edit to set one{canRefresh ? ", or hit ↻ to fetch from the API." : "."}
+        </div>
+      )}
+
+      {(refreshErr || a.last_refresh_error) && (
+        <div className="error-banner" style={{ fontSize: 11, padding: 6, margin: 0 }}>
+          {refreshErr || a.last_refresh_error}
         </div>
       )}
 
