@@ -96,7 +96,11 @@ export class ForwardManager extends EventEmitter {
       }
     }, 800);
 
-    proc.on("exit", (code, signal) => {
+    // Wait for `close` rather than `exit` — exit fires as soon as the process
+    // terminates, but the stderr stream may still have buffered data. close
+    // fires only after all stdio streams have been fully drained, so
+    // stderrBuf is guaranteed to have everything ssh printed.
+    proc.on("close", (code, signal) => {
       clearTimeout(startupTimer);
       try { cfg.dispose(); } catch {}
       const cleanlyStopped = entry.status.state === "starting" || entry.status.state === "running"
@@ -109,7 +113,7 @@ export class ForwardManager extends EventEmitter {
         started_at: entry.status.started_at,
         stopped_at: new Date().toISOString(),
         exit_code: code ?? null,
-        last_error: stderrBuf.trim() ? stderrBuf.trim().slice(0, 1024) : undefined,
+        last_error: stderrBuf.trim() ? stderrBuf.trim().slice(0, 2048) : undefined,
       };
       entry.proc = undefined;
       entry.cfg = undefined;

@@ -150,6 +150,63 @@ export function ensureTtyd(dir: DataDir, machine: Machine): InstalledState {
   return installTtyd(dir, machine);
 }
 
+/**
+ * Best-effort tmux install. Tries apt-get on Debian/Ubuntu boxes with
+ * passwordless sudo; if that fails we surface a clear error telling the
+ * user the one-liner they'd need to run themselves.
+ *
+ * We don't install tmux from source / binary because tmux has a runtime
+ * dep on libevent + ncurses and distro-provided packages are way more
+ * reliable than carrying our own.
+ */
+export function installTmux(dir: DataDir, machine: Machine): InstalledState {
+  const platform = detectPlatform(dir, machine);
+  if (platform.os !== "linux") {
+    throw new Error(
+      `tmux auto-install only supported on Linux right now. ` +
+      `On macOS: \`brew install tmux\`.`,
+    );
+  }
+  const script = `
+set -u
+if ! command -v apt-get >/dev/null 2>&1; then
+  echo "apt-get not found; BotDock only auto-installs tmux via apt for now." >&2
+  echo "Install it yourself: e.g. dnf install tmux / pacman -S tmux / apk add tmux." >&2
+  exit 127
+fi
+
+# Use -n so sudo fails fast instead of waiting for a password.
+if ! sudo -n true 2>/dev/null; then
+  if [ "$(id -u)" = "0" ]; then
+    : # already root, sudo not needed
+    APT() { apt-get "$@"; }
+  else
+    echo "tmux install needs sudo, but \\\`sudo -n true\\\` failed. Either:" >&2
+    echo "  - configure passwordless sudo for this user, or" >&2
+    echo "  - run on the remote:  sudo apt-get install -y tmux" >&2
+    exit 126
+  fi
+else
+  APT() { sudo -n apt-get "$@"; }
+fi
+
+DEBIAN_FRONTEND=noninteractive APT update -qq >/dev/null 2>&1 || true
+DEBIAN_FRONTEND=noninteractive APT install -y tmux
+echo "BOTDOCK_TMUX_INSTALLED"
+`;
+  const r = sshExec(dir, machine, "bash -s", script, 90_000);
+  if (r.code !== 0 || !r.stdout.includes("BOTDOCK_TMUX_INSTALLED")) {
+    throw new Error(`tmux install failed: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`);
+  }
+  return readInstalledState(dir, machine);
+}
+
+export function ensureTmux(dir: DataDir, machine: Machine): InstalledState {
+  const state = readInstalledState(dir, machine);
+  if (state.tmux_available) return state;
+  return installTmux(dir, machine);
+}
+
 // ---------------------------------------------------------------------------
 // Terminal session lifecycle (the tmux + ttyd pair per machine)
 // ---------------------------------------------------------------------------
@@ -168,21 +225,42 @@ export type TerminalStartResult = {
  * needed; reuses the existing port if our tmux session is already running.
  */
 export function startTerminal(dir: DataDir, machine: Machine): TerminalStartResult {
-  const installed = ensureTtyd(dir, machine);
+  // Ensure tmux first (it's a harder install — apt + sudo), then ttyd.
+  let installed = ensureTmux(dir, machine);
+  installed = ensureTtyd(dir, machine);
   if (!installed.tmux_available) {
     throw new Error(
-      "tmux not found on remote. Install it (apt install tmux / brew install tmux) before starting a terminal.",
+      "tmux still not available after install attempt. Check the output above " +
+      "or install manually on the remote.",
     );
   }
+
+  // Write a tiny launcher script so tmux's command doesn't need nested
+  // quoting. The launcher takes (port, inner_session_name) as $1 $2.
+  //
+  // Then `tmux new-session` can just invoke "$LAUNCHER $PORT $INNER" —
+  // one level of quoting, no surprises. Also the launcher is `exec`-style
+  // so the pane's PID is ttyd itself (useful for later ps-based probes).
   const script = `
 set -euo pipefail
 TMUX_NAME=${shQ(TERMINAL_TMUX_SESSION)}
 INNER=${shQ(TERMINAL_DEFAULT_INNER)}
 TTYD=${shQ(installed.ttyd!.path)}
+LAUNCHER="$HOME/.botdock/bin/ttyd-launcher.sh"
+
+mkdir -p "$HOME/.botdock/bin"
+cat > "$LAUNCHER" <<'LAUNCH_EOF'
+#!/bin/sh
+exec "__TTYD_PATH__" -p "$1" -i 127.0.0.1 -W tmux new-session -A -s "$2"
+LAUNCH_EOF
+# Replace the placeholder with the real ttyd path after the heredoc so we
+# don't have to escape the path itself.
+sed -i.bak "s|__TTYD_PATH__|$TTYD|" "$LAUNCHER" && rm -f "$LAUNCHER.bak"
+chmod +x "$LAUNCHER"
 
 # If our ttyd tmux session is already alive, discover its port from ps.
 if tmux has-session -t "$TMUX_NAME" 2>/dev/null; then
-  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -v grep \
+  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -v grep \\
          | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
   if [ -n "$PORT" ]; then
     echo "BOTDOCK_TTYD_ALREADY_RUNNING port=$PORT"
@@ -202,14 +280,36 @@ for p in $(seq 60000 60999); do
 done
 if [ -z "$PORT" ]; then echo "no free port on remote" >&2; exit 1; fi
 
-tmux new-session -d -s "$TMUX_NAME" \
-  "$TTYD -p $PORT -i 127.0.0.1 -W tmux new-session -A -s \\"$INNER\\""
-sleep 0.5
+tmux new-session -d -s "$TMUX_NAME" "$LAUNCHER $PORT $INNER"
+
+# Verify ttyd actually bound the port. Try up to ~3s before giving up —
+# ttyd startup is fast but we want to rule out "pane died immediately".
+ALIVE=0
+for i in 1 2 3 4 5 6; do
+  sleep 0.5
+  if command -v ss >/dev/null 2>&1; then
+    if ss -ltn 2>/dev/null | grep -q ":$PORT "; then ALIVE=1; break; fi
+  else
+    if (bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT" 2>/dev/null); then ALIVE=1; break; fi
+  fi
+done
+if [ "$ALIVE" != "1" ]; then
+  # ttyd failed to bind. Capture the pane's output before tearing down so
+  # the user can see what went wrong.
+  PANE_OUT=$(tmux capture-pane -p -t "$TMUX_NAME" 2>/dev/null || true)
+  tmux kill-session -t "$TMUX_NAME" 2>/dev/null || true
+  echo "BOTDOCK_TTYD_FAILED port=$PORT" >&2
+  echo "--- pane output ---" >&2
+  printf '%s\\n' "$PANE_OUT" >&2
+  exit 2
+fi
+
 echo "BOTDOCK_TTYD_STARTED port=$PORT"
 `;
   const r = sshExec(dir, machine, "bash -s", script, 30_000);
   if (r.code !== 0 || !/BOTDOCK_TTYD_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
-    throw new Error(`ttyd start failed: ${r.stderr.trim() || r.stdout.trim()}`);
+    const detail = r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
+    throw new Error(`ttyd start failed: ${detail}`);
   }
   const m = /port=(\d+)/.exec(r.stdout);
   if (!m) throw new Error("could not parse ttyd port from remote output");

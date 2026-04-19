@@ -109,6 +109,7 @@ function ForwardSection(props: ForwardActionHandlers & {
   emptyHint: string;
   readOnlyActions: boolean;
 }) {
+  const [showError, setShowError] = useState<{ name: string; error: string } | null>(null);
   return (
     <div style={{ marginTop: 24 }}>
       <h2 style={{ marginBottom: 4, color: "var(--fg)" }}>{props.title}</h2>
@@ -135,11 +136,16 @@ function ForwardSection(props: ForwardActionHandlers & {
                     {f.managed_by && <span className="pill" style={{ marginLeft: 6, fontSize: 10 }}>{f.managed_by}</span>}
                     {f.description && <div className="muted" style={{ fontSize: 11 }}>{f.description}</div>}
                   </td>
-                  <td><StatePill state={f.status.state} />{f.status.last_error && (
-                    <div className="muted" style={{ fontSize: 11, marginTop: 2 }} title={f.status.last_error}>
-                      {f.status.last_error.split("\n")[0]?.slice(0, 60)}
-                    </div>
-                  )}</td>
+                  <td>
+                    <StatePill state={f.status.state} />
+                    {f.status.last_error && (
+                      <button
+                        className="secondary"
+                        style={{ padding: "2px 8px", fontSize: 11, marginLeft: 4 }}
+                        onClick={() => setShowError({ name: f.name, error: f.status.last_error! })}
+                      >view error</button>
+                    )}
+                  </td>
                   <td className="mono" style={{ fontSize: 12 }}>{f.description_line}</td>
                   <td>{f.auto_start ? <span className="pill">on boot</span> : <span className="muted">no</span>}</td>
                   <td>
@@ -164,6 +170,14 @@ function ForwardSection(props: ForwardActionHandlers & {
           </table>
         )}
       </div>
+      {showError && (
+        <Modal title={`Error: ${showError.name}`} onClose={() => setShowError(null)}>
+          <pre className="code scroll-panel" style={{ maxHeight: 300 }}>{showError.error}</pre>
+          <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+            <button onClick={() => setShowError(null)}>Close</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
