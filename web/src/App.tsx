@@ -108,10 +108,17 @@ export function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <div className="brand">
+        <a
+          className="brand"
+          href="https://github.com/camelop/dev.botdock.net"
+          target="_blank"
+          rel="noreferrer"
+          title="View BotDock on GitHub"
+          style={{ color: "inherit", textDecoration: "none" }}
+        >
           <BotdockLogo />
           <span>BotDock</span>
-        </div>
+        </a>
         <div className="tabs" ref={navRef}>
           {NAV.map((entry) => {
             if (isNavGroup(entry)) {
