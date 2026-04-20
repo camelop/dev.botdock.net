@@ -7,8 +7,9 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { ForwardsPage } from "./pages/ForwardsPage";
 import { CreditsPage } from "./pages/CreditsPage";
+import { TerminalsPage } from "./pages/TerminalsPage";
 
-type Tab = "dashboard" | "sessions" | "budgets" | "keys" | "secrets" | "machines" | "forwards";
+type Tab = "dashboard" | "sessions" | "budgets" | "keys" | "secrets" | "machines" | "forwards" | "terminals";
 
 type NavItem  = { id: Tab; label: string };
 type NavGroup = { kind: "group"; label: string; items: NavItem[] };
@@ -28,8 +29,9 @@ const NAV: NavEntry[] = [
     kind: "group",
     label: "Machines",
     items: [
-      { id: "machines", label: "Machines" },
-      { id: "forwards", label: "Forwards" },
+      { id: "machines",  label: "Machines" },
+      { id: "forwards",  label: "Forwards" },
+      { id: "terminals", label: "Terminals" },
     ],
   },
   { id: "sessions", label: "Sessions" },
@@ -152,6 +154,7 @@ export function App() {
         {tab === "secrets" && <SecretsPage />}
         {tab === "machines" && <MachinesPage />}
         {tab === "forwards" && <ForwardsPage />}
+        {tab === "terminals" && <TerminalsPage />}
       </div>
     </div>
   );

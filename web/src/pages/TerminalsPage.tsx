@@ -3,24 +3,10 @@ import { forwardsApi, type ForwardWithStatus } from "../api";
 
 const TERMINAL_MANAGED_BY = "system:machine-terminal";
 
-/**
- * Embedded terminals section. Renders nothing when no machine has a
- * running system:machine-terminal forward, so it's safe to drop at the
- * top of the Machines page without creating empty vertical space on
- * fresh setups.
- */
-export function TerminalsSection() {
-  return <TerminalsImpl heading="h2" />;
-}
-
-/** Full page version, if/when we want a standalone route again. */
 export function TerminalsPage() {
-  return <TerminalsImpl heading="h1" />;
-}
-
-function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
   const [forwards, setForwards] = useState<ForwardWithStatus[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [connected, setConnected] = useState<Set<string>>(new Set());
   const [zoomed, setZoomed] = useState(false);
   const [err, setErr] = useState("");
 
@@ -37,13 +23,23 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
   const terminals = forwards.filter(
     (f) => f.managed_by === TERMINAL_MANAGED_BY && f.status.state === "running",
   );
+  const aliveNames = new Set(terminals.map((t) => t.machine));
 
-  // Pick a sensible default when the list changes.
+  // If a terminal goes away (forward stopped / removed), drop it from the
+  // connected set so we don't try to keep a dead iframe mounted.
+  useEffect(() => {
+    setConnected((prev) => {
+      const next = new Set<string>();
+      for (const n of prev) if (aliveNames.has(n)) next.add(n);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [Array.from(aliveNames).sort().join("|")]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pick a sensible default tab when the list changes — but do NOT
+  // auto-connect. The user must click Connect explicitly.
   useEffect(() => {
     if (terminals.length === 0) { setActive(null); return; }
-    if (!active || !terminals.some((t) => t.machine === active)) {
-      setActive(terminals[0]!.machine);
-    }
+    if (!active || !aliveNames.has(active)) setActive(terminals[0]!.machine);
   }, [terminals.map((t) => t.machine).join("|")]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Esc to exit zoom.
@@ -55,18 +51,32 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
   }, [zoomed]);
 
   const activeForward = terminals.find((t) => t.machine === active);
+  const activeConnected = active ? connected.has(active) : false;
 
-  // When embedded, skip the whole block if nothing is running.
-  if (terminals.length === 0 && Heading === "h2") return null;
+  const connect    = (name: string) => setConnected((prev) => new Set([...prev, name]));
+  const disconnect = (name: string) => setConnected((prev) => {
+    const next = new Set(prev); next.delete(name); return next;
+  });
 
   return (
-    <div style={{ marginBottom: Heading === "h2" ? 24 : 0 }}>
+    <div>
       {!zoomed && (
         <>
           <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
-            <Heading style={{ margin: 0 }}>Terminals</Heading>
+            <h1 style={{ margin: 0 }}>Terminals</h1>
             {activeForward && (
               <div className="row" style={{ gap: 6 }}>
+                {!activeConnected && (
+                  <button onClick={() => connect(activeForward.machine)} title="Load the ttyd iframe for this machine">
+                    Connect
+                  </button>
+                )}
+                {activeConnected && (
+                  <button className="secondary" onClick={() => disconnect(activeForward.machine)}
+                    title="Unmount this terminal's iframe (closes its WebSocket)">
+                    Disconnect
+                  </button>
+                )}
                 <a
                   href={`/api/machines/${encodeURIComponent(activeForward.machine)}/terminal/`}
                   target="_blank"
@@ -79,11 +89,15 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
                   }}
                   title="Open this terminal in a new browser tab"
                 >↗ New tab</a>
-                <button className="secondary" onClick={() => setZoomed(true)} title="Expand to full-screen (Esc to exit)">
+                <button className="secondary" onClick={() => setZoomed(true)} title="Expand to full screen (Esc to exit)">
                   ⛶ Full screen
                 </button>
               </div>
             )}
+          </div>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            Tabs stay dormant until you click <span className="mono">Connect</span> — keeps the browser
+            from opening every machine's WebSocket at once. Disconnect an active tab with the button above.
           </div>
           {err && <div className="error-banner">{err}</div>}
         </>
@@ -92,7 +106,7 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
       {terminals.length === 0 ? (
         <div className="card">
           <div className="empty">
-            No running terminals yet. Click "Start" on a machine below.
+            No running terminals yet. Go to Machines and click "Start" on a row.
           </div>
         </div>
       ) : (
@@ -109,6 +123,7 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
           >
             {terminals.map((t) => {
               const isActive = t.machine === active;
+              const isConnected = connected.has(t.machine);
               return (
                 <div
                   key={t.machine}
@@ -122,8 +137,17 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
                     borderBottom: isActive ? "2px solid var(--accent)" : "2px solid transparent",
                     fontSize: 13,
                     whiteSpace: "nowrap",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
                   }}
+                  title={isConnected ? "connected" : "not connected"}
                 >
+                  <span style={{
+                    display: "inline-block",
+                    width: 6, height: 6, borderRadius: 3,
+                    background: isConnected ? "var(--ok)" : "#4a5160",
+                  }} />
                   {t.machine}
                 </div>
               );
@@ -136,16 +160,41 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
                 className="secondary"
                 onClick={() => setZoomed(false)}
                 style={{ margin: 6 }}
-                title="Exit zoom (Esc)"
-              >× Exit zoom</button>
+                title="Exit full screen (Esc)"
+              >× Exit full screen</button>
             )}
           </div>
 
-          {/* Iframe stack — all mounted, only active visible, so switching
-              tabs doesn't drop the ws session. */}
+          {/* Iframe / connect prompt. Mounted iframes persist across tab
+              switches (display:none when inactive) so their WS stays open
+              and tmux scrollback is preserved. Non-connected tabs render a
+              dim placeholder instead. */}
           <div style={{ flex: 1, background: "#0a0c10", position: "relative" }}>
             {terminals.map((t) => {
               const isActive = t.machine === active;
+              const isConnected = connected.has(t.machine);
+              if (!isConnected) {
+                // Only render the placeholder when THIS tab is active —
+                // inactive non-connected tabs don't need any DOM at all.
+                if (!isActive) return null;
+                return (
+                  <div
+                    key={t.machine}
+                    style={{
+                      position: "absolute", inset: 0,
+                      display: "flex", flexDirection: "column",
+                      alignItems: "center", justifyContent: "center",
+                      gap: 14,
+                      color: "#4a5160",
+                    }}
+                  >
+                    <div style={{ fontSize: 14, color: "#6b7588" }}>
+                      Terminal for <span className="mono" style={{ color: "#9aa0a6" }}>{t.machine}</span> isn't connected.
+                    </div>
+                    <button onClick={() => connect(t.machine)}>Connect</button>
+                  </div>
+                );
+              }
               return (
                 <iframe
                   key={t.machine}
@@ -172,8 +221,8 @@ function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
 const normalStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  // 180px accounts for topbar + page heading + padding; tweak if the chrome changes.
-  height: "calc(100vh - 180px)",
+  // Leaves room for topbar + page heading + hint row.
+  height: "calc(100vh - 200px)",
   minHeight: 360,
   border: "1px solid var(--border)",
   borderRadius: 8,

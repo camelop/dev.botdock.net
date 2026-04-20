@@ -10,7 +10,6 @@ import {
   type TestResult,
 } from "../api";
 import { Modal } from "../components/Modal";
-import { TerminalsSection } from "./TerminalsPage";
 
 type EditTarget = { mode: "new" } | { mode: "edit"; name: string } | null;
 
@@ -102,8 +101,6 @@ export function MachinesPage() {
 
   return (
     <div>
-      <TerminalsSection />
-
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Machines</h1>
         <button onClick={() => setEdit({ mode: "new" })}>New machine</button>
