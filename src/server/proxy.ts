@@ -56,6 +56,18 @@ export async function proxyHttp(
       const lk = k.toLowerCase();
       if (lk === "transfer-encoding" || lk === "connection") continue;
       if (lk === "content-encoding" || lk === "content-length") continue;
+      // Allow iframe embedding — we need to host ttyd inside our own UI.
+      if (lk === "x-frame-options") continue;
+      if (lk === "content-security-policy") {
+        // Drop frame-ancestors clauses so the CSP doesn't block embedding.
+        const stripped = v
+          .split(";")
+          .map((d) => d.trim())
+          .filter((d) => d && !d.toLowerCase().startsWith("frame-ancestors"))
+          .join("; ");
+        if (stripped) outHeaders.set(k, stripped);
+        continue;
+      }
       outHeaders.set(k, v);
     }
     return new Response(upstream.body, {
