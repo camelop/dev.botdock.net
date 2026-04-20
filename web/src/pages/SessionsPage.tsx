@@ -369,10 +369,17 @@ function WorkdirPicker(props: {
   );
 }
 
-export function SessionDetailModal(props: {
+/**
+ * Presentation of a single session: terminal + transcript + events.
+ * Used standalone by SessionHubPage, and wrapped in a modal backdrop by
+ * SessionDetailModal. Pass `onClose` to render the × button in the top-
+ * right of the right column; omit it for contexts (like the hub) where
+ * the view is persistent.
+ */
+export function SessionView(props: {
   id: string;
-  onClose: () => void;
-  onChange: () => void | Promise<void>;
+  onClose?: () => void;
+  onChange?: () => void | Promise<void>;
 }) {
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEventRecord[]>([]);
@@ -423,24 +430,23 @@ export function SessionDetailModal(props: {
     try {
       const s = await api.stopSession(props.id);
       setSession(s);
-      await props.onChange();
+      await props.onChange?.();
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
   const onDelete = async () => {
     if (!confirm("Delete this session (files and all)?")) return;
     try {
       await api.deleteSession(props.id);
-      await props.onChange();
-      props.onClose();
+      await props.onChange?.();
+      props.onClose?.();
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
 
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal session-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div
+      className="session-modal"
+      onClick={(e) => e.stopPropagation()}
+    >
         {/* LEFT: terminal fills the column, SendInput pins to the bottom. */}
         <div className="session-left">
           <div className="terminal-fill">
@@ -478,36 +484,42 @@ export function SessionDetailModal(props: {
             Close is pinned to the top-right corner (doesn't fight for horizontal
             space with the title). Deactivate / Delete sit on their own row
             below the header so the meta never gets clipped. */}
-        <div className="session-right scroll-panel" style={{ position: "relative" }}>
-          <button
-            className="secondary"
-            onClick={props.onClose}
-            title="Close"
-            style={{
-              position: "absolute", top: 10, right: 14,
-              padding: "4px 10px", fontSize: 13, zIndex: 2,
-            }}
-          >×</button>
-          <div style={{ paddingRight: 40 /* leave room for × */ }}>
-            <h2 style={{ marginTop: 0, marginBottom: 4, wordBreak: "break-all", fontSize: 16 }}>
-              Session {props.id}
-            </h2>
-            {session && (
-              <div className="mono muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
-                <SessionPill session={session} />{" "}
-                {session.machine} · {session.workdir}
-              </div>
+        <div className="session-right scroll-panel">
+          {/* Title + all action buttons live on one row. Title ellipsizes so
+              Deactivate / × never get pushed to a new line. */}
+          <div className="row" style={{ gap: 6, alignItems: "center", marginBottom: 4 }}>
+            <h2 style={{
+              flex: 1,
+              minWidth: 0,
+              margin: 0,
+              fontSize: 16,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}>Session {props.id}</h2>
+            {session?.status === "active" && (
+              <button className="secondary" style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }} onClick={onStop}>
+                Deactivate
+              </button>
+            )}
+            {session && (session.status === "exited" || session.status === "failed_to_start") && (
+              <button className="secondary" style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }} onClick={onDelete}>
+                Delete
+              </button>
+            )}
+            {props.onClose && (
+              <button
+                className="secondary"
+                onClick={props.onClose}
+                title="Close"
+                style={{ padding: "4px 10px", fontSize: 13, flexShrink: 0 }}
+              >×</button>
             )}
           </div>
-
-          {session?.status === "active" && (
-            <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-              <button className="secondary" style={{ fontSize: 12, padding: "4px 12px" }} onClick={onStop}>Deactivate</button>
-            </div>
-          )}
-          {session && (session.status === "exited" || session.status === "failed_to_start") && (
-            <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-              <button className="secondary" style={{ fontSize: 12, padding: "4px 12px" }} onClick={onDelete}>Delete</button>
+          {session && (
+            <div className="mono muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
+              <SessionPill session={session} />{" "}
+              {session.machine} · {session.workdir}
             </div>
           )}
 
@@ -521,7 +533,19 @@ export function SessionDetailModal(props: {
           <h2>Events</h2>
           <EventsTable events={events} />
         </div>
-      </div>
+    </div>
+  );
+}
+
+/** Modal wrapper around SessionView — used from Sessions List / War Room. */
+export function SessionDetailModal(props: {
+  id: string;
+  onClose: () => void;
+  onChange: () => void | Promise<void>;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={() => { /* no-op; no backdrop dismiss */ }}>
+      <SessionView id={props.id} onClose={props.onClose} onChange={props.onChange} />
     </div>
   );
 }
@@ -800,12 +824,36 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
   // fresh handshake and re-measure its container — useful after modal
   // resizes that left the terminal drawn to stale dimensions.
   const [reloadKey, setReloadKey] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   useEffect(() => {
     if (!zoomed) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setZoomed(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomed]);
+
+  // When the container resizes (modal open, column reflow, full-screen
+  // toggle), nudge ttyd to re-measure by dispatching a resize event on
+  // the iframe's window. Same-origin via the proxy so this is allowed.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const fire = () => {
+      const win = iframeRef.current?.contentWindow;
+      if (!win) return;
+      try { win.dispatchEvent(new Event("resize")); } catch {}
+    };
+    const ro = new ResizeObserver(() => fire());
+    ro.observe(el);
+    // Fire a couple of delayed pings after mount — the first ttyd handshake
+    // can complete after the initial ResizeObserver tick.
+    const timers = [120, 400, 900].map((ms) => window.setTimeout(fire, ms));
+    return () => {
+      ro.disconnect();
+      timers.forEach(clearTimeout);
+    };
+  }, [reloadKey, zoomed]);
 
   const url = `/api/sessions/${encodeURIComponent(session.id)}/terminal/`;
   const isLive = session.status === "active" || session.status === "provisioning";
@@ -888,7 +936,7 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
           >⛶ Full screen</button>
         </div>
       )}
-      <div style={containerStyle}>
+      <div ref={containerRef} style={containerStyle}>
         {zoomed && (
           <div className="row" style={{ padding: 6, borderBottom: "1px solid var(--border)", background: "var(--bg-elev)" }}>
             <span className="muted" style={{ fontSize: 12, marginLeft: 10 }}>
@@ -900,10 +948,22 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
           </div>
         )}
         <iframe
+          ref={iframeRef}
           key={reloadKey}
           title={`session-${session.id}-terminal`}
           src={url}
-          style={{ flex: 1, border: "none", width: "100%", display: "block" }}
+          scrolling="no"
+          onLoad={() => {
+            // ttyd sometimes measures before the flex container has its
+            // final size. Fire a couple of resizes post-load so it
+            // re-fits without the user needing to hit Reload.
+            const win = iframeRef.current?.contentWindow;
+            if (!win) return;
+            [60, 250, 600].forEach((ms) => setTimeout(() => {
+              try { win.dispatchEvent(new Event("resize")); } catch {}
+            }, ms));
+          }}
+          style={{ flex: 1, border: "none", width: "100%", display: "block", overflow: "hidden" }}
         />
       </div>
     </>
