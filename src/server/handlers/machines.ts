@@ -170,7 +170,9 @@ if os.path.isdir(cc_root):
             try:
                 with open(full, "r", errors="replace") as fh:
                     for i, line in enumerate(fh):
-                        if i > 40: break
+                        if i > 200: break  # prompt can sit well past the
+                                           # permission-mode / file-history
+                                           # scaffolding that CC writes first
                         line = line.strip()
                         if not line: continue
                         try:
@@ -179,17 +181,31 @@ if os.path.isdir(cc_root):
                             continue
                         if not cwd and isinstance(rec.get("cwd"), str):
                             cwd = rec["cwd"]
-                        if not preview and rec.get("type") == "user":
-                            msg = rec.get("message", {})
-                            if isinstance(msg, dict):
-                                content = msg.get("content")
-                                if isinstance(content, str):
-                                    preview = content
+                        if not preview:
+                            # Classify like the frontend's parseTranscript: a
+                            # "real" user message has message.role == "user"
+                            # AND content blocks that aren't all tool_result
+                            # (tool replies get wrapped as user messages too).
+                            msg = rec.get("message")
+                            role = msg.get("role") if isinstance(msg, dict) else None
+                            top_type = rec.get("type")
+                            # Accept either signal — different CC versions set
+                            # message.role or just the top-level type.
+                            if role == "user" or (top_type == "user" and isinstance(msg, dict)):
+                                content = msg.get("content") if isinstance(msg, dict) else None
+                                if isinstance(content, str) and content.strip():
+                                    preview = content.strip()
                                 elif isinstance(content, list):
-                                    for c in content:
-                                        if isinstance(c, dict) and c.get("type") == "text":
-                                            preview = c.get("text", "") or ""
-                                            break
+                                    # Skip entries that are only tool_result
+                                    # blocks — those aren't the user's prompt.
+                                    texts = [
+                                        c.get("text", "") for c in content
+                                        if isinstance(c, dict) and c.get("type") == "text"
+                                           and isinstance(c.get("text"), str)
+                                    ]
+                                    first = next((t for t in texts if t.strip()), None)
+                                    if first:
+                                        preview = first.strip()
                         if cwd and preview:
                             break
             except Exception:
