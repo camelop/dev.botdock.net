@@ -10,6 +10,8 @@ import { mountSecrets } from "./handlers/secrets.ts";
 import { mountSessions } from "./handlers/sessions.ts";
 import { mountForwards } from "./handlers/forwards.ts";
 import { mountCredits } from "./handlers/credits.ts";
+import { proxyHttp, tryUpgradeWsProxy, openProxyWs, relayProxyWsMessage, closeProxyWs, type WsProxyData } from "./proxy.ts";
+import { forwardExists, readForward } from "../domain/forwards.ts";
 import { embeddedFiles } from "./embedded.ts";
 import { SessionPoller } from "../domain/session-poller.ts";
 import { readEvents, readRawRange, sessionExists } from "../domain/sessions.ts";
@@ -56,8 +58,16 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   mountCredits(router, dir);
 
   // Per-session WebSocket subscriptions: { sessionId → set of ws }
-  type WsData = { sessionId: string; evOffset: number; rawOffset: number };
-  const subs = new Map<string, Set<Bun.ServerWebSocket<WsData>>>();
+  type SessionWatchData = { kind: "session-watch"; sessionId: string; evOffset: number; rawOffset: number };
+  type LobbyData        = { kind: "lobby"; sessionId: "" };
+  type WsData = SessionWatchData | LobbyData | WsProxyData;
+  const subs = new Map<string, Set<Bun.ServerWebSocket<SessionWatchData>>>();
+
+  function terminalForwardPort(machineName: string): number | null {
+    const fname = `terminal-${machineName}`;
+    if (!forwardExists(dir, fname)) return null;
+    return readForward(dir, fname).local_port;
+  }
 
   poller.on("update", (sessionId: string) => {
     const set = subs.get(sessionId);
@@ -65,7 +75,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
     for (const ws of set) pushDelta(ws);
   });
 
-  function pushDelta(ws: Bun.ServerWebSocket<WsData>): void {
+  function pushDelta(ws: Bun.ServerWebSocket<SessionWatchData>): void {
     const { sessionId } = ws.data;
     if (!sessionExists(dir, sessionId)) return;
     const ev = readEvents(dir, sessionId, ws.data.evOffset);
@@ -87,24 +97,41 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
     port,
     websocket: {
       open(ws: Bun.ServerWebSocket<WsData>) {
-        if (!ws.data?.sessionId) {
+        if (ws.data.kind === "proxy") {
+          openProxyWs({
+            send: (m) => ws.send(m as string),
+            close: (code, reason) => ws.close(code, reason),
+            data: ws.data,
+          });
+          return;
+        }
+        if (ws.data.kind === "lobby") {
           ws.send(JSON.stringify({ type: "hello", home: dir.root }));
           return;
         }
+        // session-watch
         const set = subs.get(ws.data.sessionId) ?? new Set();
-        set.add(ws);
+        set.add(ws as Bun.ServerWebSocket<SessionWatchData>);
         subs.set(ws.data.sessionId, set);
         ws.send(JSON.stringify({ type: "hello", session: ws.data.sessionId }));
-        // Initial snapshot so the client starts with state in hand.
-        pushDelta(ws);
+        pushDelta(ws as Bun.ServerWebSocket<SessionWatchData>);
       },
       close(ws: Bun.ServerWebSocket<WsData>) {
-        const set = ws.data?.sessionId ? subs.get(ws.data.sessionId) : undefined;
-        set?.delete(ws);
-        if (set && set.size === 0 && ws.data?.sessionId) subs.delete(ws.data.sessionId);
+        if (ws.data.kind === "proxy") {
+          closeProxyWs(ws.data);
+          return;
+        }
+        if (ws.data.kind === "session-watch") {
+          const set = subs.get(ws.data.sessionId);
+          set?.delete(ws as Bun.ServerWebSocket<SessionWatchData>);
+          if (set && set.size === 0) subs.delete(ws.data.sessionId);
+        }
       },
-      message() {
-        // Clients don't need to send anything for M2.
+      message(ws: Bun.ServerWebSocket<WsData>, msg) {
+        if (ws.data.kind === "proxy") {
+          relayProxyWsMessage(ws.data, msg);
+        }
+        // Non-proxy clients don't currently send anything.
       },
     },
     async fetch(req, srv) {
@@ -118,7 +145,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
 
       // WebSocket upgrades: /api/events (lobby) and /api/sessions/:id/watch
       if (url.pathname === "/api/events") {
-        if (srv.upgrade(req, { data: { sessionId: "", evOffset: 0, rawOffset: 0 } })) {
+        if (srv.upgrade(req, { data: { kind: "lobby", sessionId: "" } satisfies LobbyData })) {
           return new Response(null);
         }
         return error(400, "expected websocket");
@@ -127,10 +154,37 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
       if (watchMatch) {
         const sessionId = decodeURIComponent(watchMatch[1]!);
         if (!sessionExists(dir, sessionId)) return error(404, "session not found");
-        if (srv.upgrade(req, { data: { sessionId, evOffset: 0, rawOffset: 0 } })) {
+        if (srv.upgrade(req, {
+          data: { kind: "session-watch", sessionId, evOffset: 0, rawOffset: 0 } satisfies SessionWatchData,
+        })) {
           return new Response(null);
         }
         return error(400, "expected websocket");
+      }
+
+      // Reverse proxy for per-machine terminals (ttyd under --base-path).
+      // Matches /api/machines/:name/terminal and /api/machines/:name/terminal/*
+      // for both HTTP and WebSocket traffic.
+      const termMatch = url.pathname.match(/^\/api\/machines\/([^/]+)\/terminal(\/.*)?$/);
+      if (termMatch) {
+        const machineName = decodeURIComponent(termMatch[1]!);
+        const remainingPath = termMatch[2] ?? "/";
+        const port = terminalForwardPort(machineName);
+        if (port === null) {
+          return new Response(
+            `No terminal forward for machine "${machineName}" — start it from the Machines page first.`,
+            { status: 503, headers: { "content-type": "text/plain" } },
+          );
+        }
+        // ttyd was started with --base-path=/api/machines/<name>/terminal,
+        // so it expects its own paths to arrive with that prefix intact.
+        const upstreamPath = `/api/machines/${encodeURIComponent(machineName)}/terminal${remainingPath === "/" ? "" : remainingPath}`;
+
+        // WebSocket?
+        const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
+        if (wsResp) return wsResp;
+
+        return proxyHttp(req, port, upstreamPath);
       }
 
       // REST routes.

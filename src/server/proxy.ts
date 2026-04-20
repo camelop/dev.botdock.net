@@ -1,0 +1,168 @@
+/**
+ * Generic reverse proxy to a localhost upstream (HTTP + WebSocket).
+ *
+ * Used to surface per-machine ttyd UIs under the BotDock web server's own
+ * port, so a browser talking to the daemon (possibly via ssh port-forward
+ * to the daemon's 4717) can reach tunnels bound on the daemon host's
+ * localhost without the browser ever needing direct access to those ports.
+ */
+
+import type { Server } from "bun";
+type BunServer = Server<unknown>;
+
+/** Forward an HTTP request to localhost:<port> and stream the response back. */
+export async function proxyHttp(
+  req: Request,
+  port: number,
+  upstreamPath: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const target = `http://127.0.0.1:${port}${upstreamPath}${url.search}`;
+
+  // Copy headers except the ones Bun rejects / that make no sense to
+  // forward (Host gets derived from the URL). Connection/Upgrade are
+  // irrelevant for HTTP proxies.
+  const headers = new Headers();
+  for (const [k, v] of req.headers) {
+    const lk = k.toLowerCase();
+    if (lk === "host" || lk === "connection" || lk === "upgrade") continue;
+    headers.set(k, v);
+  }
+  headers.set("x-forwarded-for", req.headers.get("x-forwarded-for") ?? "127.0.0.1");
+  headers.set("x-forwarded-host", url.host);
+  headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+
+  const init: RequestInit & { duplex?: string } = { method: req.method, headers };
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    init.body = req.body ?? undefined;
+    init.duplex = "half"; // Bun-specific; ignored by stricter typings
+  }
+
+  try {
+    const upstream = await fetch(target, init);
+    // Copy response headers, strip hop-by-hop ones.
+    const outHeaders = new Headers();
+    for (const [k, v] of upstream.headers) {
+      const lk = k.toLowerCase();
+      if (lk === "transfer-encoding" || lk === "connection") continue;
+      outHeaders.set(k, v);
+    }
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: outHeaders,
+    });
+  } catch (err) {
+    return new Response(
+      `Proxy error: upstream 127.0.0.1:${port} unreachable. ` +
+      `${err instanceof Error ? err.message : String(err)}`,
+      { status: 502, headers: { "content-type": "text/plain" } },
+    );
+  }
+}
+
+/**
+ * Upgrade an incoming WebSocket and proxy it to `ws://127.0.0.1:<port><path>`.
+ * Each pair of sockets is wired bidirectionally; either side closing tears
+ * the other down.
+ */
+export type WsProxyData = {
+  kind: "proxy";
+  upstream?: WebSocket;
+  upstreamReady: boolean;
+  pending: Array<string | ArrayBuffer>;
+  upstreamUrl: string;
+};
+
+export function tryUpgradeWsProxy(
+  srv: BunServer,
+  req: Request,
+  port: number,
+  upstreamPath: string,
+): Response | null {
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return null;
+
+  const url = new URL(req.url);
+  const upstreamUrl = `ws://127.0.0.1:${port}${upstreamPath}${url.search}`;
+  const data: WsProxyData = {
+    kind: "proxy",
+    upstreamReady: false,
+    pending: [],
+    upstreamUrl,
+  };
+  if (srv.upgrade(req, { data })) return new Response(null);
+  return new Response("websocket upgrade failed", { status: 400 });
+}
+
+/**
+ * Wire the client↔upstream data pump for a proxied WS. Call from the
+ * Bun.serve websocket.open handler when ws.data.kind === "proxy".
+ */
+export function openProxyWs(ws: {
+  send: (msg: string | ArrayBuffer) => void;
+  close: (code?: number, reason?: string) => void;
+  data: WsProxyData;
+}): void {
+  const subprotocol = undefined; // ttyd doesn't require a specific subprotocol
+  const upstream = subprotocol
+    ? new WebSocket(ws.data.upstreamUrl, subprotocol)
+    : new WebSocket(ws.data.upstreamUrl);
+  ws.data.upstream = upstream;
+  upstream.binaryType = "arraybuffer";
+
+  upstream.addEventListener("open", () => {
+    ws.data.upstreamReady = true;
+    // Flush anything that arrived from the client while we were still
+    // establishing the upstream connection.
+    for (const msg of ws.data.pending) upstream.send(msg);
+    ws.data.pending = [];
+  });
+  upstream.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (typeof d === "string") {
+      ws.send(d);
+    } else if (d instanceof ArrayBuffer) {
+      ws.send(d);
+    } else if (ArrayBuffer.isView(d)) {
+      // Copy into a fresh ArrayBuffer so the typing matches what our send
+      // signature accepts (avoids SharedArrayBuffer-typed views).
+      const view = d as ArrayBufferView;
+      const ab = new ArrayBuffer(view.byteLength);
+      new Uint8Array(ab).set(new Uint8Array(view.buffer as ArrayBuffer, view.byteOffset, view.byteLength));
+      ws.send(ab);
+    }
+  });
+  upstream.addEventListener("close", (ev) => {
+    try { ws.close(ev.code, ev.reason); } catch {}
+  });
+  upstream.addEventListener("error", () => {
+    try { ws.close(1011, "upstream error"); } catch {}
+  });
+}
+
+/**
+ * Relay a client message into the upstream (or buffer it until upstream
+ * is ready). Call from Bun.serve websocket.message when kind === "proxy".
+ */
+export function relayProxyWsMessage(
+  data: WsProxyData,
+  msg: string | Buffer | ArrayBuffer | Uint8Array,
+): void {
+  let payload: string | ArrayBuffer;
+  if (typeof msg === "string") payload = msg;
+  else if (msg instanceof ArrayBuffer) payload = msg;
+  else {
+    const ab = new ArrayBuffer(msg.byteLength);
+    new Uint8Array(ab).set(new Uint8Array(msg.buffer as ArrayBuffer, msg.byteOffset, msg.byteLength));
+    payload = ab;
+  }
+  if (data.upstream && data.upstreamReady) {
+    data.upstream.send(payload);
+  } else {
+    data.pending.push(payload);
+  }
+}
+
+export function closeProxyWs(data: WsProxyData, code?: number, reason?: string): void {
+  try { data.upstream?.close(code, reason); } catch {}
+}

@@ -5,7 +5,15 @@ import { readMachine } from "./machines.ts";
 import { buildSshConfig } from "../lib/sshconfig.ts";
 import { readForward, type Forward } from "./forwards.ts";
 
-export type ForwardState = "stopped" | "starting" | "running" | "failed";
+/**
+ * - idle:     never been attempted this process lifecycle. Default for a
+ *             forward on disk that the manager hasn't touched yet.
+ * - starting: spawned, waiting for ssh to settle.
+ * - running:  ssh is alive and the forward is wired.
+ * - stopped:  we explicitly stopped it (SIGTERM/SIGINT received).
+ * - failed:   exited with a non-clean signal; inspect last_error.
+ */
+export type ForwardState = "idle" | "stopped" | "starting" | "running" | "failed";
 
 export type ForwardStatus = {
   name: string;
@@ -59,11 +67,11 @@ export class ForwardManager extends EventEmitter {
 
   /** Current status for every configured forward (including stopped ones). */
   listStatuses(names: string[]): ForwardStatus[] {
-    return names.map((n) => this.entries.get(n)?.status ?? { name: n, state: "stopped" });
+    return names.map((n) => this.entries.get(n)?.status ?? { name: n, state: "idle" });
   }
 
   getStatus(name: string): ForwardStatus {
-    return this.entries.get(name)?.status ?? { name, state: "stopped" };
+    return this.entries.get(name)?.status ?? { name, state: "idle" };
   }
 
   async start(name: string): Promise<ForwardStatus> {

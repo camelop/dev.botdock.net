@@ -144,12 +144,12 @@ export function MachinesPage() {
                     {termRunning ? (
                       <div className="row" style={{ gap: 4 }}>
                         <a
-                          href={`http://127.0.0.1:${term!.local_port}`}
+                          href={`/api/machines/${encodeURIComponent(m.name)}/terminal/`}
                           target="_blank"
                           rel="noreferrer"
                           className="pill ok"
                           style={{ textDecoration: "none" }}
-                        >open :{term!.local_port}</a>
+                        >open ↗</a>
                         <button
                           className="secondary"
                           style={{ padding: "2px 8px", fontSize: 11 }}

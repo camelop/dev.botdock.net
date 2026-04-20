@@ -138,7 +138,7 @@ echo "ENTRIES_END"
           forward: cur,
           status,
           installed: readInstalledState(dir, machine),
-          url: `http://127.0.0.1:${cur.local_port}`,
+          url: `/api/machines/${encodeURIComponent(machine.name)}/terminal/`,
         });
       }
     }
@@ -168,7 +168,7 @@ echo "ENTRIES_END"
       forward,
       status: forwardManager.getStatus(fname),
       installed: res.installed,
-      url: `http://127.0.0.1:${localPort}`,
+      url: `/api/machines/${encodeURIComponent(machine.name)}/terminal/`,
     });
   });
 

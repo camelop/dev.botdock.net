@@ -187,8 +187,12 @@ function ForwardSection(props: ForwardActionHandlers & {
 }
 
 function StatePill({ state }: { state: ForwardState }) {
-  const cls = state === "running" ? "ok" : state === "failed" ? "err" : state === "starting" ? "warn" : "";
-  return <span className={`pill ${cls}`}>{state}</span>;
+  const cls = state === "running" ? "ok"
+    : state === "failed" ? "err"
+    : state === "starting" ? "warn"
+    : "";
+  const label = state === "idle" ? "not started" : state;
+  return <span className={`pill ${cls}`}>{label}</span>;
 }
 
 function blank(machines: Machine[]): Forward {

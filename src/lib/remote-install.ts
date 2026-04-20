@@ -224,6 +224,15 @@ export type TerminalStartResult = {
 };
 
 /**
+ * The URL base-path ttyd is told to serve under. Must match the BotDock web
+ * server route that proxies to it — browsers loading ttyd's HTML will
+ * request JS/CSS and open the WebSocket under this prefix.
+ */
+export function terminalBasePath(machineName: string): string {
+  return `/api/machines/${encodeURIComponent(machineName)}/terminal`;
+}
+
+/**
  * Idempotently ensure the per-machine terminal tmux + ttyd is up.
  * Allocates a high port on the remote (60000-60999) if a fresh spawn is
  * needed; reuses the existing port if our tmux session is already running.
@@ -239,23 +248,28 @@ export function startTerminal(dir: DataDir, machine: Machine): TerminalStartResu
     );
   }
 
+  const basePath = terminalBasePath(machine.name);
+
   // Write a tiny launcher script so tmux's command doesn't need nested
-  // quoting. The launcher takes (port, inner_session_name) as $1 $2.
+  // quoting. The launcher takes (port, inner_session_name, base_path).
   //
-  // Then `tmux new-session` can just invoke "$LAUNCHER $PORT $INNER" —
-  // one level of quoting, no surprises. Also the launcher is `exec`-style
-  // so the pane's PID is ttyd itself (useful for later ps-based probes).
+  // --base-path tells ttyd to serve everything under BASE_PATH (so its
+  // HTML, JS, CSS, and WebSocket endpoint all include the prefix). That
+  // prefix matches the BotDock web server route that reverse-proxies to
+  // this ttyd, making the whole thing accessible through the daemon's
+  // own port without leaking the ad-hoc forward port to the browser.
   const script = `
 set -euo pipefail
 TMUX_NAME=${shQ(TERMINAL_TMUX_SESSION)}
 INNER=${shQ(TERMINAL_DEFAULT_INNER)}
 TTYD=${shQ(installed.ttyd!.path)}
+BASE_PATH=${shQ(basePath)}
 LAUNCHER="$HOME/.botdock/bin/ttyd-launcher.sh"
 
 mkdir -p "$HOME/.botdock/bin"
 cat > "$LAUNCHER" <<'LAUNCH_EOF'
 #!/bin/sh
-exec "__TTYD_PATH__" -p "$1" -i 127.0.0.1 -W tmux new-session -A -s "$2"
+exec "__TTYD_PATH__" -p "$1" -i 127.0.0.1 -W --base-path "$3" tmux new-session -A -s "$2"
 LAUNCH_EOF
 # Replace the placeholder with the real ttyd path after the heredoc so we
 # don't have to escape the path itself.
@@ -284,7 +298,7 @@ for p in $(seq 60000 60999); do
 done
 if [ -z "$PORT" ]; then echo "no free port on remote" >&2; exit 1; fi
 
-tmux new-session -d -s "$TMUX_NAME" "$LAUNCHER $PORT $INNER"
+tmux new-session -d -s "$TMUX_NAME" "$LAUNCHER $PORT $INNER $BASE_PATH"
 
 # Verify ttyd actually bound the port. Try up to ~3s before giving up —
 # ttyd startup is fast but we want to rule out "pane died immediately".

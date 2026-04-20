@@ -170,7 +170,7 @@ export function sessionWatchUrl(id: string): string {
 }
 
 export type ForwardDirection = "local" | "remote" | "dynamic";
-export type ForwardState = "stopped" | "starting" | "running" | "failed";
+export type ForwardState = "idle" | "stopped" | "starting" | "running" | "failed";
 export type Forward = {
   name: string;
   machine: string;
