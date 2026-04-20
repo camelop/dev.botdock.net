@@ -75,7 +75,23 @@ export class ForwardManager extends EventEmitter {
     const machine = readMachine(this.dir, forward.machine);
     const cfg = buildSshConfig(this.dir, machine);
 
-    const args = ["-F", cfg.configPath, "-N", ...forwardArgs(forward), cfg.targetAlias];
+    // Critical: disable ControlMaster for forward processes. Our ssh config
+    // enables auto-mux (great for poller's many short commands), but when a
+    // forward is submitted through an existing master the submitting client
+    // exits immediately after registering the -L — we'd lose the ability to
+    // start/stop/kill per-forward, and the exit-on-starting-state heuristic
+    // would wrongly mark the tunnel as "failed".
+    //
+    // A dedicated ssh process per forward owns its own TCP session and
+    // lifecycle. Slight overhead (extra handshake) but unambiguous state.
+    const args = [
+      "-F", cfg.configPath,
+      "-o", "ControlMaster=no",
+      "-o", "ControlPath=none",
+      "-N",
+      ...forwardArgs(forward),
+      cfg.targetAlias,
+    ];
     // Turn on ssh's own verbose logging (-v) during startup so even in
     // "nothing on stderr" failure modes we get something in the buffer.
     const argsWithVerbose = [...args.slice(0, 2), "-v", ...args.slice(2)];
