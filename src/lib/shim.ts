@@ -93,15 +93,51 @@ PROMPT=""
 SKIP_TRUST=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
-EXTRA_ARGS=""
+
+# Pre-accept claude's folder-trust prompt for this workdir. This writes
+# projects.<cwd>.hasTrustDialogAccepted = true into ~/.claude.json so the
+# "Is this a project you trust?" dialog doesn't appear. We intentionally
+# do NOT pass --dangerously-skip-permissions — that also skips per-tool
+# prompts, which the user may still want.
 if [ -n "$SKIP_TRUST" ]; then
-  EXTRA_ARGS="--dangerously-skip-permissions"
+  CWD=$(pwd)
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$CWD" <<'__BOTDOCK_TRUST__' || true
+import json, os, sys, tempfile
+p = os.path.expanduser("~/.claude.json")
+try:
+    with open(p) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    cfg = {}
+except Exception:
+    sys.exit(0)  # don't risk corrupting an unparseable config
+if not isinstance(cfg, dict):
+    sys.exit(0)
+projects = cfg.setdefault("projects", {})
+if not isinstance(projects, dict):
+    sys.exit(0)
+entry = projects.setdefault(sys.argv[1], {})
+if not isinstance(entry, dict):
+    sys.exit(0)
+entry["hasTrustDialogAccepted"] = True
+fd, tmp = tempfile.mkstemp(prefix=".claude.", dir=os.path.dirname(p))
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, p)
+except Exception:
+    try: os.unlink(tmp)
+    except Exception: pass
+    sys.exit(0)
+__BOTDOCK_TRUST__
+  fi
 fi
-# Unquoted EXTRA_ARGS is intentional — we want word-splitting into argv.
+
 if [ -n "$PROMPT" ]; then
-  claude $EXTRA_ARGS "$PROMPT"
+  claude "$PROMPT"
 else
-  claude $EXTRA_ARGS
+  claude
 fi
 EC=$?
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"

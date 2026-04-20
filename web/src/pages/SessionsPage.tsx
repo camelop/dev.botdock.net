@@ -227,19 +227,24 @@ export function NewSessionModal(props: {
           : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
       {draft.agent_kind === "claude-code" && (
-        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8, cursor: "pointer" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8 }}>
           <input
+            id="cc-skip-trust"
             type="checkbox"
             checked={draft.cc_skip_trust}
             onChange={(e) => patch({ cc_skip_trust: e.target.checked })}
-            style={{ width: 16, height: 16, marginTop: 2 }}
+            style={{ width: 16, height: 16, marginTop: 2, cursor: "pointer" }}
           />
-          <span style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>
-            Auto-accept folder-trust prompt (passes
-            {" "}<span className="mono">--dangerously-skip-permissions</span>{" "}
-            to <span className="mono">claude</span>). Also auto-approves per-tool prompts — only enable on machines/workdirs you trust.
-          </span>
-        </label>
+          <label
+            htmlFor="cc-skip-trust"
+            style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0, cursor: "pointer", lineHeight: 1.5 }}
+          >
+            Auto-accept the folder-trust prompt. Pre-writes{" "}
+            <code className="mono">hasTrustDialogAccepted</code> for this workdir into{" "}
+            <code className="mono">~/.claude.json</code> on the remote, so <code className="mono">claude</code>{" "}
+            doesn't pause on startup. Per-tool permission prompts are NOT skipped.
+          </label>
+        </div>
       )}
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
