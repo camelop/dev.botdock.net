@@ -546,6 +546,19 @@ export function SessionDetailModal(props: {
   onClose: () => void;
   onChange: () => void | Promise<void>;
 }) {
+  // Esc closes the modal. Scoped to this mount — the wrapper unmounts on
+  // close, so the listener cleans up automatically.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        props.onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props.onClose]);
+
   return (
     <div className="modal-backdrop" onClick={() => { /* no-op; no backdrop dismiss */ }}>
       <SessionView id={props.id} onClose={props.onClose} onChange={props.onChange} inModal />

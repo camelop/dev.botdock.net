@@ -155,7 +155,7 @@ export function App() {
           {status ? `${status.home}${status.dev ? " · dev" : ""}` : err ? "offline" : "…"}
         </div>
       </div>
-      <div className="main">
+      <div className={`main ${tab === "hub" ? "main-wide" : ""}`}>
         {err && <div className="error-banner">connection error: {err}</div>}
         {tab === "dashboard" && <DashboardPage />}
         {tab === "warroom" && <WarRoomPage />}

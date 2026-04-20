@@ -12,3 +12,6 @@ web/dist/
 
 # Compiled binaries
 dist-bin/
+
+# Claude Code per-machine permission overrides
+.claude/settings.local.json

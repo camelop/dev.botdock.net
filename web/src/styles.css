@@ -100,6 +100,12 @@ body {
   width: 100%;
   margin: 0 auto;
 }
+/* Full-width variant — used by the Session Workspace so the terminal and
+   transcript columns fill the viewport instead of being cramped into 1200px. */
+.main.main-wide {
+  max-width: none;
+  padding: 12px;
+}
 
 h1 { font-size: 20px; margin: 0 0 16px; font-weight: 600; }
 h2 { font-size: 15px; margin: 24px 0 8px; font-weight: 600; color: var(--fg-dim); }
@@ -207,10 +213,10 @@ label span { display: block; margin-bottom: 4px; }
 
 .actions { display: flex; gap: 6px; }
 
-/* Always-visible dark-friendly scrollbar. Apply to tall panels where we want
-   the affordance obvious (events list, autocomplete dropdown, live log). */
+/* Dark-friendly scrollbar styling. Only shows when content overflows — an
+   always-visible track on panels that don't actually scroll reads as broken. */
 .scroll-panel {
-  overflow-y: scroll;
+  overflow-y: auto;
   /* Firefox */
   scrollbar-color: #6b7588 rgba(255,255,255,0.08);
   scrollbar-width: auto;
