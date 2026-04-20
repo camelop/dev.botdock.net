@@ -3,6 +3,7 @@ import {
   api,
   sessionWatchUrl,
   type AgentKind,
+  type CcSessionEntry,
   type Machine,
   type Session,
   type SessionEventRecord,
@@ -23,6 +24,10 @@ export type SessionDraft = {
    * prompts (maps to `--dangerously-skip-permissions`). Defaults to the
    * user's last choice, persisted in localStorage. */
   cc_skip_trust: boolean;
+  /** claude-code: if set, the new session runs `claude --resume <uuid>`
+   * instead of starting fresh. Selecting a session in the UI also
+   * overwrites `workdir` with the resumed session's cwd. */
+  cc_resume_uuid?: string;
 };
 
 const TRUST_PREF_KEY = "botdock:cc-skip-trust";
@@ -178,10 +183,23 @@ export function NewSessionModal(props: {
 
   const regenSlug = () => patch({ workdir: `~/.botdock/projects/${twoWordSlug()}` });
 
+  // Track which resumable sessions are currently "live" (another claude
+  // process still has the workdir open). When the user picks one of these
+  // AND the flag is still true at submit time, we confirm before launching.
+  const [activeResumeUuids, setActiveResumeUuids] = useState<Set<string>>(new Set());
+
   const submit = async () => {
-    setErr(""); setSubmitting(true);
+    setErr("");
+    if (draft.cc_resume_uuid && activeResumeUuids.has(draft.cc_resume_uuid)) {
+      const ok = confirm(
+        "The session you picked still has an active `claude` process in its workdir. "
+        + "If you resume now, claude will fork a new branch instead of continuing cleanly. "
+        + "Proceed anyway?"
+      );
+      if (!ok) return;
+    }
+    setSubmitting(true);
     try {
-      // Remember the trust-dialog choice so future modals default to it.
       if (draft.agent_kind === "claude-code") saveTrustPref(draft.cc_skip_trust);
       const s = await api.createSession(draft);
       await props.onDone(s.id);
@@ -203,27 +221,52 @@ export function NewSessionModal(props: {
 
       <AgentKindPicker value={draft.agent_kind} onChange={(v) => patch({ agent_kind: v })} />
 
+      {draft.agent_kind === "claude-code" && draft.machine && (
+        <ResumePicker
+          machine={draft.machine}
+          selectedUuid={draft.cc_resume_uuid}
+          onSelect={(entry) => {
+            if (!entry) {
+              patch({ cc_resume_uuid: undefined });
+              return;
+            }
+            // Picking a session overwrites workdir with the resumed session's
+            // cwd — claude --resume only makes sense from that path.
+            patch({ cc_resume_uuid: entry.uuid, workdir: entry.workdir });
+          }}
+          onActiveUuidsChange={setActiveResumeUuids}
+        />
+      )}
+
       <WorkdirPicker
         machine={draft.machine}
         value={draft.workdir}
-        onChange={(v) => patch({ workdir: v })}
+        onChange={(v) => patch({ workdir: v, cc_resume_uuid: undefined })}
         onRegen={regenSlug}
       />
 
       <label>
-        <span>{draft.agent_kind === "claude-code" ? "Initial prompt (optional)" : "Command"}</span>
+        <span>
+          {draft.agent_kind === "claude-code"
+            ? (draft.cc_resume_uuid ? "Initial prompt (ignored when resuming)" : "Initial prompt (optional)")
+            : "Command"}
+        </span>
         <textarea
           rows={4}
           value={draft.cmd}
+          disabled={!!draft.cc_resume_uuid}
           onChange={(e) => patch({ cmd: e.target.value })}
           placeholder={draft.agent_kind === "claude-code"
             ? "e.g. Explain this repo's README"
             : 'echo "hello"; sleep 1'}
+          style={draft.cc_resume_uuid ? { opacity: 0.5 } : undefined}
         />
       </label>
       <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
         {draft.agent_kind === "claude-code"
-          ? "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote."
+          ? (draft.cc_resume_uuid
+            ? "Resuming an existing conversation. `claude --resume <uuid>` is run in tmux; your initial prompt above is ignored."
+            : "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote.")
           : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
       {draft.agent_kind === "claude-code" && (
@@ -255,6 +298,164 @@ export function NewSessionModal(props: {
         >Create &amp; launch</button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Dropdown picker over every CC jsonl we could find on the selected machine.
+ * Each row shows workdir, relative mtime, and a preview of the first user
+ * message. Entries whose workdir still has a live `claude` process get a
+ * "⚠ open" badge and a tooltip — the row is still selectable, but the
+ * modal's submit handler confirms before launching.
+ */
+function ResumePicker(props: {
+  machine: string;
+  selectedUuid?: string;
+  onSelect: (entry: CcSessionEntry | null) => void;
+  onActiveUuidsChange: (uuids: Set<string>) => void;
+}) {
+  const { machine, selectedUuid } = props;
+  const [sessions, setSessions] = useState<CcSessionEntry[] | null>(null);
+  const [err, setErr] = useState<string>("");
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setSessions(null);
+    setErr("");
+    if (!machine) return;
+    let cancelled = false;
+    api.listCcSessions(machine).then((r) => {
+      if (cancelled) return;
+      const list = r.sessions ?? [];
+      setSessions(list);
+      if (r.error) setErr(r.error);
+      props.onActiveUuidsChange(new Set(list.filter((s) => s.has_active_process).map((s) => s.uuid)));
+    }).catch((e) => {
+      if (cancelled) return;
+      setErr(String((e as Error).message ?? e));
+      setSessions([]);
+      props.onActiveUuidsChange(new Set());
+    });
+    return () => { cancelled = true; };
+  }, [machine]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selected = sessions?.find((s) => s.uuid === selectedUuid);
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+        Resume a previous conversation
+      </div>
+      <div
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          padding: "6px 10px",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          background: "var(--bg-card)",
+          cursor: "pointer",
+          fontSize: 13,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected ? (
+            <>
+              <span className="mono">{selected.uuid.slice(0, 8)}</span>
+              {" — "}
+              <span className="mono muted">{selected.workdir}</span>
+              {" · "}
+              <span className="muted">{selected.preview || "(no preview)"}</span>
+            </>
+          ) : (
+            <span className="muted">Start fresh (no resume)</span>
+          )}
+        </span>
+        <span className="muted" style={{ fontSize: 11 }}>{expanded ? "▾" : "▸"}</span>
+      </div>
+      {expanded && (
+        <div
+          className="scroll-panel"
+          style={{
+            marginTop: 4,
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            maxHeight: 280,
+            background: "var(--bg-card)",
+          }}
+        >
+          <ResumeRow
+            active={!selectedUuid}
+            onClick={() => { props.onSelect(null); setExpanded(false); }}
+            title={<span className="muted" style={{ fontStyle: "italic" }}>Start fresh (no resume)</span>}
+            subtitle=""
+            badge={null}
+          />
+          {sessions === null && <div className="empty" style={{ padding: 16, fontSize: 12 }}>Loading…</div>}
+          {sessions && sessions.length === 0 && (
+            <div className="empty" style={{ padding: 16, fontSize: 12 }}>
+              No CC transcripts found on this machine.
+              {err ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{err}</div> : null}
+            </div>
+          )}
+          {sessions?.map((s) => (
+            <ResumeRow
+              key={s.uuid}
+              active={selectedUuid === s.uuid}
+              onClick={() => { props.onSelect(s); setExpanded(false); }}
+              title={<>
+                <span className="mono" style={{ fontSize: 11 }}>{s.uuid.slice(0, 8)}</span>
+                {" "}
+                <span style={{ fontSize: 13 }}>{s.preview || <span className="muted">(no preview)</span>}</span>
+              </>}
+              subtitle={`${s.workdir} · ${relativeTime(new Date(s.mtime * 1000).toISOString())}`}
+              badge={s.has_active_process ? (
+                <span
+                  className="pill warn"
+                  style={{ fontSize: 10 }}
+                  title="A `claude` process is still running in this workdir. Resuming now will fork a new branch — close the other session first."
+                >⚠ open</span>
+              ) : null}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResumeRow({ active, onClick, title, subtitle, badge }: {
+  active: boolean;
+  onClick: () => void;
+  title: React.ReactNode;
+  subtitle: string;
+  badge: React.ReactNode;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: "8px 10px",
+        borderBottom: "1px solid var(--border)",
+        cursor: "pointer",
+        background: active ? "rgba(106,164,255,0.08)" : "transparent",
+        borderLeft: active ? "3px solid var(--accent)" : "3px solid transparent",
+      }}
+    >
+      <div className="row" style={{ gap: 6, alignItems: "center" }}>
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {title}
+        </div>
+        {badge}
+      </div>
+      {subtitle && (
+        <div className="muted mono" style={{ fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {subtitle}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -85,12 +85,15 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"cla
 ) &
 
 # Run claude with the initial prompt (if provided). cmd.sh is sourced to
-# pick up shell-quoted args; its content is a pair of assignments like:
+# pick up shell-quoted args; its content is a few assignments like:
 #   PROMPT='...'
-#   SKIP_TRUST=1    (optional — omitted unless the user opted in)
+#   SKIP_TRUST=1    (optional — folder-trust auto-accept)
+#   RESUME_UUID=... (optional — resume an existing CC jsonl via --resume)
 # An empty PROMPT means launch claude interactively with no preloaded msg.
+# RESUME_UUID takes precedence over PROMPT.
 PROMPT=""
 SKIP_TRUST=""
+RESUME_UUID=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
 
@@ -134,7 +137,13 @@ __BOTDOCK_TRUST__
   fi
 fi
 
-if [ -n "$PROMPT" ]; then
+if [ -n "$RESUME_UUID" ]; then
+  # Resuming an existing conversation. Any initial prompt is ignored —
+  # claude --resume picks up the transcript as-is. If the prior session's
+  # jsonl is still held by a live claude process, claude will fork a new
+  # branch; we warn the user in the UI before they hit Launch.
+  claude --resume "$RESUME_UUID"
+elif [ -n "$PROMPT" ]; then
   claude "$PROMPT"
 else
   claude
@@ -155,9 +164,15 @@ function shimFor(kind: AgentKind): string {
  * base64-encoded verbatim. For claude-code we wrap the prompt in a single
  * POSIX-quoted `PROMPT='...'` assignment so the shim can `. cmd.sh` safely.
  */
-export function buildCmdB64(kind: AgentKind, cmd: string, opts?: { skipTrust?: boolean }): string {
+export function buildCmdB64(
+  kind: AgentKind,
+  cmd: string,
+  opts?: { skipTrust?: boolean; resumeUuid?: string },
+): string {
   const content = kind === "claude-code"
-    ? `PROMPT=${shSingleQuote(cmd)}\nSKIP_TRUST=${opts?.skipTrust ? "1" : ""}\n`
+    ? `PROMPT=${shSingleQuote(cmd)}\n`
+      + `SKIP_TRUST=${opts?.skipTrust ? "1" : ""}\n`
+      + `RESUME_UUID=${shSingleQuote(opts?.resumeUuid ?? "")}\n`
     : cmd;
   return Buffer.from(content, "utf8").toString("base64");
 }

@@ -49,6 +49,15 @@ export type TestResult = {
 
 export type Status = { home: string; version: string; dev: boolean };
 
+export type CcSessionEntry = {
+  uuid: string;
+  workdir: string;
+  mtime: number;   // epoch seconds
+  size: number;    // bytes
+  preview: string; // first ~160 chars of the opening user message
+  has_active_process: boolean;
+};
+
 export type SessionStatus = "provisioning" | "active" | "exited" | "failed_to_start";
 export type AgentKind = "generic-cmd" | "claude-code";
 export type Session = {
@@ -126,6 +135,10 @@ export const api = {
     request<{ expanded: string; dir: string; entries: Array<{ name: string; kind: "dir" | "file" }>; error?: string }>(
       `/api/machines/${encodeURIComponent(name)}/browse?path=${encodeURIComponent(path)}`,
     ),
+  listCcSessions: (name: string) =>
+    request<{ sessions: CcSessionEntry[]; error?: string }>(
+      `/api/machines/${encodeURIComponent(name)}/cc-sessions`,
+    ),
   startMachineTerminal: (name: string) =>
     request<{ forward: Forward; status: ForwardWithStatus["status"]; url: string }>(
       `/api/machines/${encodeURIComponent(name)}/terminal/start`, { method: "POST" },
@@ -149,8 +162,14 @@ export const api = {
 
   listSessions: () => request<Session[]>("/api/sessions"),
   getSession: (id: string) => request<Session>(`/api/sessions/${encodeURIComponent(id)}`),
-  createSession: (body: { machine: string; workdir: string; agent_kind: AgentKind; cmd: string; cc_skip_trust?: boolean }) =>
-    request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
+  createSession: (body: {
+    machine: string;
+    workdir: string;
+    agent_kind: AgentKind;
+    cmd: string;
+    cc_skip_trust?: boolean;
+    cc_resume_uuid?: string;
+  }) => request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   sendSessionInput: (id: string, body: { text?: string; keys?: string[] }) =>

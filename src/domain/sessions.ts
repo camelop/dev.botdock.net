@@ -51,6 +51,10 @@ export type Session = {
    *  --dangerously-skip-permissions so the folder-trust dialog and
    *  per-tool permission prompts are auto-accepted. Opt-in per session. */
   cc_skip_trust?: boolean;
+  /** For claude-code: if set, the shim runs `claude --resume <uuid>` to
+   * continue a prior conversation on the remote instead of starting a
+   * fresh one. The workdir must match the resumed session's cwd. */
+  cc_resume_uuid?: string;
 };
 
 export type SessionEvent = {
@@ -103,6 +107,7 @@ export function createSessionRecord(
     agent_kind: AgentKind;
     cmd: string;
     cc_skip_trust?: boolean;
+    cc_resume_uuid?: string;
   },
 ): Session {
   const id = newSessionId();
@@ -118,6 +123,7 @@ export function createSessionRecord(
     remote_events_offset: 0,
     remote_raw_offset: 0,
     ...(args.cc_skip_trust ? { cc_skip_trust: true } : {}),
+    ...(args.cc_resume_uuid ? { cc_resume_uuid: args.cc_resume_uuid } : {}),
   };
   const p = paths(dir, id);
   mkdirSync(p.base, { recursive: true });

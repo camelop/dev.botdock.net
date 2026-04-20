@@ -113,6 +113,110 @@ echo "ENTRIES_END"
     return json({ expanded, dir: lsDir, entries });
   });
 
+  /**
+   * List every Claude Code transcript jsonl under ~/.claude/projects/ on the
+   * remote and, for each one, flag whether a `claude` process is currently
+   * running with that same cwd (so we can warn the user before they try to
+   * --resume a session that another process still holds).
+   *
+   * The remote work is a single python3 script piped over ssh — we need
+   * per-file parsing anyway (the first few JSONL lines carry `cwd` and a
+   * user-message preview), and python is the same dep we already rely on
+   * for the trust-dialog skip.
+   */
+  router.get("/api/machines/:name/cc-sessions", ({ params }) => {
+    if (!existsSync(dir.machineFile(params.name!))) throw new HttpError(404, "not found");
+    const machine = readMachine(dir, params.name!);
+    const script = `
+python3 - <<'PY'
+import json, os, sys
+home = os.path.expanduser("~")
+cc_root = os.path.join(home, ".claude", "projects")
+
+active_cwds = set()
+try:
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit(): continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmd = f.read().replace(b"\\0", b" ").decode(errors="replace")
+        except Exception:
+            continue
+        if "claude" not in cmd: continue
+        try:
+            cwd = os.readlink(f"/proc/{pid}/cwd")
+        except Exception:
+            continue
+        active_cwds.add(cwd)
+
+out = []
+if os.path.isdir(cc_root):
+    for folder in os.listdir(cc_root):
+        fpath = os.path.join(cc_root, folder)
+        if not os.path.isdir(fpath): continue
+        for name in os.listdir(fpath):
+            if not name.endswith(".jsonl"): continue
+            full = os.path.join(fpath, name)
+            try:
+                st = os.stat(full)
+            except Exception:
+                continue
+            uuid = name[:-6]
+            cwd = None
+            preview = None
+            try:
+                with open(full, "r", errors="replace") as fh:
+                    for i, line in enumerate(fh):
+                        if i > 40: break
+                        line = line.strip()
+                        if not line: continue
+                        try:
+                            rec = json.loads(line)
+                        except Exception:
+                            continue
+                        if not cwd and isinstance(rec.get("cwd"), str):
+                            cwd = rec["cwd"]
+                        if not preview and rec.get("type") == "user":
+                            msg = rec.get("message", {})
+                            if isinstance(msg, dict):
+                                content = msg.get("content")
+                                if isinstance(content, str):
+                                    preview = content
+                                elif isinstance(content, list):
+                                    for c in content:
+                                        if isinstance(c, dict) and c.get("type") == "text":
+                                            preview = c.get("text", "") or ""
+                                            break
+                        if cwd and preview:
+                            break
+            except Exception:
+                pass
+            out.append({
+                "uuid": uuid,
+                "workdir": cwd or "",
+                "mtime": int(st.st_mtime),
+                "size": st.st_size,
+                "preview": (preview or "")[:160],
+                "has_active_process": bool(cwd and cwd in active_cwds),
+            })
+
+out.sort(key=lambda x: -x["mtime"])
+print(json.dumps(out))
+PY
+`;
+    const r = sshExec(dir, machine, "bash -s", script, 15_000);
+    if (r.code !== 0) {
+      // Degrade silently — UI will show an empty list.
+      return json({ sessions: [], error: r.stderr.slice(0, 400) || `exit ${r.code}` });
+    }
+    try {
+      const sessions = JSON.parse(r.stdout.trim() || "[]") as unknown[];
+      return json({ sessions });
+    } catch (e) {
+      return json({ sessions: [], error: `parse: ${(e as Error).message}` });
+    }
+  });
+
   router.get("/api/machines/:name/installed", ({ params }) => {
     if (!existsSync(dir.machineFile(params.name!))) throw new HttpError(404, "not found");
     const m = readMachine(dir, params.name!);

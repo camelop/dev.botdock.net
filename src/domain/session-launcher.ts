@@ -40,7 +40,10 @@ export async function launchSession(
   appendEvent(dir, id, { ts: new Date().toISOString(), kind: "provisioning" });
   const machine = readMachine(dir, s.machine);
 
-  const cmdB64 = buildCmdB64(s.agent_kind, s.cmd, { skipTrust: s.cc_skip_trust });
+  const cmdB64 = buildCmdB64(s.agent_kind, s.cmd, {
+    skipTrust: s.cc_skip_trust,
+    resumeUuid: s.cc_resume_uuid,
+  });
   const bootstrap = provisioningScript({
     workdir: s.workdir,
     tmuxSession: s.tmux_session,
