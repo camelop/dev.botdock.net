@@ -123,7 +123,9 @@ export function CreditsPage() {
   );
 }
 
-const REFRESHABLE_PROVIDERS = new Set(["anthropic-api", "claude"]);
+// Only developer-console API accounts have a usage endpoint. Claude Pro/Max
+// subscriptions have no public API — check claude.ai/settings manually.
+const REFRESHABLE_PROVIDERS = new Set(["anthropic-api"]);
 
 function AccountCard(props: {
   account: CreditAccount;

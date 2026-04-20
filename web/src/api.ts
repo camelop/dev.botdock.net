@@ -192,7 +192,9 @@ export type ForwardWithStatus = Forward & {
     started_at?: string;
     stopped_at?: string;
     exit_code?: number | null;
+    exit_signal?: string | null;
     last_error?: string;
+    last_args?: string[];
   };
 };
 

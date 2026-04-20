@@ -14,7 +14,11 @@ export type ForwardStatus = {
   started_at?: string;
   stopped_at?: string;
   exit_code?: number | null;
+  exit_signal?: string | null;
   last_error?: string;
+  /** The argv we handed to ssh. Shown in the error modal so the user can
+   * re-run it manually to debug. */
+  last_args?: string[];
 };
 
 type Entry = {
@@ -22,6 +26,7 @@ type Entry = {
   proc?: ChildProcess;
   cfg?: { dispose: () => void };
   status: ForwardStatus;
+  args?: string[];
 };
 
 /**
@@ -71,20 +76,26 @@ export class ForwardManager extends EventEmitter {
     const cfg = buildSshConfig(this.dir, machine);
 
     const args = ["-F", cfg.configPath, "-N", ...forwardArgs(forward), cfg.targetAlias];
-    const proc = spawn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] });
+    // Turn on ssh's own verbose logging (-v) during startup so even in
+    // "nothing on stderr" failure modes we get something in the buffer.
+    const argsWithVerbose = [...args.slice(0, 2), "-v", ...args.slice(2)];
+    const proc = spawn("ssh", argsWithVerbose, { stdio: ["ignore", "pipe", "pipe"] });
 
     const status: ForwardStatus = {
       name,
       state: "starting",
       pid: proc.pid,
       started_at: new Date().toISOString(),
+      last_args: argsWithVerbose,
     };
-    const entry: Entry = { name, proc, cfg, status };
+    const entry: Entry = { name, proc, cfg, status, args: argsWithVerbose };
     this.entries.set(name, entry);
     this.emit("update", name);
 
     let stderrBuf = "";
+    let stdoutBuf = "";
     proc.stderr?.on("data", (chunk: Buffer) => { stderrBuf += chunk.toString("utf8"); });
+    proc.stdout?.on("data", (chunk: Buffer) => { stdoutBuf += chunk.toString("utf8"); });
 
     // Flip to running after a short delay — ssh -N stays silent once the
     // forward is up. If it dies during that window, the exit handler below
@@ -106,6 +117,21 @@ export class ForwardManager extends EventEmitter {
       const cleanlyStopped = entry.status.state === "starting" || entry.status.state === "running"
         ? (signal === "SIGTERM" || signal === "SIGINT")
         : true;
+
+      // Always populate last_error with SOMETHING. If ssh was silent, at
+      // least include the exit code, signal, and the argv we used so the
+      // user can reproduce by hand. This was the "view error button doesn't
+      // appear" bug — stderr was empty and we stored undefined.
+      const parts: string[] = [];
+      if (stderrBuf.trim())  parts.push("[ssh stderr]\n" + stderrBuf.trim());
+      if (stdoutBuf.trim())  parts.push("[ssh stdout]\n" + stdoutBuf.trim());
+      const meta: string[] = [];
+      meta.push(`exit_code: ${code ?? "null"}`);
+      if (signal) meta.push(`signal: ${signal}`);
+      meta.push(`argv: ssh ${entry.args?.join(" ") ?? ""}`);
+      parts.push("[process]\n" + meta.join("\n"));
+      const last_error = parts.join("\n\n").slice(0, 8192);
+
       entry.status = {
         name,
         state: cleanlyStopped ? "stopped" : "failed",
@@ -113,7 +139,9 @@ export class ForwardManager extends EventEmitter {
         started_at: entry.status.started_at,
         stopped_at: new Date().toISOString(),
         exit_code: code ?? null,
-        last_error: stderrBuf.trim() ? stderrBuf.trim().slice(0, 2048) : undefined,
+        exit_signal: signal ?? null,
+        last_args: entry.args,
+        last_error: cleanlyStopped && !stderrBuf.trim() ? undefined : last_error,
       };
       entry.proc = undefined;
       entry.cfg = undefined;

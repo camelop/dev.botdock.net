@@ -138,12 +138,16 @@ function ForwardSection(props: ForwardActionHandlers & {
                   </td>
                   <td>
                     <StatePill state={f.status.state} />
-                    {f.status.last_error && (
+                    {(f.status.last_error || f.status.state === "failed") && (
                       <button
                         className="secondary"
                         style={{ padding: "2px 8px", fontSize: 11, marginLeft: 4 }}
-                        onClick={() => setShowError({ name: f.name, error: f.status.last_error! })}
-                      >view error</button>
+                        onClick={() => setShowError({
+                          name: f.name,
+                          error: f.status.last_error
+                            || `State is "failed" but no error was captured. exit_code=${f.status.exit_code ?? "null"} signal=${f.status.exit_signal ?? "null"}. argv: ssh ${(f.status.last_args ?? []).join(" ")}`,
+                        })}
+                      >{f.status.last_error ? "view error" : "details"}</button>
                     )}
                   </td>
                   <td className="mono" style={{ fontSize: 12 }}>{f.description_line}</td>

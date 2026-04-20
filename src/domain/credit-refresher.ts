@@ -30,8 +30,16 @@ export async function refreshCreditAccount(
   const provider = acc.provider;
   try {
     let patch: Partial<CreditAccount>;
-    if (provider === "anthropic-api" || provider === "claude") {
+    if (provider === "anthropic-api") {
+      // Admin API cost_report endpoint. Only works with Developer Console
+      // Admin keys (sk-ant-admin…), not with consumer Claude Pro/Max
+      // subscriptions.
       patch = await refreshAnthropic(credential);
+    } else if (provider === "claude") {
+      throw new Error(
+        "Claude Pro/Max subscriptions don't expose a public usage API. " +
+        "Check manually at https://claude.ai/settings — BotDock can't auto-refresh this.",
+      );
     } else {
       throw new Error(`auto-refresh not yet implemented for provider "${provider}"`);
     }
