@@ -68,11 +68,44 @@ export function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [status, setStatus] = useState<Status | null>(null);
   const [err, setErr] = useState<string>("");
+  const [serverDown, setServerDown] = useState(false);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
+  const firstInstanceId = useRef<string | null>(null);
 
+  // Poll /api/status so we can (a) notice a daemon restart and force the
+  // page to reload (new instance_id ⇒ every cached WS / in-flight fetch is
+  // stale) and (b) surface a banner when the daemon is unreachable. Without
+  // this the UI quietly hangs onto dead websockets after `botdock serve`
+  // restarts.
   useEffect(() => {
-    api.status().then(setStatus).catch((e) => setErr(String(e?.message ?? e)));
+    let cancelled = false;
+    let failures = 0;
+    const tick = async () => {
+      try {
+        const s = await api.status();
+        if (cancelled) return;
+        if (firstInstanceId.current === null) {
+          firstInstanceId.current = s.instance_id;
+        } else if (s.instance_id && s.instance_id !== firstInstanceId.current) {
+          // Backend restarted — hard reload so every consumer re-initializes.
+          window.location.reload();
+          return;
+        }
+        failures = 0;
+        setStatus(s);
+        setErr("");
+        setServerDown(false);
+      } catch (e) {
+        if (cancelled) return;
+        failures += 1;
+        if (failures >= 2) setServerDown(true);
+        setErr(String((e as Error)?.message ?? e));
+      }
+    };
+    tick();
+    const h = window.setInterval(tick, 4000);
+    return () => { cancelled = true; window.clearInterval(h); };
   }, []);
 
   useEffect(() => {
@@ -107,6 +140,7 @@ export function App() {
 
   return (
     <div className="app">
+      {serverDown && <ServerDownOverlay />}
       <div className="topbar">
         <a
           className="brand"
@@ -186,6 +220,51 @@ export function App() {
  * Minimal "ladder of bars" mark — loose nod to stacked agent slots being
  * docked. Uses the accent color so it picks up the dark theme.
  */
+/**
+ * Full-viewport blocker shown when the daemon is unreachable (two failed
+ * /api/status polls in a row). Any UI underneath is likely to be operating
+ * on stale state — dead websockets, half-finished fetches — so we don't want
+ * the user clicking around. A reload button covers the usual fix.
+ */
+function ServerDownOverlay() {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.72)",
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <div
+        style={{
+          background: "var(--bg-elev)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: "24px 28px",
+          maxWidth: 460,
+          textAlign: "center",
+        }}
+      >
+        <h2 style={{ margin: "0 0 8px", fontSize: 18, color: "var(--fg)" }}>
+          BotDock daemon unreachable
+        </h2>
+        <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
+          The local server stopped responding. Any live sessions are still
+          running on their remote machines — this browser tab has just lost
+          its pipe to the daemon. Start BotDock again and reload to
+          reconnect.
+        </div>
+        <button onClick={() => window.location.reload()}>↻ Reload page</button>
+      </div>
+    </div>
+  );
+}
+
 function BotdockLogo() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">

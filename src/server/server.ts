@@ -16,6 +16,8 @@ import { embeddedFiles } from "./embedded.ts";
 import { SessionPoller } from "../domain/session-poller.ts";
 import { readEvents, readRawRange, readTranscriptRange, sessionExists, readSession } from "../domain/sessions.ts";
 import { ForwardManager } from "../domain/forward-manager.ts";
+import { randomBytes } from "node:crypto";
+import { BOTDOCK_VERSION } from "../version.ts";
 
 type ServerConfig = {
   server?: { bind?: string; port?: number };
@@ -48,8 +50,18 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   const forwardManager = new ForwardManager(dir);
   forwardManager.startAutoForwards();
 
+  // Unique per-process ID. Surfaced in /api/status so the frontend can detect
+  // daemon restarts (instance changes → page forces a full reload instead of
+  // clinging to stale websockets / local state).
+  const instanceId = randomBytes(8).toString("hex");
+
   const router = new Router();
-  router.get("/api/status", () => json({ home: dir.root, version: "0.0.1", dev: !!opts.dev }));
+  router.get("/api/status", () => json({
+    home: dir.root,
+    version: BOTDOCK_VERSION,
+    dev: !!opts.dev,
+    instance_id: instanceId,
+  }));
   mountKeys(router, dir);
   mountMachines(router, dir, forwardManager);
   mountSecrets(router, dir);

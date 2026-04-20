@@ -47,7 +47,13 @@ export type TestResult = {
   stderr: string;
 };
 
-export type Status = { home: string; version: string; dev: boolean };
+export type Status = {
+  home: string;
+  version: string;
+  dev: boolean;
+  /** Random per-process ID. Changes across daemon restarts. */
+  instance_id: string;
+};
 
 export type CcSessionEntry = {
   uuid: string;
