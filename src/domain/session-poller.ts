@@ -4,6 +4,7 @@ import { readMachine } from "./machines.ts";
 import {
   appendEvent,
   appendRaw,
+  appendTranscript,
   listSessions,
   readSession,
   updateSession,
@@ -17,16 +18,27 @@ const POLL_INTERVAL_MS = 2500;
 /**
  * Single script invoked over ssh per poll. Returns a parseable report:
  *
- *   SIZES <events_size> <raw_size> <tmux_alive>
+ *   SIZES <events_size> <raw_size> <tmux_alive> <tx_size>
  *   ---EVENTS-B64---
  *   <base64 of delta events.ndjson starting from EV_OFFSET>
  *   ---RAW-B64---
  *   <base64 of delta raw.log starting from RAW_OFFSET>
+ *   ---TRANSCRIPT-B64---
+ *   <base64 of delta claude-transcript.jsonl starting from TX_OFFSET>
  *   ---END---
+ *
+ * The transcript section is only populated when ccSessionFile is passed
+ * (i.e. claude-code session whose jsonl we've already discovered).
  */
-function pollScript(workdir: string, tmuxName: string, evOffset: number, rawOffset: number): string {
-  // Inputs are validated earlier (name charset, workdir absolute path). Still,
-  // wrap values in quotes to avoid word-splitting surprises.
+function pollScript(
+  workdir: string,
+  tmuxName: string,
+  evOffset: number,
+  rawOffset: number,
+  ccSessionFile: string | undefined,
+  txOffset: number,
+): string {
+  const txSrcQ = ccSessionFile ? shQ(ccSessionFile) : "''";
   return `
 set -u
 WORKDIR=${shQ(workdir)}
@@ -37,11 +49,13 @@ esac
 SDIR="$WORKDIR/.botdock/session"
 EV_PATH="$SDIR/events.ndjson"
 RAW_PATH="$SDIR/raw.log"
+TX_PATH=${txSrcQ}
 EV_SIZE=0; [ -f "$EV_PATH" ] && EV_SIZE=$(wc -c < "$EV_PATH" | tr -d ' ')
 RAW_SIZE=0; [ -f "$RAW_PATH" ] && RAW_SIZE=$(wc -c < "$RAW_PATH" | tr -d ' ')
+TX_SIZE=0; [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ] && TX_SIZE=$(wc -c < "$TX_PATH" | tr -d ' ')
 TMUX_ALIVE=0
 if tmux has-session -t ${shQ(tmuxName)} >/dev/null 2>&1; then TMUX_ALIVE=1; fi
-printf 'SIZES %s %s %s\\n' "$EV_SIZE" "$RAW_SIZE" "$TMUX_ALIVE"
+printf 'SIZES %s %s %s %s\\n' "$EV_SIZE" "$RAW_SIZE" "$TMUX_ALIVE" "$TX_SIZE"
 printf -- '---EVENTS-B64---\\n'
 if [ "$EV_SIZE" -gt ${evOffset} ]; then
   tail -c +$((${evOffset}+1)) "$EV_PATH" | base64 | tr -d '\\n'
@@ -49,6 +63,10 @@ fi
 printf '\\n---RAW-B64---\\n'
 if [ "$RAW_SIZE" -gt ${rawOffset} ]; then
   tail -c +$((${rawOffset}+1)) "$RAW_PATH" | base64 | tr -d '\\n'
+fi
+printf '\\n---TRANSCRIPT-B64---\\n'
+if [ -n "$TX_PATH" ] && [ "$TX_SIZE" -gt ${txOffset} ]; then
+  tail -c +$((${txOffset}+1)) "$TX_PATH" | base64 | tr -d '\\n'
 fi
 printf '\\n---END---\\n'
 `;
@@ -61,29 +79,41 @@ function shQ(s: string): string {
 type Report = {
   eventsSize: number;
   rawSize: number;
+  transcriptSize: number;
   tmuxAlive: boolean;
   eventsDelta: string;
   rawDelta: Buffer;
+  transcriptDelta: string;
 };
 
 function parseReport(text: string): Report | null {
-  const sizesMatch = /^SIZES (\d+) (\d+) (\d+)/m.exec(text);
+  // Accept either the 3-size (old) or 4-size (new, with transcript) format.
+  const sizesMatch = /^SIZES (\d+) (\d+) (\d+)(?: (\d+))?/m.exec(text);
   if (!sizesMatch) return null;
   const eventsSize = Number(sizesMatch[1]);
   const rawSize = Number(sizesMatch[2]);
   const tmuxAlive = sizesMatch[3] === "1";
+  const transcriptSize = sizesMatch[4] !== undefined ? Number(sizesMatch[4]) : 0;
   const evStart = text.indexOf("---EVENTS-B64---\n");
   const rawStart = text.indexOf("\n---RAW-B64---\n");
+  const txStart = text.indexOf("\n---TRANSCRIPT-B64---\n");
   const endStart = text.indexOf("\n---END---");
   if (evStart < 0 || rawStart < 0 || endStart < 0) return null;
   const evB64 = text.slice(evStart + "---EVENTS-B64---\n".length, rawStart);
-  const rawB64 = text.slice(rawStart + "\n---RAW-B64---\n".length, endStart);
+  const rawB64 = txStart >= 0
+    ? text.slice(rawStart + "\n---RAW-B64---\n".length, txStart)
+    : text.slice(rawStart + "\n---RAW-B64---\n".length, endStart);
+  const txB64 = txStart >= 0
+    ? text.slice(txStart + "\n---TRANSCRIPT-B64---\n".length, endStart)
+    : "";
   return {
     eventsSize,
     rawSize,
+    transcriptSize,
     tmuxAlive,
     eventsDelta: evB64 ? Buffer.from(evB64, "base64").toString("utf8") : "",
     rawDelta: rawB64 ? Buffer.from(rawB64, "base64") : Buffer.alloc(0),
+    transcriptDelta: txB64 ? Buffer.from(txB64, "base64").toString("utf8") : "",
   };
 }
 
@@ -151,6 +181,8 @@ export class SessionPoller extends EventEmitter {
         s.tmux_session,
         s.remote_events_offset ?? 0,
         s.remote_raw_offset ?? 0,
+        s.cc_session_file,
+        s.remote_transcript_offset ?? 0,
       );
       const r = sshExec(this.dir, machine, "bash -s", script, 15_000);
       if (r.code !== 0) {
@@ -201,8 +233,33 @@ export class SessionPoller extends EventEmitter {
 
     if (report.rawDelta.length > 0) {
       appendRaw(this.dir, s.id, report.rawDelta);
-      updateSession(this.dir, s.id, { remote_raw_offset: report.rawSize });
+      updateSession(this.dir, s.id, {
+        remote_raw_offset: report.rawSize,
+        last_raw_at: new Date().toISOString(),
+      });
       changed = true;
+    }
+
+    if (report.transcriptDelta.length > 0) {
+      appendTranscript(this.dir, s.id, report.transcriptDelta);
+      updateSession(this.dir, s.id, {
+        remote_transcript_offset: report.transcriptSize,
+        last_transcript_at: new Date().toISOString(),
+      });
+      changed = true;
+    }
+
+    // Derive activity: running if we've seen output in the last N seconds
+    // OR the transcript's last line indicates a pending turn (tool_use or
+    // in-flight tool_result). Waiting otherwise. Only meaningful for
+    // running claude-code sessions.
+    const cur = readSession(this.dir, s.id);
+    if (cur.status === "running" && cur.agent_kind === "claude-code") {
+      const activity = computeActivity(cur, this.dir);
+      if (activity !== cur.activity) {
+        updateSession(this.dir, s.id, { activity });
+        changed = true;
+      }
     }
 
     // tmux disappeared → session ended. Distinguish three cases:
@@ -244,6 +301,97 @@ export class SessionPoller extends EventEmitter {
 
     if (changed) this.emit("update", s.id);
   }
+}
+
+/**
+ * Decide whether a running claude-code session is actively producing output
+ * ("running") or idle waiting for user input ("waiting").
+ *
+ * Heuristic: combine two independent signals.
+ *   1. Raw/transcript silence: no bytes in either stream for > 5s ⇒
+ *      probably waiting.
+ *   2. Transcript shape: read the last complete JSONL line. If it's a
+ *      finished assistant message (only text content, no unresolved
+ *      tool_use) ⇒ waiting. If it's a tool_use / tool_result / user
+ *      message that just went out ⇒ running.
+ *
+ * Both signals are best-effort — the CC jsonl schema can shift. We default
+ * to "running" when uncertain so we never falsely tell the user "waiting"
+ * while the agent is actually thinking.
+ */
+const IDLE_WINDOW_MS = 5_000;
+
+function computeActivity(
+  s: Session,
+  dir: import("../storage/index.ts").DataDir,
+): "running" | "waiting" {
+  const now = Date.now();
+  const mostRecent = Math.max(
+    s.last_raw_at ? Date.parse(s.last_raw_at) : 0,
+    s.last_transcript_at ? Date.parse(s.last_transcript_at) : 0,
+    s.started_at ? Date.parse(s.started_at) : 0,
+  );
+  const quiet = now - mostRecent > IDLE_WINDOW_MS;
+
+  // Inspect the tail of our local transcript.ndjson (best effort).
+  const lastEntry = readLastTranscriptEntry(dir, s.id);
+  const shapeSaysWaiting = lastEntry ? lastEntryLooksFinal(lastEntry) : false;
+  const shapeSaysRunning = lastEntry ? lastEntryLooksActive(lastEntry) : false;
+
+  if (shapeSaysRunning) return "running";
+  if (quiet && shapeSaysWaiting) return "waiting";
+  if (quiet) return "waiting";
+  return "running";
+}
+
+function readLastTranscriptEntry(
+  dir: import("../storage/index.ts").DataDir,
+  id: string,
+): Record<string, unknown> | null {
+  try {
+    const { statSync, openSync, readSync, closeSync } = require("node:fs") as typeof import("node:fs");
+    const path = dir.path("sessions", id, "transcript.ndjson");
+    const size = statSync(path).size;
+    if (size === 0) return null;
+    // Read the last 32KB and take the last non-empty line.
+    const len = Math.min(size, 32 * 1024);
+    const fd = openSync(path, "r");
+    try {
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      const text = buf.toString("utf8");
+      const lines = text.split("\n").filter((l) => l.length > 0);
+      const lastLine = lines[lines.length - 1];
+      if (!lastLine) return null;
+      return JSON.parse(lastLine) as Record<string, unknown>;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function lastEntryLooksFinal(entry: Record<string, unknown>): boolean {
+  // Finished assistant message: message.role === "assistant" AND content
+  // contains only text items (no tool_use). CC writes one JSONL entry per
+  // message, so this is typically the last-seen line when the agent is
+  // done and awaits input.
+  const msg = (entry as any).message;
+  if (!msg || typeof msg !== "object") return false;
+  if (msg.role !== "assistant") return false;
+  const content = msg.content;
+  if (!Array.isArray(content)) return false;
+  return content.every((c: any) => c && c.type === "text");
+}
+
+function lastEntryLooksActive(entry: Record<string, unknown>): boolean {
+  const msg = (entry as any).message;
+  if (!msg || typeof msg !== "object") return false;
+  const content = msg.content;
+  if (!Array.isArray(content)) return false;
+  // Any tool_use / tool_result means the turn is still in motion.
+  return content.some((c: any) => c && (c.type === "tool_use" || c.type === "tool_result"));
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

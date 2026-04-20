@@ -69,6 +69,10 @@ export type Session = {
   cc_session_uuid?: string;
   terminal_local_port?: number;
   terminal_remote_port?: number;
+  remote_transcript_offset?: number;
+  last_raw_at?: string;
+  last_transcript_at?: string;
+  activity?: "running" | "waiting";
 };
 export type SessionEventRecord = {
   ts: string;
@@ -163,6 +167,10 @@ export const api = {
   getSessionRaw: (id: string, offset = 0, max = 65536) =>
     request<{ data: string; nextOffset: number; size: number }>(
       `/api/sessions/${encodeURIComponent(id)}/raw?offset=${offset}&max=${max}`,
+    ),
+  getSessionTranscript: (id: string, offset = 0, max = 262144) =>
+    request<{ data: string; nextOffset: number; size: number }>(
+      `/api/sessions/${encodeURIComponent(id)}/transcript?offset=${offset}&max=${max}`,
     ),
 };
 

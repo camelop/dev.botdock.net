@@ -6,6 +6,7 @@ import {
   listSessions,
   readEvents,
   readRawRange,
+  readTranscriptRange,
   readSession,
   sessionExists,
   type AgentKind,
@@ -109,5 +110,12 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     const offset = Number(url.searchParams.get("offset") ?? 0);
     const max = Number(url.searchParams.get("max") ?? 65536);
     return json(readRawRange(dir, params.id!, offset, max));
+  });
+
+  router.get("/api/sessions/:id/transcript", ({ params, url }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const max = Number(url.searchParams.get("max") ?? 262144);
+    return json(readTranscriptRange(dir, params.id!, offset, max));
   });
 }

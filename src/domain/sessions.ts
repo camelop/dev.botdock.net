@@ -37,6 +37,16 @@ export type Session = {
   /** For claude-code: the remote port ttyd is listening on (useful for
    * debugging; not used by the proxy directly). */
   terminal_remote_port?: number;
+  /** Byte offset into the remote CC jsonl we've already mirrored locally. */
+  remote_transcript_offset?: number;
+  /** Wallclock timestamps of the last time the poller saw growth in each
+   * stream. Used by the activity-state heuristic. */
+  last_raw_at?: string;
+  last_transcript_at?: string;
+  /** Derived activity: "running" = output happening recently, "waiting" =
+   * quiet, idle, waiting for user input. Only meaningful for running
+   * claude-code sessions. */
+  activity?: "running" | "waiting";
 };
 
 export type SessionEvent = {
@@ -153,6 +163,40 @@ export function appendEvent(dir: DataDir, id: string, event: SessionEvent): void
 
 export function readEvents(dir: DataDir, id: string, fromOffset = 0): NdjsonReadResult<SessionEvent> {
   return readNdjson<SessionEvent>(paths(dir, id).events, fromOffset);
+}
+
+/**
+ * Append already-newline-terminated transcript lines (raw JSONL from the
+ * CC jsonl) to the local mirror. Caller must ensure each entry ends with \n.
+ */
+export function appendTranscript(dir: DataDir, id: string, chunk: string | Buffer): void {
+  const p = paths(dir, id);
+  mkdirSync(p.base, { recursive: true });
+  const buf = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+  const { appendFileSync } = require("node:fs") as typeof import("node:fs");
+  appendFileSync(p.transcript, buf);
+}
+
+export function readTranscriptRange(
+  dir: DataDir,
+  id: string,
+  fromOffset = 0,
+  max = 256 * 1024,
+): { data: string; nextOffset: number; size: number } {
+  const p = paths(dir, id).transcript;
+  let size = 0;
+  try { size = statSync(p).size; } catch { return { data: "", nextOffset: fromOffset, size: 0 }; }
+  if (fromOffset >= size) return { data: "", nextOffset: size, size };
+  const length = Math.min(size - fromOffset, max);
+  const { openSync, readSync, closeSync } = require("node:fs") as typeof import("node:fs");
+  const fd = openSync(p, "r");
+  try {
+    const buf = Buffer.alloc(length);
+    readSync(fd, buf, 0, length, fromOffset);
+    return { data: buf.toString("utf8"), nextOffset: fromOffset + length, size };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Append raw bytes captured from the remote pane. */

@@ -62,6 +62,9 @@ export function DashboardPage() {
                     }`}>
                       {s.status}
                     </span>
+                    {s.agent_kind === "claude-code" && s.status === "running" && s.activity === "waiting" && (
+                      <> <span className="pill warn" title="Idle — awaiting user input">waiting</span></>
+                    )}
                   </td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

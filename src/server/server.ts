@@ -14,7 +14,7 @@ import { proxyHttp, tryUpgradeWsProxy, openProxyWs, relayProxyWsMessage, closePr
 import { forwardExists, readForward } from "../domain/forwards.ts";
 import { embeddedFiles } from "./embedded.ts";
 import { SessionPoller } from "../domain/session-poller.ts";
-import { readEvents, readRawRange, sessionExists } from "../domain/sessions.ts";
+import { readEvents, readRawRange, readTranscriptRange, sessionExists, readSession } from "../domain/sessions.ts";
 import { ForwardManager } from "../domain/forward-manager.ts";
 
 type ServerConfig = {
@@ -58,8 +58,14 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   mountCredits(router, dir);
 
   // Per-session WebSocket subscriptions: { sessionId → set of ws }
-  type SessionWatchData = { kind: "session-watch"; sessionId: string; evOffset: number; rawOffset: number };
-  type LobbyData        = { kind: "lobby"; sessionId: "" };
+  type SessionWatchData = {
+    kind: "session-watch";
+    sessionId: string;
+    evOffset: number;
+    rawOffset: number;
+    txOffset: number;
+  };
+  type LobbyData = { kind: "lobby"; sessionId: "" };
   type WsData = SessionWatchData | LobbyData | WsProxyData;
   const subs = new Map<string, Set<Bun.ServerWebSocket<SessionWatchData>>>();
 
@@ -116,6 +122,16 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
       ws.send(JSON.stringify({ type: "raw", data: raw.data, nextOffset: raw.nextOffset }));
       ws.data.rawOffset = raw.nextOffset;
     }
+    const tx = readTranscriptRange(dir, sessionId, ws.data.txOffset, 262144);
+    if (tx.data.length > 0) {
+      ws.send(JSON.stringify({ type: "transcript", data: tx.data, nextOffset: tx.nextOffset }));
+      ws.data.txOffset = tx.nextOffset;
+    }
+    // Also push the current session meta so the client can react to
+    // activity transitions (running ↔ waiting) without re-polling HTTP.
+    try {
+      ws.send(JSON.stringify({ type: "session", session: readSession(dir, sessionId) }));
+    } catch { /* session may have been deleted mid-flight */ }
   }
 
   const distDir = resolve(import.meta.dir, "..", "..", "web", "dist");
@@ -183,7 +199,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
         const sessionId = decodeURIComponent(watchMatch[1]!);
         if (!sessionExists(dir, sessionId)) return error(404, "session not found");
         if (srv.upgrade(req, {
-          data: { kind: "session-watch", sessionId, evOffset: 0, rawOffset: 0 } satisfies SessionWatchData,
+          data: { kind: "session-watch", sessionId, evOffset: 0, rawOffset: 0, txOffset: 0 } satisfies SessionWatchData,
         })) {
           return new Response(null);
         }

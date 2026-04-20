@@ -12,6 +12,7 @@ import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
 import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
+import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 
 type SessionDraft = {
   machine: string;
@@ -85,7 +86,12 @@ export function SessionsPage() {
               {sessions.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
                   <td className="mono">{s.id}</td>
-                  <td><StatusPill status={s.status} /></td>
+                  <td>
+                    <StatusPill status={s.status} />
+                    {s.agent_kind === "claude-code" && s.status === "running" && s.activity && (
+                      <> <ActivityPill activity={s.activity} /></>
+                    )}
+                  </td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cmd}</td>
                   <td className="muted" title={fullTime(s.started_at)}>{relativeTime(s.started_at)}</td>
@@ -356,6 +362,7 @@ export function SessionDetailModal(props: {
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEventRecord[]>([]);
   const [rawText, setRawText] = useState("");
+  const [transcriptText, setTranscriptText] = useState("");
   const [err, setErr] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -367,6 +374,7 @@ export function SessionDetailModal(props: {
   useEffect(() => {
     setEvents([]);
     setRawText("");
+    setTranscriptText("");
     setErr("");
     api.getSession(props.id).then(setSession).catch((e) => setErr(String(e.message ?? e)));
 
@@ -376,10 +384,14 @@ export function SessionDetailModal(props: {
       const m = JSON.parse(e.data as string);
       if (m.type === "events") {
         setEvents((cur) => [...cur, ...m.records]);
-        // Refresh session meta for status flips.
-        api.getSession(props.id).then(setSession).catch(() => {});
       } else if (m.type === "raw") {
         setRawText((cur) => cur + m.data);
+      } else if (m.type === "transcript") {
+        setTranscriptText((cur) => cur + m.data);
+      } else if (m.type === "session") {
+        // Authoritative session meta from the server — picks up activity
+        // transitions, exit_code, etc. without re-fetching HTTP.
+        setSession(m.session as Session);
       }
     });
     ws.addEventListener("error", () => setErr("websocket error"));
@@ -417,6 +429,9 @@ export function SessionDetailModal(props: {
             {session && (
               <div className="mono muted" style={{ fontSize: 12 }}>
                 <StatusPill status={session.status} />{" "}
+                {session.agent_kind === "claude-code" && session.status === "running" && session.activity && (
+                  <ActivityPill activity={session.activity} />
+                )}{" "}
                 {session.machine} · {session.workdir}
               </div>
             )}
@@ -435,7 +450,10 @@ export function SessionDetailModal(props: {
         {session?.status === "running" && <SendInput id={session.id} />}
 
         {session?.agent_kind === "claude-code" ? (
-          <ClaudeTerminal session={session} />
+          <>
+            <ClaudeTerminal session={session} />
+            <TranscriptView text={transcriptText} hasFile={!!session.cc_session_file} />
+          </>
         ) : (
           <>
             <h2>Live log</h2>
@@ -504,6 +522,190 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
       </table>
     </div>
   );
+}
+
+function ActivityPill({ activity }: { activity: "running" | "waiting" }) {
+  if (activity === "running") {
+    return <span className="pill ok" title="The agent is actively producing output.">active</span>;
+  }
+  return <span className="pill warn" title="The agent is idle, awaiting user input.">waiting</span>;
+}
+
+function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
+  const turns = useMemo(() => parseTranscript(text), [text]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showRaw, setShowRaw] = useState(false);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [turns.length]);
+
+  if (!hasFile) {
+    return (
+      <>
+        <h2>Transcript</h2>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Waiting for Claude to create its JSONL — should appear a second or two after the session starts.
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (turns.length === 0) {
+    return (
+      <>
+        <h2>Transcript</h2>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="muted" style={{ fontSize: 13 }}>No messages yet.</div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+        <h2 style={{ margin: 0 }}>Transcript</h2>
+        <button
+          className="secondary"
+          style={{ padding: "4px 10px", fontSize: 12 }}
+          onClick={() => setShowRaw((v) => !v)}
+          title="Show the underlying JSONL lines for debugging"
+        >{showRaw ? "Hide raw" : "View raw"}</button>
+      </div>
+      <div
+        ref={scrollRef}
+        className="scroll-panel"
+        style={{
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          maxHeight: 420,
+          background: "#0e1116",
+          padding: 8,
+        }}
+      >
+        {showRaw ? (
+          <pre className="code" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{text}</pre>
+        ) : (
+          turns.map((t, i) => <TranscriptTurnRow key={i} turn={t} />)
+        )}
+      </div>
+    </>
+  );
+}
+
+function TranscriptTurnRow({ turn }: { turn: TranscriptTurn }) {
+  const roleStyle = useMemo(() => roleBadgeStyle(turn.kind), [turn.kind]);
+  return (
+    <div style={{ margin: "10px 6px", paddingLeft: 8, borderLeft: `3px solid ${roleStyle.accent}` }}>
+      <div className="row" style={{ gap: 8, alignItems: "baseline", marginBottom: 4 }}>
+        <span className="pill" style={{
+          background: roleStyle.bg, color: roleStyle.fg, fontSize: 11,
+        }}>{roleStyle.label}</span>
+        {turn.ts && (
+          <span className="muted" style={{ fontSize: 11 }} title={fullTime(turn.ts)}>
+            {relativeTime(turn.ts)}
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {turn.blocks.length === 0 && (
+          <div className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>(no content)</div>
+        )}
+        {turn.blocks.map((b, i) => <TranscriptBlock key={i} block={b} />)}
+      </div>
+    </div>
+  );
+}
+
+function TranscriptBlock({ block }: { block: TranscriptTurn["blocks"][number] }) {
+  const [expanded, setExpanded] = useState(block.type === "text");
+  if (block.type === "text") {
+    return (
+      <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.5 }}>
+        {block.text}
+      </div>
+    );
+  }
+  if (block.type === "tool_use") {
+    const argsPreview = typeof block.input === "object" && block.input
+      ? Object.keys(block.input as object).join(", ")
+      : "";
+    return (
+      <div
+        style={{
+          background: "rgba(106,164,255,0.08)",
+          border: "1px solid rgba(106,164,255,0.25)",
+          borderRadius: 6,
+          padding: "6px 10px",
+        }}
+      >
+        <div
+          className="row"
+          style={{ gap: 6, fontSize: 12, cursor: "pointer", alignItems: "baseline" }}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <span className="muted" style={{ fontSize: 11 }}>tool_use</span>
+          <span className="mono" style={{ color: "var(--accent)" }}>{block.name}</span>
+          {!expanded && argsPreview && <span className="muted" style={{ fontSize: 11 }}>({argsPreview})</span>}
+          <span className="muted" style={{ fontSize: 11, marginLeft: "auto" }}>{expanded ? "▾" : "▸"}</span>
+        </div>
+        {expanded && (
+          <pre className="code" style={{ marginTop: 6, fontSize: 11, maxHeight: 200 }}>{JSON.stringify(block.input, null, 2)}</pre>
+        )}
+      </div>
+    );
+  }
+  if (block.type === "tool_result") {
+    return (
+      <div
+        style={{
+          background: block.is_error ? "rgba(239,107,107,0.08)" : "rgba(110,207,110,0.06)",
+          border: `1px solid ${block.is_error ? "rgba(239,107,107,0.25)" : "rgba(110,207,110,0.18)"}`,
+          borderRadius: 6,
+          padding: "6px 10px",
+        }}
+      >
+        <div
+          className="row"
+          style={{ gap: 6, fontSize: 12, cursor: "pointer", alignItems: "baseline" }}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <span className="muted" style={{ fontSize: 11 }}>tool_result</span>
+          {block.is_error && <span className="pill err" style={{ fontSize: 10 }}>error</span>}
+          <span className="muted" style={{ fontSize: 11 }}>
+            {block.content.length} chars
+          </span>
+          <span className="muted" style={{ fontSize: 11, marginLeft: "auto" }}>{expanded ? "▾" : "▸"}</span>
+        </div>
+        {expanded && (
+          <pre
+            className="code"
+            style={{ marginTop: 6, fontSize: 11, maxHeight: 260, whiteSpace: "pre-wrap" }}
+          >{block.content}</pre>
+        )}
+      </div>
+    );
+  }
+  if (block.type === "image") {
+    return <div className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>[image]</div>;
+  }
+  return (
+    <pre className="code" style={{ fontSize: 11, maxHeight: 120 }}>{JSON.stringify(block.raw, null, 2)}</pre>
+  );
+}
+
+function roleBadgeStyle(kind: TranscriptTurn["kind"]): { label: string; bg: string; fg: string; accent: string } {
+  switch (kind) {
+    case "user":        return { label: "user",        bg: "#2a3142", fg: "#aab4d0", accent: "#5b6475" };
+    case "assistant":   return { label: "assistant",   bg: "rgba(106,164,255,0.15)", fg: "#c8d7ff", accent: "#6aa4ff" };
+    case "tool_result": return { label: "tool_result", bg: "rgba(110,207,110,0.1)",  fg: "#c5e6c5", accent: "#6ecf6e" };
+    case "system":      return { label: "system",      bg: "#2a2f38", fg: "var(--fg-dim)", accent: "#4a5160" };
+    case "summary":     return { label: "summary",     bg: "rgba(242,185,75,0.1)",   fg: "#ead39a", accent: "var(--warn)" };
+    default:            return { label: "?",           bg: "#2a2f38", fg: "var(--fg-dim)", accent: "#3a4150" };
+  }
 }
 
 function ClaudeTerminal({ session }: { session: Session }) {
