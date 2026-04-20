@@ -22,8 +22,13 @@ export function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
-  const running = sessions.filter((s) => s.status === "running").length;
-  const pending = sessions.filter((s) => s.status === "provisioning").length;
+  // Count sessions by observable state. "Active" = session is alive on
+  // the remote. "Pending attention" = claude-code session whose agent has
+  // finished its turn and is awaiting user input.
+  const active = sessions.filter((s) => s.status === "active").length;
+  const pending = sessions.filter(
+    (s) => s.status === "active" && s.agent_kind === "claude-code" && s.activity === "pending",
+  ).length;
   const recent = sessions.slice(0, 8);
 
   return (
@@ -37,8 +42,8 @@ export function DashboardPage() {
           <Stat label="Machines" value={machines.length} />
           <Stat label="Secrets" value={secrets.length} />
           <Separator />
-          <Stat label="Running sessions" value={running} accent="ok" />
-          <Stat label="Pending" value={pending} accent={pending > 0 ? "warn" : undefined} />
+          <Stat label="Active sessions" value={active} accent="ok" />
+          <Stat label="Needs attention" value={pending} accent={pending > 0 ? "warn" : undefined} />
         </div>
       </div>
 
@@ -54,18 +59,7 @@ export function DashboardPage() {
               {recent.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
                   <td className="mono">{s.id}</td>
-                  <td>
-                    <span className={`pill ${
-                      s.status === "running" ? "ok" :
-                      s.status === "failed_to_start" ? "err" :
-                      s.status === "provisioning" ? "warn" : ""
-                    }`}>
-                      {s.status}
-                    </span>
-                    {s.agent_kind === "claude-code" && s.status === "running" && s.activity === "waiting" && (
-                      <> <span className="pill warn" title="Idle — awaiting user input">waiting</span></>
-                    )}
-                  </td>
+                  <td><DashboardPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {s.cmd}
@@ -89,6 +83,18 @@ export function DashboardPage() {
       )}
     </div>
   );
+}
+
+function DashboardPill({ session: s }: { session: Session }) {
+  let label: string;
+  let cls: string;
+  if (s.status === "exited") { label = "exited"; cls = ""; }
+  else if (s.status === "failed_to_start") { label = "failed"; cls = "err"; }
+  else if (s.status === "provisioning") { label = "provisioning"; cls = "warn"; }
+  else if (s.agent_kind === "claude-code" && s.activity === "pending") { label = "pending"; cls = "warn"; }
+  else if (s.agent_kind === "claude-code" && s.activity === "running") { label = "running"; cls = "ok"; }
+  else { label = "active"; cls = "ok"; }
+  return <span className={`pill ${cls}`}>{label}</span>;
 }
 
 function Stat({ label, value, accent }: { label: string; value: number; accent?: "ok" | "warn" | "err" }) {

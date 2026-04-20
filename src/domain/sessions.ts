@@ -6,7 +6,7 @@ import type { NdjsonReadResult } from "../storage/index.ts";
 
 export type SessionStatus =
   | "provisioning"
-  | "running"
+  | "active"
   | "exited"
   | "failed_to_start";
 
@@ -43,10 +43,10 @@ export type Session = {
    * stream. Used by the activity-state heuristic. */
   last_raw_at?: string;
   last_transcript_at?: string;
-  /** Derived activity: "running" = output happening recently, "waiting" =
-   * quiet, idle, waiting for user input. Only meaningful for running
-   * claude-code sessions. */
-  activity?: "running" | "waiting";
+  /** Derived activity (only meaningful for active claude-code sessions):
+   *   "running" = agent is producing output / using a tool,
+   *   "pending" = agent has completed its turn, awaiting the user. */
+  activity?: "running" | "pending";
 };
 
 export type SessionEvent = {
@@ -128,7 +128,19 @@ export function writeSession(dir: DataDir, s: Session): void {
 export function readSession(dir: DataDir, id: string): Session {
   const p = paths(dir, id);
   if (!existsSync(p.meta)) throw new Error(`session not found: ${id}`);
-  return readToml<Session>(p.meta);
+  return normalizeSession(readToml<Session>(p.meta));
+}
+
+/**
+ * Backward-compat: pre-v0.1.4 meta.toml still has status="running" and
+ * activity="waiting". Rewrite on read so the rest of the app never has
+ * to double-check. New writes use "active" / "pending".
+ */
+function normalizeSession(s: Session): Session {
+  const out = { ...s };
+  if ((out.status as unknown as string) === "running") out.status = "active";
+  if ((out.activity as unknown as string) === "waiting") out.activity = "pending";
+  return out;
 }
 
 export function sessionExists(dir: DataDir, id: string): boolean {
@@ -142,7 +154,7 @@ export function listSessions(dir: DataDir): Session[] {
   for (const id of readdirSync(root)) {
     try { assertSafeName(id, "session id"); } catch { continue; }
     const metaPath = join(root, id, "meta.toml");
-    if (existsSync(metaPath)) out.push(readToml<Session>(metaPath));
+    if (existsSync(metaPath)) out.push(normalizeSession(readToml<Session>(metaPath)));
   }
   // newest first
   out.sort((a, b) => b.created_at.localeCompare(a.created_at));

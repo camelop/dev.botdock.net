@@ -50,11 +50,11 @@ export async function launchSession(dir: DataDir, id: string): Promise<Session> 
     });
     return updateSession(dir, id, { status: "failed_to_start" });
   }
-  const nowRunning = updateSession(dir, id, {
-    status: "running",
+  const nowActive = updateSession(dir, id, {
+    status: "active",
     started_at: new Date().toISOString(),
   });
-  return nowRunning;
+  return nowActive;
 }
 
 /**
@@ -155,7 +155,7 @@ export async function sendInputToSession(
   payload: { text?: string; keys?: string[] },
 ): Promise<void> {
   const s = readSession(dir, id);
-  if (s.status !== "running") throw new Error(`session ${id} is not running`);
+  if (s.status !== "active") throw new Error(`session ${id} is not active (state=${s.status})`);
   const machine = readMachine(dir, s.machine);
   const lines: string[] = [];
   let summaryKind: "text" | "keys";

@@ -71,8 +71,8 @@ test("updateSession patches fields and persists", () => {
   const s = createSessionRecord(dir, {
     machine: "m", workdir: "/x", agent_kind: "generic-cmd", cmd: "true",
   });
-  updateSession(dir, s.id, { status: "running", started_at: "2026-02-02T00:00:00Z" });
+  updateSession(dir, s.id, { status: "active", started_at: "2026-02-02T00:00:00Z" });
   const loaded = readSession(dir, s.id);
-  expect(loaded.status).toBe("running");
+  expect(loaded.status).toBe("active");
   expect(loaded.started_at).toBe("2026-02-02T00:00:00Z");
 });

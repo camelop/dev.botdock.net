@@ -86,16 +86,11 @@ export function SessionsPage() {
               {sessions.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
                   <td className="mono">{s.id}</td>
-                  <td>
-                    <StatusPill status={s.status} />
-                    {s.agent_kind === "claude-code" && s.status === "running" && s.activity && (
-                      <> <ActivityPill activity={s.activity} /></>
-                    )}
-                  </td>
+                  <td><SessionPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cmd}</td>
                   <td className="muted" title={fullTime(s.started_at)}>{relativeTime(s.started_at)}</td>
-                  <td className="mono">{s.exit_code ?? (s.status === "running" ? "…" : "—")}</td>
+                  <td className="mono">{s.exit_code ?? (s.status === "active" ? "…" : "—")}</td>
                   <td>
                     <button className="secondary" onClick={(e) => { e.stopPropagation(); setSelected(s.id); }}>Open</button>
                   </td>
@@ -131,9 +126,29 @@ export function SessionsPage() {
   );
 }
 
+/**
+ * Single pill that merges session status and agent activity. Priority:
+ *   - exited / failed_to_start: show the terminal status
+ *   - provisioning: show it (starting up)
+ *   - active + claude-code agent with known activity: show activity
+ *     ("running" while producing output, "pending" while idle)
+ *   - otherwise: show "active"
+ */
+function SessionPill({ session: s }: { session: Pick<Session, "status" | "activity" | "agent_kind"> }) {
+  let label: string;
+  let cls: string;
+  if (s.status === "exited") { label = "exited"; cls = ""; }
+  else if (s.status === "failed_to_start") { label = "failed"; cls = "err"; }
+  else if (s.status === "provisioning") { label = "provisioning"; cls = "warn"; }
+  else if (s.agent_kind === "claude-code" && s.activity === "pending") { label = "pending"; cls = "warn"; }
+  else if (s.agent_kind === "claude-code" && s.activity === "running") { label = "running"; cls = "ok"; }
+  else { label = "active"; cls = "ok"; }
+  return <span className={`pill ${cls}`}>{label}</span>;
+}
+
+/** Legacy wrapper kept for code paths that only have a SessionStatus. */
 function StatusPill({ status }: { status: SessionStatus }) {
-  const cls = status === "running" ? "ok" : status === "exited" ? "" : status === "failed_to_start" ? "err" : "warn";
-  return <span className={`pill ${cls}`}>{status}</span>;
+  return <SessionPill session={{ status, agent_kind: "generic-cmd" }} />;
 }
 
 function NewSessionModal(props: {
@@ -404,7 +419,7 @@ export function SessionDetailModal(props: {
   }, [rawText]);
 
   const onStop = async () => {
-    if (!confirm("Stop this session?")) return;
+    if (!confirm("Deactivate this session? The remote tmux is killed; local logs stay.")) return;
     try {
       const s = await api.stopSession(props.id);
       setSession(s);
@@ -432,17 +447,14 @@ export function SessionDetailModal(props: {
             <h2 style={{ marginTop: 0, marginBottom: 4 }}>Session {props.id}</h2>
             {session && (
               <div className="mono muted" style={{ fontSize: 12 }}>
-                <StatusPill status={session.status} />{" "}
-                {session.agent_kind === "claude-code" && session.status === "running" && session.activity && (
-                  <ActivityPill activity={session.activity} />
-                )}{" "}
+                <SessionPill session={session} />{" "}
                 {session.machine} · {session.workdir}
               </div>
             )}
           </div>
           <div className="actions">
-            {session?.status === "running" && <button className="secondary" onClick={onStop}>Stop</button>}
-            {session && session.status !== "running" && session.status !== "provisioning" && (
+            {session?.status === "active" && <button className="secondary" onClick={onStop}>Deactivate</button>}
+            {session && session.status !== "active" && session.status !== "provisioning" && (
               <button className="secondary" onClick={onDelete}>Delete</button>
             )}
             <button className="secondary" onClick={props.onClose}>Close</button>
@@ -451,7 +463,7 @@ export function SessionDetailModal(props: {
 
         {err && <div className="error-banner">{err}</div>}
         {session && <Meta s={session} />}
-        {session?.status === "running" && <SendInput id={session.id} />}
+        {session?.status === "active" && <SendInput id={session.id} />}
 
         {session?.agent_kind === "claude-code" ? (
           <>
@@ -475,7 +487,7 @@ export function SessionDetailModal(props: {
               }}
             >
               <AnsiText text={rawText} />
-              {session?.status === "running" && (
+              {session?.status === "active" && (
                 <span className="pill ok" style={{ fontSize: 10, marginTop: 8, display: "inline-block" }}>streaming</span>
               )}
             </div>
@@ -526,13 +538,6 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
       </table>
     </div>
   );
-}
-
-function ActivityPill({ activity }: { activity: "running" | "waiting" }) {
-  if (activity === "running") {
-    return <span className="pill ok" title="The agent is actively producing output.">active</span>;
-  }
-  return <span className="pill warn" title="The agent is idle, awaiting user input.">waiting</span>;
 }
 
 function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
@@ -773,7 +778,7 @@ function ClaudeTerminal({ session }: { session: Session }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomed]);
 
-  const ready = !!session.terminal_local_port && (session.status === "running" || session.status === "provisioning");
+  const ready = !!session.terminal_local_port && (session.status === "active" || session.status === "provisioning");
   const url = `/api/sessions/${encodeURIComponent(session.id)}/terminal/`;
 
   if (!ready) {
@@ -782,9 +787,9 @@ function ClaudeTerminal({ session }: { session: Session }) {
         <h2>Terminal</h2>
         <div className="card" style={{ padding: 16 }}>
           <div className="muted" style={{ fontSize: 13 }}>
-            {session.status === "running"
+            {session.status === "active"
               ? "Booting the embedded ttyd… refresh in a moment. If it stays empty, check the Events below for a setup error."
-              : `Session is ${session.status}. Terminal is only embedded while the session is running.`}
+              : `Session is ${session.status}. Terminal is only embedded while the session is active.`}
           </div>
         </div>
       </>

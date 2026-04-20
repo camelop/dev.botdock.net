@@ -76,7 +76,7 @@ export function MachinesPage() {
     for (const s of sessions) {
       if (!counts[s.machine]) counts[s.machine] = { running: 0, total: 0 };
       counts[s.machine]!.total++;
-      if (s.status === "running") counts[s.machine]!.running++;
+      if (s.status === "active") counts[s.machine]!.running++;
     }
     return counts;
   }, [sessions]);

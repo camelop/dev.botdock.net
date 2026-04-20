@@ -49,7 +49,7 @@ export type TestResult = {
 
 export type Status = { home: string; version: string; dev: boolean };
 
-export type SessionStatus = "provisioning" | "running" | "exited" | "failed_to_start";
+export type SessionStatus = "provisioning" | "active" | "exited" | "failed_to_start";
 export type AgentKind = "generic-cmd" | "claude-code";
 export type Session = {
   id: string;
@@ -72,7 +72,7 @@ export type Session = {
   remote_transcript_offset?: number;
   last_raw_at?: string;
   last_transcript_at?: string;
-  activity?: "running" | "waiting";
+  activity?: "running" | "pending";
 };
 export type SessionEventRecord = {
   ts: string;

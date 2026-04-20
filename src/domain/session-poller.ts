@@ -155,10 +155,10 @@ export class SessionPoller extends EventEmitter {
     super();
   }
 
-  /** Resume loops for all sessions in running/provisioning state on startup. */
+  /** Resume loops for all active/provisioning sessions on startup. */
   resumeAll(): void {
     for (const s of listSessions(this.dir)) {
-      if (s.status === "running" || s.status === "provisioning") this.watch(s.id);
+      if (s.status === "active" || s.status === "provisioning") this.watch(s.id);
     }
   }
 
@@ -189,7 +189,7 @@ export class SessionPoller extends EventEmitter {
   private async loop(id: string, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       const s = readSession(this.dir, id);
-      if (s.status !== "running") return;
+      if (s.status !== "active") return;
 
       const report = this.pollOnce(s);
       if (report) this.apply(s, report);
@@ -304,7 +304,7 @@ export class SessionPoller extends EventEmitter {
     // in-flight tool_result). Waiting otherwise. Only meaningful for
     // running claude-code sessions.
     const cur = readSession(this.dir, s.id);
-    if (cur.status === "running" && cur.agent_kind === "claude-code") {
+    if (cur.status === "active" && cur.agent_kind === "claude-code") {
       const activity = computeActivity(cur, this.dir);
       if (activity !== cur.activity) {
         updateSession(this.dir, s.id, { activity });
@@ -320,7 +320,7 @@ export class SessionPoller extends EventEmitter {
     //                                    on the remote
     if (!report.tmuxAlive) {
       const cur = readSession(this.dir, s.id);
-      if (cur.status === "running" || cur.status === "provisioning") {
+      if (cur.status === "active" || cur.status === "provisioning") {
         const delta = report.eventsDelta ?? "";
         const hasExit         = /"kind":\s*"exited"/.test(delta);
         const hasFailedToStart = /"kind":\s*"failed_to_start"/.test(delta);
@@ -354,44 +354,26 @@ export class SessionPoller extends EventEmitter {
 }
 
 /**
- * Decide whether a running claude-code session is actively producing output
- * ("running") or idle waiting for user input ("waiting").
+ * Decide whether an active claude-code session is still doing something
+ * ("running") or idle waiting for user input ("pending").
  *
- * Heuristic: combine two independent signals.
- *   1. Raw/transcript silence: no bytes in either stream for > 5s ⇒
- *      probably waiting.
- *   2. Transcript shape: read the last complete JSONL line. If it's a
- *      finished assistant message (only text content, no unresolved
- *      tool_use) ⇒ waiting. If it's a tool_use / tool_result / user
- *      message that just went out ⇒ running.
+ * Single source of truth: the last complete JSONL line in the local
+ * transcript mirror.
+ *   - Assistant message whose content is only `text` (no tool_use) ⇒
+ *     turn finished ⇒ "pending".
+ *   - Anything else (user just spoke, tool_use in flight, tool_result,
+ *     unknown shape, empty transcript) ⇒ "running".
  *
- * Both signals are best-effort — the CC jsonl schema can shift. We default
- * to "running" when uncertain so we never falsely tell the user "waiting"
- * while the agent is actually thinking.
+ * No tmux/raw signal: the pane can be quiet for lots of reasons (API
+ * latency, compaction pauses) that don't mean the agent is idle.
  */
-const IDLE_WINDOW_MS = 5_000;
-
 function computeActivity(
   s: Session,
   dir: import("../storage/index.ts").DataDir,
-): "running" | "waiting" {
-  const now = Date.now();
-  const mostRecent = Math.max(
-    s.last_raw_at ? Date.parse(s.last_raw_at) : 0,
-    s.last_transcript_at ? Date.parse(s.last_transcript_at) : 0,
-    s.started_at ? Date.parse(s.started_at) : 0,
-  );
-  const quiet = now - mostRecent > IDLE_WINDOW_MS;
-
-  // Inspect the tail of our local transcript.ndjson (best effort).
+): "running" | "pending" {
   const lastEntry = readLastTranscriptEntry(dir, s.id);
-  const shapeSaysWaiting = lastEntry ? lastEntryLooksFinal(lastEntry) : false;
-  const shapeSaysRunning = lastEntry ? lastEntryLooksActive(lastEntry) : false;
-
-  if (shapeSaysRunning) return "running";
-  if (quiet && shapeSaysWaiting) return "waiting";
-  if (quiet) return "waiting";
-  return "running";
+  if (!lastEntry) return "running";
+  return lastEntryLooksFinal(lastEntry) ? "pending" : "running";
 }
 
 function readLastTranscriptEntry(
@@ -433,15 +415,6 @@ function lastEntryLooksFinal(entry: Record<string, unknown>): boolean {
   const content = msg.content;
   if (!Array.isArray(content)) return false;
   return content.every((c: any) => c && c.type === "text");
-}
-
-function lastEntryLooksActive(entry: Record<string, unknown>): boolean {
-  const msg = (entry as any).message;
-  if (!msg || typeof msg !== "object") return false;
-  const content = msg.content;
-  if (!Array.isArray(content)) return false;
-  // Any tool_use / tool_result means the turn is still in motion.
-  return content.some((c: any) => c && (c.type === "tool_use" || c.type === "tool_result"));
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
