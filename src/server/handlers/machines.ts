@@ -135,19 +135,22 @@ cc_root = os.path.join(home, ".claude", "projects")
 
 active_cwds = set()
 try:
-    for pid in os.listdir("/proc"):
-        if not pid.isdigit(): continue
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                cmd = f.read().replace(b"\\0", b" ").decode(errors="replace")
-        except Exception:
-            continue
-        if "claude" not in cmd: continue
-        try:
-            cwd = os.readlink(f"/proc/{pid}/cwd")
-        except Exception:
-            continue
-        active_cwds.add(cwd)
+    pid_entries = os.listdir("/proc")
+except Exception:
+    pid_entries = []
+for pid in pid_entries:
+    if not pid.isdigit(): continue
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmd = f.read().replace(b"\\0", b" ").decode(errors="replace")
+    except Exception:
+        continue
+    if "claude" not in cmd: continue
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+    except Exception:
+        continue
+    active_cwds.add(cwd)
 
 out = []
 if os.path.isdir(cc_root):
