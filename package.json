@@ -16,7 +16,8 @@
     "build:all": "bash scripts/build-all.sh"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5"
+    "@iarna/toml": "^2.2.5",
+    "boring-avatars": "^2.0.4"
   },
   "devDependencies": {
     "@types/bun": "latest",

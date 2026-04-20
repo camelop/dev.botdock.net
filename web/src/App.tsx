@@ -8,8 +8,9 @@ import { SessionsPage } from "./pages/SessionsPage";
 import { ForwardsPage } from "./pages/ForwardsPage";
 import { CreditsPage } from "./pages/CreditsPage";
 import { TerminalsPage } from "./pages/TerminalsPage";
+import { WarRoomPage } from "./pages/WarRoomPage";
 
-type Tab = "dashboard" | "sessions" | "budgets" | "keys" | "secrets" | "machines" | "forwards" | "terminals";
+type Tab = "dashboard" | "sessions" | "warroom" | "budgets" | "keys" | "secrets" | "machines" | "forwards" | "terminals";
 
 type NavItem  = { id: Tab; label: string };
 type NavGroup = { kind: "group"; label: string; items: NavItem[] };
@@ -34,7 +35,14 @@ const NAV: NavEntry[] = [
       { id: "terminals", label: "Terminals" },
     ],
   },
-  { id: "sessions", label: "Sessions" },
+  {
+    kind: "group",
+    label: "Sessions",
+    items: [
+      { id: "warroom",  label: "War Room" },
+      { id: "sessions", label: "List" },
+    ],
+  },
   { id: "budgets",  label: "Budgets" },
 ];
 
@@ -148,6 +156,7 @@ export function App() {
       <div className="main">
         {err && <div className="error-banner">connection error: {err}</div>}
         {tab === "dashboard" && <DashboardPage />}
+        {tab === "warroom" && <WarRoomPage />}
         {tab === "sessions" && <SessionsPage />}
         {tab === "budgets" && <CreditsPage />}
         {tab === "keys" && <KeysPage />}

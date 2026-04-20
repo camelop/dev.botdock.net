@@ -22,8 +22,17 @@ import type { ForwardManager } from "./forward-manager.ts";
  * Launch a session that was freshly created in `provisioning` status.
  * Ships the shim + user cmd to the remote, kicks off a detached tmux session
  * with pipe-pane capturing output to `workdir/.botdock/session/raw.log`.
+ *
+ * For claude-code sessions, the per-session ttyd + forward is set up BEFORE
+ * the status flips to `active`. That way any UI observer can assume "active
+ * ⇒ terminal is ready to embed" and we never strand users on a "Booting…"
+ * placeholder while the forward is still starting.
  */
-export async function launchSession(dir: DataDir, id: string): Promise<Session> {
+export async function launchSession(
+  dir: DataDir,
+  id: string,
+  forwardManager?: ForwardManager,
+): Promise<Session> {
   const s = readSession(dir, id);
   if (s.status !== "provisioning") {
     throw new Error(`session ${id} is in state ${s.status}, cannot launch`);
@@ -50,6 +59,16 @@ export async function launchSession(dir: DataDir, id: string): Promise<Session> 
     });
     return updateSession(dir, id, { status: "failed_to_start" });
   }
+
+  // Stand up the per-session ttyd + forward BEFORE flipping status. If this
+  // fails we still flip to active (the session container is alive) but
+  // record the error in the event stream so the UI can flag it.
+  if (s.agent_kind === "claude-code" && forwardManager) {
+    await setupSessionTerminal(dir, forwardManager, id).catch((err) => {
+      console.error(`[launch ${id}] terminal setup failed:`, err);
+    });
+  }
+
   const nowActive = updateSession(dir, id, {
     status: "active",
     started_at: new Date().toISOString(),

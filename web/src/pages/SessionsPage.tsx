@@ -778,19 +778,40 @@ function ClaudeTerminal({ session }: { session: Session }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomed]);
 
-  const ready = !!session.terminal_local_port && (session.status === "active" || session.status === "provisioning");
   const url = `/api/sessions/${encodeURIComponent(session.id)}/terminal/`;
+  const isLive = session.status === "active" || session.status === "provisioning";
+  const portReady = !!session.terminal_local_port;
 
-  if (!ready) {
+  if (!isLive) {
     return (
       <>
         <h2>Terminal</h2>
         <div className="card" style={{ padding: 16 }}>
           <div className="muted" style={{ fontSize: 13 }}>
-            {session.status === "active"
-              ? "Booting the embedded ttyd… refresh in a moment. If it stays empty, check the Events below for a setup error."
-              : `Session is ${session.status}. Terminal is only embedded while the session is active.`}
+            Session is {session.status}. Terminal is only embedded while the session is active.
           </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!portReady) {
+    // status is active/provisioning but we never got a terminal_local_port —
+    // either still provisioning (should be brief) or setup failed. Check
+    // the event stream for a session-terminal error.
+    return (
+      <>
+        <h2>Terminal</h2>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            {session.status === "provisioning"
+              ? "Provisioning remote ttyd + tunnel…"
+              : "Terminal didn't come up. Check the Events below for the setup error, or ssh in and tmux attach manually."}
+          </div>
+          <pre className="code" style={{ marginTop: 8, fontSize: 11 }}>
+{`ssh ${session.machine === "local" ? "<machine>" : session.machine} \\
+  -t tmux attach -t ${session.tmux_session}`}
+          </pre>
         </div>
       </>
     );

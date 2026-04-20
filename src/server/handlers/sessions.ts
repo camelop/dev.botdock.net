@@ -6,6 +6,7 @@ import {
   listSessions,
   readEvents,
   readRawRange,
+  readRecentTranscriptLines,
   readTranscriptRange,
   readSession,
   sessionExists,
@@ -53,18 +54,12 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       agent_kind: body.agent_kind,
       cmd: body.cmd,
     });
-    // Launch asynchronously so the HTTP request returns quickly. After launch
-    // comes back "running", best-effort set up the per-session ttyd terminal
-    // (claude-code only) so the UI can embed it.
-    launchSession(dir, s.id)
-      .then(async () => {
-        poller.watch(s.id);
-        if (s.agent_kind === "claude-code") {
-          await setupSessionTerminal(dir, forwardManager, s.id).catch((err) =>
-            console.error(`[sessions] terminal setup ${s.id} failed:`, err),
-          );
-        }
-      })
+    // Launch asynchronously so the HTTP request returns quickly. The
+    // launcher itself now stands up the per-session ttyd + forward
+    // before flipping status to "active", so UI observers can rely on
+    // "status=active ⇒ terminal ready".
+    launchSession(dir, s.id, forwardManager)
+      .then(() => poller.watch(s.id))
       .catch((err) => console.error(`[sessions] launch ${s.id} failed:`, err));
     return json(s, { status: 201 });
   });
@@ -117,5 +112,14 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     const offset = Number(url.searchParams.get("offset") ?? 0);
     const max = Number(url.searchParams.get("max") ?? 262144);
     return json(readTranscriptRange(dir, params.id!, offset, max));
+  });
+
+  // War-room summary: last N parsed JSONL entries. Cheap per-session
+  // endpoint — the server reads just the tail, not the whole file.
+  router.get("/api/sessions/:id/recent-turns", ({ params, url }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") ?? 12)));
+    const turns = readRecentTranscriptLines(dir, params.id!, limit);
+    return json({ turns });
   });
 }

@@ -172,6 +172,10 @@ export const api = {
     request<{ data: string; nextOffset: number; size: number }>(
       `/api/sessions/${encodeURIComponent(id)}/transcript?offset=${offset}&max=${max}`,
     ),
+  getSessionRecentTurns: (id: string, limit = 12) =>
+    request<{ turns: Array<Record<string, unknown>> }>(
+      `/api/sessions/${encodeURIComponent(id)}/recent-turns?limit=${limit}`,
+    ),
 };
 
 export function sessionWatchUrl(id: string): string {

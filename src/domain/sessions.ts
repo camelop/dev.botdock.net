@@ -189,6 +189,45 @@ export function appendTranscript(dir: DataDir, id: string, chunk: string | Buffe
   appendFileSync(p.transcript, buf);
 }
 
+/**
+ * Read the last N non-empty lines of the local transcript mirror. Returns
+ * them as parsed JSON objects, dropping any that fail to parse. Used by
+ * the war-room view to summarize each session without pulling the full
+ * transcript over the wire each tick.
+ */
+export function readRecentTranscriptLines(
+  dir: DataDir,
+  id: string,
+  lines: number,
+): Record<string, unknown>[] {
+  const p = paths(dir, id).transcript;
+  let size = 0;
+  try { size = statSync(p).size; } catch { return []; }
+  if (size === 0) return [];
+
+  // Heuristic: most CC jsonl lines fit inside ~2KB each. Start by reading
+  // the tail and if we don't have enough lines, expand.
+  let readBytes = Math.min(size, Math.max(16 * 1024, lines * 2048));
+  const { openSync, readSync, closeSync } = require("node:fs") as typeof import("node:fs");
+  const fd = openSync(p, "r");
+  try {
+    const buf = Buffer.alloc(readBytes);
+    readSync(fd, buf, 0, readBytes, size - readBytes);
+    const text = buf.toString("utf8");
+    const all = text.split("\n").filter((s) => s.length > 0);
+    // If the first line was mid-chunk, drop it.
+    const candidates = size === readBytes ? all : all.slice(1);
+    const tail = candidates.slice(-lines);
+    const parsed: Record<string, unknown>[] = [];
+    for (const line of tail) {
+      try { parsed.push(JSON.parse(line) as Record<string, unknown>); } catch { /* drop */ }
+    }
+    return parsed;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function readTranscriptRange(
   dir: DataDir,
   id: string,
