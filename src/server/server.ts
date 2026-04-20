@@ -53,7 +53,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   mountKeys(router, dir);
   mountMachines(router, dir, forwardManager);
   mountSecrets(router, dir);
-  mountSessions(router, dir, poller);
+  mountSessions(router, dir, poller, forwardManager);
   mountForwards(router, dir, forwardManager);
   mountCredits(router, dir);
 
@@ -65,6 +65,12 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
 
   function terminalForwardPort(machineName: string): number | null {
     const fname = `terminal-${machineName}`;
+    if (!forwardExists(dir, fname)) return null;
+    return readForward(dir, fname).local_port;
+  }
+
+  function sessionTerminalForwardPort(sessionId: string): number | null {
+    const fname = `session-${sessionId}-terminal`;
     if (!forwardExists(dir, fname)) return null;
     return readForward(dir, fname).local_port;
   }
@@ -177,9 +183,6 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
       }
 
       // Reverse proxy for per-machine terminals (ttyd under --base-path).
-      // Matches /api/machines/:name/terminal and /api/machines/:name/terminal/*
-      // for both HTTP and WebSocket traffic. Runs AFTER the REST router so
-      // our own endpoints (/start, /stop) win when both patterns apply.
       const termMatch = url.pathname.match(/^\/api\/machines\/([^/]+)\/terminal(\/.*)?$/);
       if (termMatch) {
         const machineName = decodeURIComponent(termMatch[1]!);
@@ -191,14 +194,28 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
             { status: 503, headers: { "content-type": "text/plain" } },
           );
         }
-        // ttyd was started with --base-path=/api/machines/<name>/terminal,
-        // so it expects its own paths to arrive with that prefix intact.
         const upstreamPath = `/api/machines/${encodeURIComponent(machineName)}/terminal${remainingPath === "/" ? "" : remainingPath}`;
-
-        // WebSocket?
         const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
         if (wsResp) return wsResp;
+        return proxyHttp(req, port, upstreamPath);
+      }
 
+      // Reverse proxy for per-session terminals (claude-code). Same pattern
+      // as machines, scoped per session-id.
+      const sessTermMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/terminal(\/.*)?$/);
+      if (sessTermMatch) {
+        const sessionId = decodeURIComponent(sessTermMatch[1]!);
+        const remainingPath = sessTermMatch[2] ?? "/";
+        const port = sessionTerminalForwardPort(sessionId);
+        if (port === null) {
+          return new Response(
+            `No terminal forward for session "${sessionId}" — it may still be booting, or it's a generic-cmd session without a terminal.`,
+            { status: 503, headers: { "content-type": "text/plain" } },
+          );
+        }
+        const upstreamPath = `/api/sessions/${encodeURIComponent(sessionId)}/terminal${remainingPath === "/" ? "" : remainingPath}`;
+        const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
+        if (wsResp) return wsResp;
         return proxyHttp(req, port, upstreamPath);
       }
 

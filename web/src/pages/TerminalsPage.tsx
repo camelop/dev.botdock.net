@@ -3,7 +3,22 @@ import { forwardsApi, type ForwardWithStatus } from "../api";
 
 const TERMINAL_MANAGED_BY = "system:machine-terminal";
 
+/**
+ * Embedded terminals section. Renders nothing when no machine has a
+ * running system:machine-terminal forward, so it's safe to drop at the
+ * top of the Machines page without creating empty vertical space on
+ * fresh setups.
+ */
+export function TerminalsSection() {
+  return <TerminalsImpl heading="h2" />;
+}
+
+/** Full page version, if/when we want a standalone route again. */
 export function TerminalsPage() {
+  return <TerminalsImpl heading="h1" />;
+}
+
+function TerminalsImpl({ heading: Heading }: { heading: "h1" | "h2" }) {
   const [forwards, setForwards] = useState<ForwardWithStatus[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -41,12 +56,15 @@ export function TerminalsPage() {
 
   const activeForward = terminals.find((t) => t.machine === active);
 
+  // When embedded, skip the whole block if nothing is running.
+  if (terminals.length === 0 && Heading === "h2") return null;
+
   return (
-    <div>
+    <div style={{ marginBottom: Heading === "h2" ? 24 : 0 }}>
       {!zoomed && (
         <>
           <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
-            <h1 style={{ margin: 0 }}>Terminals</h1>
+            <Heading style={{ margin: 0 }}>Terminals</Heading>
             {activeForward && (
               <div className="row" style={{ gap: 6 }}>
                 <a
@@ -62,7 +80,7 @@ export function TerminalsPage() {
                   title="Open this terminal in a new browser tab"
                 >↗ New tab</a>
                 <button className="secondary" onClick={() => setZoomed(true)} title="Expand to full-screen (Esc to exit)">
-                  ⛶ Zoom
+                  ⛶ Full screen
                 </button>
               </div>
             )}
@@ -74,7 +92,7 @@ export function TerminalsPage() {
       {terminals.length === 0 ? (
         <div className="card">
           <div className="empty">
-            No running terminals yet. Start one from the Machines page (click "Start" on a machine row).
+            No running terminals yet. Click "Start" on a machine below.
           </div>
         </div>
       ) : (

@@ -8,6 +8,15 @@ import {
 } from "./sessions.ts";
 import { sshExec } from "../lib/remote.ts";
 import { provisioningScript, buildCmdB64 } from "../lib/shim.ts";
+import { startSessionTerminal, sessionTerminalBasePath, stopSessionTerminal } from "../lib/remote-install.ts";
+import { findFreeLocalPort } from "../lib/free-port.ts";
+import {
+  deleteForward,
+  forwardExists,
+  writeForward,
+  type Forward,
+} from "./forwards.ts";
+import type { ForwardManager } from "./forward-manager.ts";
 
 /**
  * Launch a session that was freshly created in `provisioning` status.
@@ -41,10 +50,90 @@ export async function launchSession(dir: DataDir, id: string): Promise<Session> 
     });
     return updateSession(dir, id, { status: "failed_to_start" });
   }
-  return updateSession(dir, id, {
+  const nowRunning = updateSession(dir, id, {
     status: "running",
     started_at: new Date().toISOString(),
   });
+  return nowRunning;
+}
+
+/**
+ * Spawn a per-session ttyd attached to the session's tmux, create a
+ * system-managed local forward, and record both on the session record.
+ * Best-effort: errors are recorded but don't fail the session launch.
+ */
+export async function setupSessionTerminal(
+  dir: DataDir,
+  manager: ForwardManager,
+  id: string,
+): Promise<void> {
+  const s = readSession(dir, id);
+  if (s.agent_kind !== "claude-code") return; // only claude-code gets an embedded terminal for now
+  if (s.terminal_local_port) return;          // already set up
+
+  try {
+    const machine = readMachine(dir, s.machine);
+    const basePath = sessionTerminalBasePath(id);
+    const res = startSessionTerminal(dir, machine, {
+      sessionId: id,
+      tmuxSession: s.tmux_session,
+      basePath,
+    });
+    const localPort = await findFreeLocalPort(47000, 47999);
+    const fname = `session-${id}-terminal`;
+    const forward: Forward = {
+      name: fname,
+      machine: s.machine,
+      direction: "local",
+      local_port: localPort,
+      remote_host: "127.0.0.1",
+      remote_port: res.remote_port,
+      auto_start: true,
+      managed_by: "system:session-terminal",
+      description: `Managed terminal for session ${id}`,
+    };
+    if (forwardExists(dir, fname)) {
+      manager.stop(fname);
+      manager.forget(fname);
+      deleteForward(dir, fname);
+    }
+    writeForward(dir, forward);
+    await manager.start(fname);
+    updateSession(dir, id, {
+      terminal_local_port: localPort,
+      terminal_remote_port: res.remote_port,
+    });
+    appendEvent(dir, id, {
+      ts: new Date().toISOString(),
+      kind: "error",   // reusing "error" slot for informational; fine for now
+      message: `terminal ready at ${basePath}/`,
+    });
+  } catch (err) {
+    appendEvent(dir, id, {
+      ts: new Date().toISOString(),
+      kind: "error",
+      message: `session terminal setup failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+}
+
+/** Tear down the ttyd + forward for a session (called on stop/delete). */
+export async function teardownSessionTerminal(
+  dir: DataDir,
+  manager: ForwardManager,
+  id: string,
+): Promise<void> {
+  const s = readSession(dir, id);
+  const fname = `session-${id}-terminal`;
+  if (forwardExists(dir, fname)) {
+    manager.stop(fname);
+    manager.forget(fname);
+    deleteForward(dir, fname);
+  }
+  try {
+    const machine = readMachine(dir, s.machine);
+    stopSessionTerminal(dir, machine, id);
+  } catch { /* best effort */ }
 }
 
 /**

@@ -67,6 +67,8 @@ export type Session = {
   remote_raw_offset?: number;
   cc_session_file?: string;
   cc_session_uuid?: string;
+  terminal_local_port?: number;
+  terminal_remote_port?: number;
 };
 export type SessionEventRecord = {
   ts: string;

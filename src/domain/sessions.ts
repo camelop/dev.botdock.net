@@ -31,6 +31,12 @@ export type Session = {
   cc_session_file?: string;
   /** For claude-code: the session UUID (basename of the transcript file). */
   cc_session_uuid?: string;
+  /** For claude-code: local port that the BotDock daemon proxies to this
+   * session's dedicated ttyd. Populated after the terminal is spawned. */
+  terminal_local_port?: number;
+  /** For claude-code: the remote port ttyd is listening on (useful for
+   * debugging; not used by the proxy directly). */
+  terminal_remote_port?: number;
 };
 
 export type SessionEvent = {

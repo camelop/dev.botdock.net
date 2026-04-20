@@ -435,26 +435,7 @@ export function SessionDetailModal(props: {
         {session?.status === "running" && <SendInput id={session.id} />}
 
         {session?.agent_kind === "claude-code" ? (
-          <>
-            <h2>Terminal</h2>
-            <div className="card" style={{ padding: 16 }}>
-              <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
-                <strong>Live log is disabled for Claude Code sessions.</strong><br/>
-                Claude's TUI uses heavy cursor-positioning that doesn't render meaningfully in a
-                scrollback viewer. An <span className="mono">ttyd</span> integration is on the way
-                — it'll serve the tmux pane through a port-forward and show it here as a real
-                terminal embed.
-              </div>
-              <div className="muted" style={{ fontSize: 12 }}>
-                In the meantime, to interact directly:
-                <pre className="code" style={{ marginTop: 6 }}>
-{`ssh ${session.machine === "local" ? "<machine>" : session.machine} \\
-  -t tmux attach -t ${session.tmux_session}`}
-                </pre>
-                Send-keys from the input box above still works if you don't want to attach.
-              </div>
-            </div>
-          </>
+          <ClaudeTerminal session={session} />
         ) : (
           <>
             <h2>Live log</h2>
@@ -522,6 +503,81 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ClaudeTerminal({ session }: { session: Session }) {
+  const [zoomed, setZoomed] = useState(false);
+  useEffect(() => {
+    if (!zoomed) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setZoomed(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed]);
+
+  const ready = !!session.terminal_local_port && (session.status === "running" || session.status === "provisioning");
+  const url = `/api/sessions/${encodeURIComponent(session.id)}/terminal/`;
+
+  if (!ready) {
+    return (
+      <>
+        <h2>Terminal</h2>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            {session.status === "running"
+              ? "Booting the embedded ttyd… refresh in a moment. If it stays empty, check the Events below for a setup error."
+              : `Session is ${session.status}. Terminal is only embedded while the session is running.`}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  const containerStyle: React.CSSProperties = zoomed
+    ? { position: "fixed", inset: 0, zIndex: 1000, background: "#0a0c10", display: "flex", flexDirection: "column" }
+    : { height: 420, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" };
+
+  return (
+    <>
+      {!zoomed && (
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+          <h2 style={{ margin: 0 }}>Terminal</h2>
+          <div className="row" style={{ gap: 6 }}>
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="secondary"
+              style={{
+                padding: "6px 14px", borderRadius: 6, textDecoration: "none",
+                background: "#323844", color: "var(--fg)",
+                border: "1px solid #3f4754", fontSize: 13,
+              }}
+              title="Open this session's terminal in a new browser tab"
+            >↗ New tab</a>
+            <button className="secondary" onClick={() => setZoomed(true)} title="Expand to full screen (Esc to exit)">
+              ⛶ Full screen
+            </button>
+          </div>
+        </div>
+      )}
+      <div style={containerStyle}>
+        {zoomed && (
+          <div className="row" style={{ padding: 6, borderBottom: "1px solid var(--border)", background: "var(--bg-elev)" }}>
+            <span className="muted" style={{ fontSize: 12, marginLeft: 10 }}>
+              Session {session.id} · {session.machine} · {session.tmux_session}
+            </span>
+            <div style={{ flex: 1 }} />
+            <button className="secondary" onClick={() => setZoomed(false)} title="Exit full screen (Esc)">× Exit</button>
+          </div>
+        )}
+        <iframe
+          title={`session-${session.id}-terminal`}
+          src={url}
+          style={{ flex: 1, border: "none", width: "100%" }}
+        />
+      </div>
+    </>
   );
 }
 

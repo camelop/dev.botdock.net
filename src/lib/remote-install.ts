@@ -340,6 +340,112 @@ export function stopTerminal(dir: DataDir, machine: Machine): void {
     10_000);
 }
 
+/**
+ * Spawn a dedicated ttyd attached to a specific tmux session (the one a
+ * claude-code BotDock session is running in). Returns the remote port ttyd
+ * is listening on. Idempotent: if a ttyd for this tmux-session is already
+ * alive, returns the existing port.
+ *
+ * Each BotDock session gets its own ttyd process wrapped in a supervisor
+ * tmux session named `botdock-ttyd-<sid>`, so the main per-machine ttyd
+ * stays free for interactive work.
+ */
+export function startSessionTerminal(
+  dir: DataDir,
+  machine: Machine,
+  opts: { sessionId: string; tmuxSession: string; basePath: string },
+): { remote_port: number; installed: InstalledState } {
+  let installed = ensureTmux(dir, machine);
+  installed = ensureTtyd(dir, machine);
+  if (!installed.tmux_available) {
+    throw new Error("tmux still not available after install attempt.");
+  }
+  const supervisorSession = `botdock-ttyd-${opts.sessionId}`;
+  const script = `
+set -euo pipefail
+SUPER=${shQ(supervisorSession)}
+TARGET_TMUX=${shQ(opts.tmuxSession)}
+TTYD=${shQ(installed.ttyd!.path)}
+BASE_PATH=${shQ(opts.basePath)}
+LAUNCHER="$HOME/.botdock/bin/ttyd-attach-launcher.sh"
+
+mkdir -p "$HOME/.botdock/bin"
+cat > "$LAUNCHER" <<'LAUNCH_EOF'
+#!/bin/sh
+# $1 = port, $2 = target tmux session, $3 = base-path
+exec "__TTYD_PATH__" -p "$1" -i 127.0.0.1 -W --base-path "$3" tmux attach -t "$2"
+LAUNCH_EOF
+sed -i.bak "s|__TTYD_PATH__|$TTYD|" "$LAUNCHER" && rm -f "$LAUNCHER.bak"
+chmod +x "$LAUNCHER"
+
+if tmux has-session -t "$SUPER" 2>/dev/null; then
+  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -F "$BASE_PATH" | grep -v grep \\
+         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
+  if [ -n "$PORT" ]; then
+    echo "BOTDOCK_SESSION_TTYD_ALREADY_RUNNING port=$PORT"
+    exit 0
+  fi
+  tmux kill-session -t "$SUPER" 2>/dev/null || true
+fi
+
+PORT=""
+for p in $(seq 60000 60999); do
+  if command -v ss >/dev/null 2>&1; then
+    if ! ss -ltn 2>/dev/null | grep -q ":$p "; then PORT=$p; break; fi
+  else
+    if ! (bash -c "exec 3<>/dev/tcp/127.0.0.1/$p" 2>/dev/null); then PORT=$p; break; fi
+  fi
+done
+if [ -z "$PORT" ]; then echo "no free port on remote" >&2; exit 1; fi
+
+tmux new-session -d -s "$SUPER" "$LAUNCHER $PORT $TARGET_TMUX $BASE_PATH"
+
+ALIVE=0
+for i in 1 2 3 4 5 6; do
+  sleep 0.5
+  if command -v ss >/dev/null 2>&1; then
+    if ss -ltn 2>/dev/null | grep -q ":$PORT "; then ALIVE=1; break; fi
+  else
+    if (bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT" 2>/dev/null); then ALIVE=1; break; fi
+  fi
+done
+if [ "$ALIVE" != "1" ]; then
+  PANE_OUT=$(tmux capture-pane -p -t "$SUPER" 2>/dev/null || true)
+  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  echo "BOTDOCK_SESSION_TTYD_FAILED port=$PORT" >&2
+  echo "--- pane output ---" >&2
+  printf '%s\\n' "$PANE_OUT" >&2
+  exit 2
+fi
+
+echo "BOTDOCK_SESSION_TTYD_STARTED port=$PORT"
+`;
+  const r = sshExec(dir, machine, "bash -s", script, 30_000);
+  if (r.code !== 0 || !/BOTDOCK_SESSION_TTYD_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
+    throw new Error(
+      `session-ttyd start failed: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`,
+    );
+  }
+  const m = /port=(\d+)/.exec(r.stdout);
+  if (!m) throw new Error("could not parse session-ttyd port from remote output");
+  return { remote_port: Number(m[1]), installed };
+}
+
+export function stopSessionTerminal(
+  dir: DataDir,
+  machine: Machine,
+  sessionId: string,
+): void {
+  const supervisor = `botdock-ttyd-${sessionId}`;
+  sshExec(dir, machine, "bash -s",
+    `tmux kill-session -t ${shQ(supervisor)} 2>/dev/null; echo ok`,
+    10_000);
+}
+
+export function sessionTerminalBasePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/terminal`;
+}
+
 function shQ(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }

@@ -10,10 +10,17 @@ import {
   sessionExists,
   type AgentKind,
 } from "../../domain/sessions.ts";
-import { launchSession, stopSession, sendInputToSession } from "../../domain/session-launcher.ts";
+import {
+  launchSession,
+  stopSession,
+  sendInputToSession,
+  setupSessionTerminal,
+  teardownSessionTerminal,
+} from "../../domain/session-launcher.ts";
 import type { SessionPoller } from "../../domain/session-poller.ts";
+import type { ForwardManager } from "../../domain/forward-manager.ts";
 
-export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller): void {
+export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller, forwardManager: ForwardManager): void {
   router.get("/api/sessions", () => json(listSessions(dir)));
 
   router.get("/api/sessions/:id", ({ params }) => {
@@ -45,9 +52,18 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       agent_kind: body.agent_kind,
       cmd: body.cmd,
     });
-    // Launch asynchronously so the HTTP request returns quickly.
+    // Launch asynchronously so the HTTP request returns quickly. After launch
+    // comes back "running", best-effort set up the per-session ttyd terminal
+    // (claude-code only) so the UI can embed it.
     launchSession(dir, s.id)
-      .then(() => poller.watch(s.id))
+      .then(async () => {
+        poller.watch(s.id);
+        if (s.agent_kind === "claude-code") {
+          await setupSessionTerminal(dir, forwardManager, s.id).catch((err) =>
+            console.error(`[sessions] terminal setup ${s.id} failed:`, err),
+          );
+        }
+      })
       .catch((err) => console.error(`[sessions] launch ${s.id} failed:`, err));
     return json(s, { status: 201 });
   });
@@ -73,9 +89,10 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     return json({ ok: true });
   });
 
-  router.delete("/api/sessions/:id", ({ params }) => {
+  router.delete("/api/sessions/:id", async ({ params }) => {
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
     poller.unwatch(params.id!);
+    await teardownSessionTerminal(dir, forwardManager, params.id!).catch(() => {});
     deleteSession(dir, params.id!);
     return json({ ok: true });
   });
