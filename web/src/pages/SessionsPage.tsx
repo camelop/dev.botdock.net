@@ -422,7 +422,11 @@ export function SessionDetailModal(props: {
 
   return (
     <div className="modal-backdrop">
-      <div className="modal" style={{ minWidth: 800, maxWidth: 1100 }} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        style={{ minWidth: 800, maxWidth: 1100, maxHeight: "90vh", overflowY: "auto" }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <h2 style={{ marginTop: 0, marginBottom: 4 }}>Session {props.id}</h2>
@@ -598,12 +602,19 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
 
 function TranscriptTurnRow({ turn }: { turn: TranscriptTurn }) {
   const roleStyle = useMemo(() => roleBadgeStyle(turn.kind), [turn.kind]);
+  // Label: use the detected role/kind. For "unknown" entries prefer the
+  // raw `type` field from the underlying JSON so the user still sees what
+  // the line actually was (e.g. "system", "summary", future types).
+  const label = turn.kind === "unknown"
+    ? (typeof (turn.raw as any).type === "string" ? (turn.raw as any).type : "unknown")
+    : roleStyle.label;
+
   return (
     <div style={{ margin: "10px 6px", paddingLeft: 8, borderLeft: `3px solid ${roleStyle.accent}` }}>
       <div className="row" style={{ gap: 8, alignItems: "baseline", marginBottom: 4 }}>
         <span className="pill" style={{
           background: roleStyle.bg, color: roleStyle.fg, fontSize: 11,
-        }}>{roleStyle.label}</span>
+        }}>{label}</span>
         {turn.ts && (
           <span className="muted" style={{ fontSize: 11 }} title={fullTime(turn.ts)}>
             {relativeTime(turn.ts)}
@@ -611,11 +622,56 @@ function TranscriptTurnRow({ turn }: { turn: TranscriptTurn }) {
         )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {turn.blocks.length === 0 && (
-          <div className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>(no content)</div>
-        )}
-        {turn.blocks.map((b, i) => <TranscriptBlock key={i} block={b} />)}
+        {turn.blocks.length > 0
+          ? turn.blocks.map((b, i) => <TranscriptBlock key={i} block={b} />)
+          : <RawJsonBlock raw={turn.raw} />}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shown for entries we can't decompose into semantic blocks (unknown top-
+ * level types, or message shapes CC added after this parser was written).
+ * Collapsed by default so the row stays skimmable; the full JSON is one
+ * click away.
+ */
+function RawJsonBlock({ raw }: { raw: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = useMemo(() => {
+    // Strip the frame fields that every row already shows, so the preview
+    // actually carries signal.
+    const rest: Record<string, unknown> = { ...raw };
+    for (const k of ["uuid", "parentUuid", "timestamp", "sessionId", "cwd", "gitBranch", "version", "userType", "isSidechain", "requestId"]) {
+      delete rest[k];
+    }
+    return JSON.stringify(rest).slice(0, 400);
+  }, [raw]);
+  return (
+    <div
+      onClick={() => setExpanded((v) => !v)}
+      style={{
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid var(--border)",
+        borderRadius: 6,
+        padding: "6px 10px",
+        cursor: "pointer",
+        fontFamily: "var(--mono)",
+        fontSize: 12,
+        color: "var(--fg-dim)",
+      }}
+      title="Click to expand the full JSON for this entry"
+    >
+      {expanded ? (
+        <pre className="code" style={{ margin: 0, fontSize: 11, whiteSpace: "pre-wrap" }}>
+          {JSON.stringify(raw, null, 2)}
+        </pre>
+      ) : (
+        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <span style={{ opacity: 0.6, marginRight: 6 }}>▸</span>
+          {preview}
+        </div>
+      )}
     </div>
   );
 }

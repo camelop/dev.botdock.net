@@ -253,6 +253,9 @@ label span { display: block; margin-bottom: 4px; }
   padding: 20px;
   min-width: 420px;
   max-width: 640px;
+  /* Always bound to the viewport; scroll internally when content is tall. */
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .modal h2 { margin-top: 0; color: var(--fg); font-size: 16px; }
 
