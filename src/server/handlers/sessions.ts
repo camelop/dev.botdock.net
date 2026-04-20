@@ -39,12 +39,19 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       cc_skip_trust?: boolean;
       cc_resume_uuid?: string;
     }>(req);
-    for (const k of ["machine", "workdir", "agent_kind", "cmd"] as const) {
+    for (const k of ["machine", "workdir", "agent_kind"] as const) {
       if (!body[k]) throw new HttpError(400, `${k} required`);
     }
     if (body.agent_kind !== "generic-cmd" && body.agent_kind !== "claude-code") {
       throw new HttpError(400, "unknown agent_kind");
     }
+    // cmd is the shell command for generic-cmd (required) and the initial
+    // prompt for claude-code (optional — empty means open claude with no
+    // preloaded message; fully optional when cc_resume_uuid is set).
+    if (body.agent_kind === "generic-cmd" && !body.cmd) {
+      throw new HttpError(400, "cmd required");
+    }
+    if (typeof body.cmd !== "string") body.cmd = "";
     // Accept either an absolute path or a "~/..." style path that will be
     // expanded on the remote against $HOME.
     if (!body.workdir.startsWith("/") && !body.workdir.startsWith("~/") && body.workdir !== "~") {

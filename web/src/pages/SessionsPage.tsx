@@ -245,27 +245,23 @@ export function NewSessionModal(props: {
         onRegen={regenSlug}
       />
 
-      <label>
-        <span>
-          {draft.agent_kind === "claude-code"
-            ? (draft.cc_resume_uuid ? "Initial prompt (ignored when resuming)" : "Initial prompt (optional)")
-            : "Command"}
-        </span>
-        <textarea
-          rows={4}
-          value={draft.cmd}
-          disabled={!!draft.cc_resume_uuid}
-          onChange={(e) => patch({ cmd: e.target.value })}
-          placeholder={draft.agent_kind === "claude-code"
-            ? "e.g. Explain this repo's README"
-            : 'echo "hello"; sleep 1'}
-          style={draft.cc_resume_uuid ? { opacity: 0.5 } : undefined}
-        />
-      </label>
+      {!draft.cc_resume_uuid && (
+        <label>
+          <span>{draft.agent_kind === "claude-code" ? "Initial prompt (optional)" : "Command"}</span>
+          <textarea
+            rows={4}
+            value={draft.cmd}
+            onChange={(e) => patch({ cmd: e.target.value })}
+            placeholder={draft.agent_kind === "claude-code"
+              ? "e.g. Explain this repo's README"
+              : 'echo "hello"; sleep 1'}
+          />
+        </label>
+      )}
       <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
         {draft.agent_kind === "claude-code"
           ? (draft.cc_resume_uuid
-            ? "Resuming an existing conversation. `claude --resume <uuid>` is run in tmux; your initial prompt above is ignored."
+            ? "Resuming an existing conversation — BotDock runs `claude --resume <uuid>` in a fresh tmux."
             : "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote.")
           : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
@@ -416,7 +412,7 @@ function ResumePicker(props: {
                   className="pill warn"
                   style={{ fontSize: 10 }}
                   title="A `claude` process is still running in this workdir. Resuming now will fork a new branch — close the other session first."
-                >⚠ open</span>
+                >⚠ already opened</span>
               ) : null}
             />
           ))}
