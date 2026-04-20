@@ -35,6 +35,10 @@ type Entry = {
   cfg?: { dispose: () => void };
   status: ForwardStatus;
   args?: string[];
+  /** Set by stop() so the close-handler knows an exit was user-initiated,
+   * even when ssh catches SIGTERM and exits with a non-zero code (which
+   * leaves Node's `signal` as null). Without this, "Stop" showed "failed". */
+  stopRequested?: boolean;
 };
 
 /**
@@ -150,9 +154,18 @@ export class ForwardManager extends EventEmitter {
     proc.on("close", (code, signal) => {
       clearTimeout(startupTimer);
       try { cfg.dispose(); } catch {}
-      const cleanlyStopped = entry.status.state === "starting" || entry.status.state === "running"
-        ? (signal === "SIGTERM" || signal === "SIGINT")
-        : true;
+      // A forward is "cleanly stopped" if:
+      //   (a) the user explicitly called stop() — tracked via stopRequested,
+      //       which covers the case where ssh catches SIGTERM and exits with
+      //       a non-zero code (Node then reports signal=null);
+      //   (b) the process died from SIGTERM/SIGINT directly; or
+      //   (c) the entry was already in a terminal state (stopped/failed/idle)
+      //       before the close event fired.
+      const wasLive = entry.status.state === "starting" || entry.status.state === "running";
+      const cleanlyStopped = !wasLive
+        || entry.stopRequested === true
+        || signal === "SIGTERM"
+        || signal === "SIGINT";
 
       // Always populate last_error with SOMETHING. If ssh was silent, at
       // least include the exit code, signal, and the argv we used so the
@@ -177,7 +190,9 @@ export class ForwardManager extends EventEmitter {
         exit_code: code ?? null,
         exit_signal: signal ?? null,
         last_args: entry.args,
-        last_error: cleanlyStopped && !stderrBuf.trim() ? undefined : last_error,
+        // Clear last_error on a user-requested stop — the exit was expected,
+        // showing the "view error" button would be misleading.
+        last_error: cleanlyStopped ? undefined : last_error,
       };
       entry.proc = undefined;
       entry.cfg = undefined;
@@ -196,12 +211,15 @@ export class ForwardManager extends EventEmitter {
       const status: ForwardStatus = { name, state: "stopped" };
       return status;
     }
+    entry.stopRequested = true;
     entry.proc.kill("SIGTERM");
     return entry.status;
   }
 
   stopAll(): void {
-    for (const e of this.entries.values()) e.proc?.kill("SIGTERM");
+    for (const e of this.entries.values()) {
+      if (e.proc) { e.stopRequested = true; e.proc.kill("SIGTERM"); }
+    }
   }
 
   /** Drop an entry after the forward is deleted from disk. */
