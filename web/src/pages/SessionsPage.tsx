@@ -50,16 +50,14 @@ export function freshDraft(machines: Machine[]): SessionDraft {
 
 /**
  * Short label for the `cmd` column in session tables. For generic-cmd that's
- * just the shell command. For claude-code, `cmd` is the initial prompt; if
- * empty (fresh start) or resumed (prompt ignored), surface that instead of
- * rendering a blank cell.
+ * the shell command. For claude-code, `cmd` is the initial prompt (or, for
+ * resumed sessions, the first user message lifted from the resumed
+ * transcript at launch time). Falls back to "(no prompt)" when the CC
+ * session was launched with no prompt at all.
  */
-export function sessionCmdLabel(s: Pick<Session, "cmd" | "agent_kind" | "cc_resume_uuid">): string {
+export function sessionCmdLabel(s: Pick<Session, "cmd" | "agent_kind">): string {
   if (s.cmd && s.cmd.length > 0) return s.cmd;
-  if (s.agent_kind === "claude-code") {
-    if (s.cc_resume_uuid) return `(resume ${s.cc_resume_uuid.slice(0, 8)})`;
-    return "(no prompt)";
-  }
+  if (s.agent_kind === "claude-code") return "(no prompt)";
   return "";
 }
 
@@ -246,8 +244,15 @@ export function NewSessionModal(props: {
               return;
             }
             // Picking a session overwrites workdir with the resumed session's
-            // cwd — claude --resume only makes sense from that path.
-            patch({ cc_resume_uuid: entry.uuid, workdir: entry.workdir });
+            // cwd — claude --resume only makes sense from that path. We also
+            // lift the resumed conversation's first user message into `cmd`
+            // so the session-list tables show it as the label (shim still
+            // ignores cmd when RESUME_UUID is set).
+            patch({
+              cc_resume_uuid: entry.uuid,
+              workdir: entry.workdir,
+              cmd: entry.preview || "",
+            });
           }}
           onActiveUuidsChange={setActiveResumeUuids}
         />
