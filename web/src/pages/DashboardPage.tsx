@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
 import { SessionDetailModal, NewSessionModal, freshDraft, type SessionDraft } from "./SessionsPage";
 import { relativeTime, fullTime } from "../lib/time";
+import { isAcked } from "../lib/acks";
 
 export function DashboardPage() {
   const [keys, setKeys] = useState<KeyMeta[]>([]);
@@ -26,10 +27,15 @@ export function DashboardPage() {
 
   // Count sessions by observable state. "Active" = session is alive on
   // the remote. "Pending attention" = claude-code session whose agent has
-  // finished its turn and is awaiting user input.
+  // finished its turn and is awaiting user input — and the user hasn't
+  // already acknowledged this transcript (ack is keyed on last_transcript_at,
+  // so it auto-invalidates on new output).
   const active = sessions.filter((s) => s.status === "active").length;
   const pending = sessions.filter(
-    (s) => s.status === "active" && s.agent_kind === "claude-code" && s.activity === "pending",
+    (s) => s.status === "active"
+      && s.agent_kind === "claude-code"
+      && s.activity === "pending"
+      && !isAcked(s.id, s.last_transcript_at),
   ).length;
   const recent = sessions.slice(0, 8);
 
