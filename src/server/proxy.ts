@@ -20,12 +20,15 @@ export async function proxyHttp(
   const target = `http://127.0.0.1:${port}${upstreamPath}${url.search}`;
 
   // Copy headers except the ones Bun rejects / that make no sense to
-  // forward (Host gets derived from the URL). Connection/Upgrade are
-  // irrelevant for HTTP proxies.
+  // forward. Also strip `accept-encoding` so the upstream doesn't
+  // compress — Bun's fetch would transparently decode on return,
+  // creating a mismatch with the (preserved) content-encoding header.
+  // Much easier to just not compress in the first place.
   const headers = new Headers();
   for (const [k, v] of req.headers) {
     const lk = k.toLowerCase();
     if (lk === "host" || lk === "connection" || lk === "upgrade") continue;
+    if (lk === "accept-encoding") continue;
     headers.set(k, v);
   }
   headers.set("x-forwarded-for", req.headers.get("x-forwarded-for") ?? "127.0.0.1");
@@ -40,11 +43,19 @@ export async function proxyHttp(
 
   try {
     const upstream = await fetch(target, init);
-    // Copy response headers, strip hop-by-hop ones.
+    // Copy response headers, strip hop-by-hop ones AND anything that would
+    // be wrong once Bun's fetch has already consumed/decoded the body:
+    //   - content-encoding: fetch() auto-decompresses gzip/deflate/br and
+    //     returns a plain-text stream. Keeping the header lies to the
+    //     browser, which then tries to decode plain text and fails with
+    //     ERR_CONTENT_DECODING_FAILED.
+    //   - content-length: the decoded body length doesn't match the
+    //     original header. Drop it; Bun will re-chunk on the way out.
     const outHeaders = new Headers();
     for (const [k, v] of upstream.headers) {
       const lk = k.toLowerCase();
       if (lk === "transfer-encoding" || lk === "connection") continue;
+      if (lk === "content-encoding" || lk === "content-length") continue;
       outHeaders.set(k, v);
     }
     return new Response(upstream.body, {
