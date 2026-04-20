@@ -19,7 +19,19 @@ export type SessionDraft = {
   workdir: string;
   agent_kind: AgentKind;
   cmd: string;
+  /** claude-code: auto-accept the folder-trust dialog and tool permission
+   * prompts (maps to `--dangerously-skip-permissions`). Defaults to the
+   * user's last choice, persisted in localStorage. */
+  cc_skip_trust: boolean;
 };
+
+const TRUST_PREF_KEY = "botdock:cc-skip-trust";
+function loadTrustPref(): boolean {
+  try { return localStorage.getItem(TRUST_PREF_KEY) === "1"; } catch { return false; }
+}
+function saveTrustPref(v: boolean): void {
+  try { localStorage.setItem(TRUST_PREF_KEY, v ? "1" : "0"); } catch {}
+}
 
 export function freshDraft(machines: Machine[]): SessionDraft {
   return {
@@ -27,6 +39,7 @@ export function freshDraft(machines: Machine[]): SessionDraft {
     workdir: `~/.botdock/projects/${twoWordSlug()}`,
     agent_kind: "claude-code",
     cmd: "",
+    cc_skip_trust: loadTrustPref(),
   };
 }
 
@@ -168,6 +181,8 @@ export function NewSessionModal(props: {
   const submit = async () => {
     setErr(""); setSubmitting(true);
     try {
+      // Remember the trust-dialog choice so future modals default to it.
+      if (draft.agent_kind === "claude-code") saveTrustPref(draft.cc_skip_trust);
       const s = await api.createSession(draft);
       await props.onDone(s.id);
     } catch (e) {
@@ -211,6 +226,21 @@ export function NewSessionModal(props: {
           ? "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote."
           : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
+      {draft.agent_kind === "claude-code" && (
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={draft.cc_skip_trust}
+            onChange={(e) => patch({ cc_skip_trust: e.target.checked })}
+            style={{ width: 16, height: 16, marginTop: 2 }}
+          />
+          <span style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>
+            Auto-accept folder-trust prompt (passes
+            {" "}<span className="mono">--dangerously-skip-permissions</span>{" "}
+            to <span className="mono">claude</span>). Also auto-approves per-tool prompts — only enable on machines/workdirs you trust.
+          </span>
+        </label>
+      )}
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
         <button className="secondary" onClick={props.onCancel}>Cancel (keep draft)</button>
@@ -391,6 +421,9 @@ export function SessionView(props: {
   const [err, setErr] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // SendInput pane is collapsed by default to give the terminal more room —
+  // a button in the terminal toolbar toggles it.
+  const [showInput, setShowInput] = useState(false);
 
   // WebSocket is the single source of truth for events + raw. The server's
   // initial snapshot on open already covers everything up to "now", so we
@@ -450,8 +483,20 @@ export function SessionView(props: {
       className={props.inModal ? "modal session-modal" : "session-modal"}
       onClick={(e) => e.stopPropagation()}
     >
-        {/* LEFT: terminal fills the column, SendInput pins to the bottom. */}
+        {/* LEFT: terminal fills the column, SendInput collapses behind a toggle. */}
         <div className="session-left">
+          {session?.status === "active" && (
+            <div className="row" style={{ gap: 6, marginBottom: 0 }}>
+              <button
+                className="secondary"
+                style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6 }}
+                onClick={() => setShowInput((v) => !v)}
+                title="Toggle the input pane (send text / quick keys to tmux)"
+              >
+                {showInput ? "▾ Hide input" : "⌨ Input"}
+              </button>
+            </div>
+          )}
           <div className="terminal-fill">
             {session?.agent_kind === "claude-code" ? (
               <ClaudeTerminal session={session} fillParent />
@@ -480,7 +525,7 @@ export function SessionView(props: {
               </>
             )}
           </div>
-          {session?.status === "active" && <SendInput id={session.id} />}
+          {session?.status === "active" && showInput && <SendInput id={session.id} />}
         </div>
 
         {/* RIGHT: title / meta / transcript / events — scrolls independently.
@@ -840,6 +885,9 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
   // fresh handshake and re-measure its container — useful after modal
   // resizes that left the terminal drawn to stale dimensions.
   const [reloadKey, setReloadKey] = useState(0);
+  // CSS zoom on the iframe scales the xterm content. Chrome/Safari/Edge
+  // support this; Firefox ignores — acceptable. Clamped to a sane range.
+  const [contentZoom, setContentZoom] = useState(1);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   useEffect(() => {
@@ -950,6 +998,27 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
             onClick={() => setZoomed(true)}
             title="Expand to full screen (Esc to exit)"
           >⛶ Full screen</button>
+          <button
+            className="secondary"
+            style={iconBtn}
+            onClick={() => setContentZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
+            title="Shrink terminal content (CSS zoom; Chromium/Safari only)"
+          >−</button>
+          <span className="muted mono" style={{ fontSize: 11, minWidth: 32, textAlign: "center" }}>
+            {Math.round(contentZoom * 100)}%
+          </span>
+          <button
+            className="secondary"
+            style={iconBtn}
+            onClick={() => setContentZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+            title="Enlarge terminal content (CSS zoom; Chromium/Safari only)"
+          >+</button>
+          <button
+            className="secondary"
+            style={iconBtn}
+            disabled
+            title="Attach extra context to this session (coming soon)"
+          >＋ Context</button>
         </div>
       )}
       <div ref={containerRef} style={containerStyle}>
@@ -970,16 +1039,33 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
           src={url}
           scrolling="no"
           onLoad={() => {
+            const win = iframeRef.current?.contentWindow;
+            if (!win) return;
             // ttyd sometimes measures before the flex container has its
             // final size. Fire a couple of resizes post-load so it
             // re-fits without the user needing to hit Reload.
-            const win = iframeRef.current?.contentWindow;
-            if (!win) return;
             [60, 250, 600].forEach((ms) => setTimeout(() => {
               try { win.dispatchEvent(new Event("resize")); } catch {}
             }, ms));
+            // ttyd wires a beforeunload handler so the browser warns about
+            // losing the WS session on navigation. We're a single-page app
+            // that tears down the iframe on tab-switch; the dialog is just
+            // noise. Same-origin via the proxy means we can null it out.
+            try {
+              win.onbeforeunload = null;
+              win.addEventListener("beforeunload", (e: BeforeUnloadEvent) => {
+                e.stopImmediatePropagation();
+                delete (e as unknown as { returnValue?: string }).returnValue;
+              }, { capture: true });
+            } catch {}
           }}
-          style={{ flex: 1, border: "none", width: "100%", display: "block", overflow: "hidden" }}
+          style={{
+            flex: 1, border: "none", width: "100%", display: "block", overflow: "hidden",
+            // `zoom` is webkit-style; Firefox ignores which is fine — the
+            // default 1.0 is a no-op. We also cast because React's CSS
+            // typings don't include zoom.
+            ...(contentZoom !== 1 ? ({ zoom: contentZoom } as React.CSSProperties) : {}),
+          }}
         />
       </div>
     </>

@@ -47,6 +47,10 @@ export type Session = {
    *   "running" = agent is producing output / using a tool,
    *   "pending" = agent has completed its turn, awaiting the user. */
   activity?: "running" | "pending";
+  /** For claude-code: if true, the shim launches claude with
+   *  --dangerously-skip-permissions so the folder-trust dialog and
+   *  per-tool permission prompts are auto-accepted. Opt-in per session. */
+  cc_skip_trust?: boolean;
 };
 
 export type SessionEvent = {
@@ -98,6 +102,7 @@ export function createSessionRecord(
     workdir: string;
     agent_kind: AgentKind;
     cmd: string;
+    cc_skip_trust?: boolean;
   },
 ): Session {
   const id = newSessionId();
@@ -112,6 +117,7 @@ export function createSessionRecord(
     created_at: new Date().toISOString(),
     remote_events_offset: 0,
     remote_raw_offset: 0,
+    ...(args.cc_skip_trust ? { cc_skip_trust: true } : {}),
   };
   const p = paths(dir, id);
   mkdirSync(p.base, { recursive: true });

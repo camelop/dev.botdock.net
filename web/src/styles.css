@@ -341,10 +341,18 @@ pre.code {
   padding: 0 !important;  /* override .modal default padding; inner cols pad themselves */
   display: flex;
   flex-direction: column;
-  width: min(1400px, 94vw);
   max-width: none;
-  max-height: 90vh;
   overflow: hidden;
+}
+/* When mounted as a floating modal, cap the size to a centered dialog. In
+   the Workspace embed (no .modal class) the view fills its flex parent. */
+.modal.session-modal {
+  width: min(1400px, 94vw);
+  max-height: 90vh;
+}
+.session-modal:not(.modal) {
+  width: 100%;
+  height: 100%;
 }
 .session-modal .session-left,
 .session-modal .session-right {
@@ -361,6 +369,9 @@ pre.code {
 .session-modal .session-right {
   overflow-y: auto;
   max-height: 90vh;
+}
+.session-modal:not(.modal) .session-right {
+  max-height: none;  /* bounded by hub container, not 90vh */
 }
 .session-modal .session-left > .terminal-fill {
   flex: 1;

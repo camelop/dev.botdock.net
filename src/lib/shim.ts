@@ -85,16 +85,23 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"cla
 ) &
 
 # Run claude with the initial prompt (if provided). cmd.sh is sourced to
-# pick up shell-quoted args; its content is a single line like:
+# pick up shell-quoted args; its content is a pair of assignments like:
 #   PROMPT='...'
+#   SKIP_TRUST=1    (optional — omitted unless the user opted in)
 # An empty PROMPT means launch claude interactively with no preloaded msg.
 PROMPT=""
+SKIP_TRUST=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
+EXTRA_ARGS=""
+if [ -n "$SKIP_TRUST" ]; then
+  EXTRA_ARGS="--dangerously-skip-permissions"
+fi
+# Unquoted EXTRA_ARGS is intentional — we want word-splitting into argv.
 if [ -n "$PROMPT" ]; then
-  claude "$PROMPT"
+  claude $EXTRA_ARGS "$PROMPT"
 else
-  claude
+  claude $EXTRA_ARGS
 fi
 EC=$?
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"
@@ -112,9 +119,9 @@ function shimFor(kind: AgentKind): string {
  * base64-encoded verbatim. For claude-code we wrap the prompt in a single
  * POSIX-quoted `PROMPT='...'` assignment so the shim can `. cmd.sh` safely.
  */
-export function buildCmdB64(kind: AgentKind, cmd: string): string {
+export function buildCmdB64(kind: AgentKind, cmd: string, opts?: { skipTrust?: boolean }): string {
   const content = kind === "claude-code"
-    ? `PROMPT=${shSingleQuote(cmd)}\n`
+    ? `PROMPT=${shSingleQuote(cmd)}\nSKIP_TRUST=${opts?.skipTrust ? "1" : ""}\n`
     : cmd;
   return Buffer.from(content, "utf8").toString("base64");
 }

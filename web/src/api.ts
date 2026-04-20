@@ -149,7 +149,7 @@ export const api = {
 
   listSessions: () => request<Session[]>("/api/sessions"),
   getSession: (id: string) => request<Session>(`/api/sessions/${encodeURIComponent(id)}`),
-  createSession: (body: { machine: string; workdir: string; agent_kind: AgentKind; cmd: string }) =>
+  createSession: (body: { machine: string; workdir: string; agent_kind: AgentKind; cmd: string; cc_skip_trust?: boolean }) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
