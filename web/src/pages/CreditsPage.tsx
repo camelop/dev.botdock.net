@@ -77,7 +77,7 @@ export function CreditsPage() {
   return (
     <div>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
-        <h1 style={{ margin: 0 }}>Credits</h1>
+        <h1 style={{ margin: 0 }}>Budgets</h1>
         <button onClick={() => setEdit({ mode: "new" })}>+ Add account</button>
       </div>
       {err && <div className="error-banner">{err}</div>}
