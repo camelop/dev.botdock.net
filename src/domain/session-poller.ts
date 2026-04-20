@@ -37,8 +37,15 @@ function pollScript(
   rawOffset: number,
   ccSessionFile: string | undefined,
   txOffset: number,
+  /** Epoch seconds of session start; used to self-heal cc_session_file
+   * discovery if the shim missed it. */
+  startedEpoch: number,
+  agentKind: string,
 ): string {
   const txSrcQ = ccSessionFile ? shQ(ccSessionFile) : "''";
+  // Only self-discover for claude-code sessions — no point scanning
+  // ~/.claude/projects for generic-cmd.
+  const shouldAutoDiscover = agentKind === "claude-code";
   return `
 set -u
 WORKDIR=${shQ(workdir)}
@@ -50,12 +57,24 @@ SDIR="$WORKDIR/.botdock/session"
 EV_PATH="$SDIR/events.ndjson"
 RAW_PATH="$SDIR/raw.log"
 TX_PATH=${txSrcQ}
+
+# Self-heal: if we never captured a transcript path (shim's one-shot
+# find ran before claude wrote its jsonl, or the claude-code binary
+# changed layouts), look it up again each tick. Match any jsonl under
+# ~/.claude/projects/ whose mtime is newer than this session's start.
+${shouldAutoDiscover ? `
+if [ -z "$TX_PATH" ] && [ -d "$HOME/.claude/projects" ]; then
+  TX_PATH=$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null \\
+            | head -1)
+fi
+` : ""}
 EV_SIZE=0; [ -f "$EV_PATH" ] && EV_SIZE=$(wc -c < "$EV_PATH" | tr -d ' ')
 RAW_SIZE=0; [ -f "$RAW_PATH" ] && RAW_SIZE=$(wc -c < "$RAW_PATH" | tr -d ' ')
 TX_SIZE=0; [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ] && TX_SIZE=$(wc -c < "$TX_PATH" | tr -d ' ')
 TMUX_ALIVE=0
 if tmux has-session -t ${shQ(tmuxName)} >/dev/null 2>&1; then TMUX_ALIVE=1; fi
 printf 'SIZES %s %s %s %s\\n' "$EV_SIZE" "$RAW_SIZE" "$TMUX_ALIVE" "$TX_SIZE"
+printf 'TX_PATH=%s\\n' "$TX_PATH"
 printf -- '---EVENTS-B64---\\n'
 if [ "$EV_SIZE" -gt ${evOffset} ]; then
   tail -c +$((${evOffset}+1)) "$EV_PATH" | base64 | tr -d '\\n'
@@ -84,6 +103,10 @@ type Report = {
   eventsDelta: string;
   rawDelta: Buffer;
   transcriptDelta: string;
+  /** Path the remote reported for the CC jsonl (empty string if none). The
+   * poller's self-discovery may surface a path here even when we launched
+   * without cc_session_file set. */
+  txPath: string;
 };
 
 function parseReport(text: string): Report | null {
@@ -94,6 +117,8 @@ function parseReport(text: string): Report | null {
   const rawSize = Number(sizesMatch[2]);
   const tmuxAlive = sizesMatch[3] === "1";
   const transcriptSize = sizesMatch[4] !== undefined ? Number(sizesMatch[4]) : 0;
+  const txPathMatch = /^TX_PATH=(.*)$/m.exec(text);
+  const txPath = (txPathMatch?.[1] ?? "").trim();
   const evStart = text.indexOf("---EVENTS-B64---\n");
   const rawStart = text.indexOf("\n---RAW-B64---\n");
   const txStart = text.indexOf("\n---TRANSCRIPT-B64---\n");
@@ -114,6 +139,7 @@ function parseReport(text: string): Report | null {
     eventsDelta: evB64 ? Buffer.from(evB64, "base64").toString("utf8") : "",
     rawDelta: rawB64 ? Buffer.from(rawB64, "base64") : Buffer.alloc(0),
     transcriptDelta: txB64 ? Buffer.from(txB64, "base64").toString("utf8") : "",
+    txPath,
   };
 }
 
@@ -176,6 +202,9 @@ export class SessionPoller extends EventEmitter {
   private pollOnce(s: Session): Report | null {
     try {
       const machine = readMachine(this.dir, s.machine);
+      const startedEpoch = Math.floor(
+        (s.started_at ? Date.parse(s.started_at) : Date.parse(s.created_at)) / 1000,
+      );
       const script = pollScript(
         s.workdir,
         s.tmux_session,
@@ -183,6 +212,8 @@ export class SessionPoller extends EventEmitter {
         s.remote_raw_offset ?? 0,
         s.cc_session_file,
         s.remote_transcript_offset ?? 0,
+        isFinite(startedEpoch) ? startedEpoch : 0,
+        s.agent_kind,
       );
       const r = sshExec(this.dir, machine, "bash -s", script, 15_000);
       if (r.code !== 0) {
@@ -198,6 +229,25 @@ export class SessionPoller extends EventEmitter {
 
   private apply(s: Session, report: Report): void {
     let changed = false;
+
+    // Poller may have discovered the CC jsonl path on its own if the shim
+    // missed it. Commit the discovery to meta so future ticks skip the
+    // find() and so the UI can surface the absolute path.
+    if (!s.cc_session_file && report.txPath) {
+      const uuid = report.txPath.split("/").pop()?.replace(/\.jsonl$/, "");
+      updateSession(this.dir, s.id, {
+        cc_session_file: report.txPath,
+        ...(uuid ? { cc_session_uuid: uuid } : {}),
+      });
+      appendEvent(this.dir, s.id, {
+        ts: new Date().toISOString(),
+        kind: "cc_session",
+        file: report.txPath,
+        uuid,
+        source: "poller",
+      });
+      changed = true;
+    }
 
     let exitCodeFromEvent: number | undefined;
     if (report.eventsDelta) {
