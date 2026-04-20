@@ -124,11 +124,23 @@ export class ForwardManager extends EventEmitter {
     // Flip to running after a short delay — ssh -N stays silent once the
     // forward is up. If it dies during that window, the exit handler below
     // takes over and marks it failed.
+    //
+    // Wrap the startup in a promise so `await start(name)` actually waits
+    // for the forward to be wired up before returning. Otherwise callers
+    // (e.g. the machine-terminal endpoint) return to the UI before the
+    // local port is bound, and the browser's next request races the
+    // forward and hits a "connection refused".
+    let resolveSettled: ((s: ForwardStatus) => void) | null = null;
+    const settled = new Promise<ForwardStatus>((resolve) => { resolveSettled = resolve; });
+    const settle = (s: ForwardStatus) => {
+      if (resolveSettled) { resolveSettled(s); resolveSettled = null; }
+    };
     const startupTimer = setTimeout(() => {
       if (entry.status.state === "starting") {
         entry.status.state = "running";
         this.emit("update", name);
       }
+      settle(entry.status);
     }, 800);
 
     // Wait for `close` rather than `exit` — exit fires as soon as the process
@@ -170,9 +182,12 @@ export class ForwardManager extends EventEmitter {
       entry.proc = undefined;
       entry.cfg = undefined;
       this.emit("update", name);
+      // If the process died before the 800ms settle timer, resolve now so
+      // callers don't hang for a forward that's already failed.
+      settle(entry.status);
     });
 
-    return entry.status;
+    return await settled;
   }
 
   stop(name: string): ForwardStatus {

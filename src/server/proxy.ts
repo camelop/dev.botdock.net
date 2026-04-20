@@ -83,6 +83,11 @@ export type WsProxyData = {
   upstreamReady: boolean;
   pending: Array<string | ArrayBuffer>;
   upstreamUrl: string;
+  /** Comma-separated list of subprotocols the client asked for, kept so we
+   * can hand the same list to the upstream WebSocket. ttyd specifically
+   * requires "tty" — if we don't echo it the terminal silently stays
+   * empty because the client's JS aborts the session after the handshake. */
+  subprotocols: string[];
 };
 
 export function tryUpgradeWsProxy(
@@ -95,13 +100,29 @@ export function tryUpgradeWsProxy(
 
   const url = new URL(req.url);
   const upstreamUrl = `ws://127.0.0.1:${port}${upstreamPath}${url.search}`;
+
+  // Preserve the client's requested WS subprotocol(s) end-to-end.
+  // - Echo the first one back in the upgrade response so the browser
+  //   doesn't abort the session.
+  // - Stash the whole list so we can hand the same list to the upstream
+  //   WebSocket constructor.
+  const rawProto = req.headers.get("sec-websocket-protocol") ?? "";
+  const subprotocols = rawProto
+    ? rawProto.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+
   const data: WsProxyData = {
     kind: "proxy",
     upstreamReady: false,
     pending: [],
     upstreamUrl,
+    subprotocols,
   };
-  if (srv.upgrade(req, { data })) return new Response(null);
+  const upgradeOpts: { data: WsProxyData; headers?: Record<string, string> } = { data };
+  if (subprotocols.length > 0) {
+    upgradeOpts.headers = { "Sec-WebSocket-Protocol": subprotocols[0]! };
+  }
+  if (srv.upgrade(req, upgradeOpts)) return new Response(null);
   return new Response("websocket upgrade failed", { status: 400 });
 }
 
@@ -114,9 +135,11 @@ export function openProxyWs(ws: {
   close: (code?: number, reason?: string) => void;
   data: WsProxyData;
 }): void {
-  const subprotocol = undefined; // ttyd doesn't require a specific subprotocol
-  const upstream = subprotocol
-    ? new WebSocket(ws.data.upstreamUrl, subprotocol)
+  // Forward the same subprotocol list to the upstream — ttyd picks "tty"
+  // and will reject the connection if the browser's list doesn't include
+  // one it can honor.
+  const upstream = ws.data.subprotocols.length > 0
+    ? new WebSocket(ws.data.upstreamUrl, ws.data.subprotocols)
     : new WebSocket(ws.data.upstreamUrl);
   ws.data.upstream = upstream;
   upstream.binaryType = "arraybuffer";
