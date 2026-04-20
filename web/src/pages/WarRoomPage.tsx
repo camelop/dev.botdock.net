@@ -129,7 +129,7 @@ export function WarRoomPage() {
                   fontSize: 12,
                 }}
               >
-                <AgentAvatar session={s} size={26} />
+                <AgentAvatar session={s} size={32} />
                 <span className="mono">{shortLabel(s)}</span>
                 <button
                   className="secondary"
@@ -151,8 +151,8 @@ export function WarRoomPage() {
         <div
           style={{
             display: "grid",
-            gap: 12,
-            gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+            gap: 14,
+            gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))",
           }}
         >
           {visibleSessions.map((s) => (
@@ -273,13 +273,13 @@ function SessionCard(props: {
       }}
       onClick={props.onOpen}
     >
-      <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-        <AgentAvatar session={s} size={40} acked={acked} />
+      <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
+        <AgentAvatar session={s} size={56} acked={acked} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {shortLabel(s)}
           </div>
-          <div className="muted mono" style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <div className="muted mono" style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>
             {s.machine} · {s.workdir}
           </div>
         </div>
@@ -306,17 +306,13 @@ function SessionCard(props: {
       {summary.latestUser && (
         <div>
           <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", marginBottom: 2 }}>you</div>
-          <div style={{ fontSize: 12.5, lineHeight: 1.4, whiteSpace: "pre-wrap", maxHeight: 72, overflow: "hidden" }}>
-            {summary.latestUser}
-          </div>
+          <TruncatedMessage text={summary.latestUser} headLines={4} tailLines={2} />
         </div>
       )}
       {summary.latestAssistant && (
         <div>
           <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", marginBottom: 2 }}>agent</div>
-          <div style={{ fontSize: 12.5, lineHeight: 1.4, whiteSpace: "pre-wrap", maxHeight: 96, overflow: "hidden" }}>
-            {summary.latestAssistant}
-          </div>
+          <TruncatedMessage text={summary.latestAssistant} headLines={5} tailLines={3} />
         </div>
       )}
       {!summary.latestUser && !summary.latestAssistant && (
@@ -343,6 +339,64 @@ function SessionCard(props: {
  *   - toolHint: if the last assistant turn contained a tool_use, name it so
  *     the card can render "using Bash" etc.
  */
+/**
+ * Show a long message as "first N lines + … M lines omitted … + last K lines"
+ * so a card stays glanceable regardless of message length. Clicking the
+ * ellipsis row expands the full text in-place.
+ */
+function TruncatedMessage({ text, headLines, tailLines }: {
+  text: string; headLines: number; tailLines: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = text.split("\n");
+  const total = lines.length;
+  const maxInlineChars = 600;
+  const shouldTruncate =
+    !expanded && (total > headLines + tailLines + 2 || text.length > maxInlineChars);
+
+  if (!shouldTruncate) {
+    return (
+      <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        {text}
+        {expanded && total > headLines + tailLines + 2 && (
+          <div
+            className="muted"
+            style={{ fontSize: 11, marginTop: 4, cursor: "pointer" }}
+            onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
+          >▴ collapse</div>
+        )}
+      </div>
+    );
+  }
+
+  const head = lines.slice(0, headLines).join("\n");
+  const tail = lines.slice(-tailLines).join("\n");
+  const omitted = total - headLines - tailLines;
+
+  return (
+    <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {head}
+      <div
+        onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+        style={{
+          margin: "4px 0",
+          padding: "3px 8px",
+          background: "rgba(255,255,255,0.04)",
+          border: "1px dashed var(--border)",
+          borderRadius: 4,
+          textAlign: "center",
+          fontSize: 11,
+          color: "var(--fg-dim)",
+          cursor: "pointer",
+        }}
+      >
+        … {omitted > 0 ? `${omitted} line${omitted === 1 ? "" : "s"} omitted` : "…"} · click to expand …
+      </div>
+      {tail}
+    </div>
+  );
+}
+
 function summarizeTurns(turns: TranscriptTurn[]): { latestUser?: string; latestAssistant?: string; toolHint?: string } {
   const out: { latestUser?: string; latestAssistant?: string; toolHint?: string } = {};
   for (let i = turns.length - 1; i >= 0; i--) {

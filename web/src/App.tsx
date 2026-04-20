@@ -20,6 +20,14 @@ const NAV: NavEntry[] = [
   { id: "dashboard", label: "Dashboard" },
   {
     kind: "group",
+    label: "Sessions",
+    items: [
+      { id: "warroom",  label: "War Room" },
+      { id: "sessions", label: "List" },
+    ],
+  },
+  {
+    kind: "group",
     label: "Private",
     items: [
       { id: "keys",    label: "Keys" },
@@ -33,14 +41,6 @@ const NAV: NavEntry[] = [
       { id: "machines",  label: "Machines" },
       { id: "forwards",  label: "Forwards" },
       { id: "terminals", label: "Terminals" },
-    ],
-  },
-  {
-    kind: "group",
-    label: "Sessions",
-    items: [
-      { id: "warroom",  label: "War Room" },
-      { id: "sessions", label: "List" },
     ],
   },
   { id: "budgets",  label: "Budgets" },

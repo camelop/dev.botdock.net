@@ -405,10 +405,18 @@ function readLastTranscriptEntry(
 }
 
 function lastEntryLooksFinal(entry: Record<string, unknown>): boolean {
-  // Finished assistant message: message.role === "assistant" AND content
-  // contains only text items (no tool_use). CC writes one JSONL entry per
-  // message, so this is typically the last-seen line when the agent is
-  // done and awaits input.
+  // CC emits explicit system events when a turn closes. turn_duration lands
+  // immediately after the last assistant message of a turn; away_summary is
+  // written after the agent has been idle and is summarizing state. Either
+  // one is a hard signal that the agent is now waiting on the user.
+  const topType = entry.type as string | undefined;
+  const subtype = (entry as any).subtype as string | undefined;
+  if (topType === "system" && (subtype === "turn_duration" || subtype === "away_summary")) {
+    return true;
+  }
+
+  // Otherwise: finished assistant message = role === "assistant" with only
+  // text blocks (no in-flight tool_use).
   const msg = (entry as any).message;
   if (!msg || typeof msg !== "object") return false;
   if (msg.role !== "assistant") return false;

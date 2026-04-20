@@ -474,28 +474,42 @@ export function SessionDetailModal(props: {
           {session?.status === "active" && <SendInput id={session.id} />}
         </div>
 
-        {/* RIGHT: title / meta / transcript / events — scrolls independently. */}
-        <div className="session-right scroll-panel">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-            <div style={{ minWidth: 0 }}>
-              <h2 style={{ marginTop: 0, marginBottom: 4, wordBreak: "break-all" }}>
-                Session {props.id}
-              </h2>
-              {session && (
-                <div className="mono muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
-                  <SessionPill session={session} />{" "}
-                  {session.machine} · {session.workdir}
-                </div>
-              )}
-            </div>
-            <div className="actions" style={{ flexShrink: 0 }}>
-              {session?.status === "active" && <button className="secondary" onClick={onStop}>Deactivate</button>}
-              {session && session.status !== "active" && session.status !== "provisioning" && (
-                <button className="secondary" onClick={onDelete}>Delete</button>
-              )}
-              <button className="secondary" onClick={props.onClose}>Close</button>
-            </div>
+        {/* RIGHT: title / meta / transcript / events — scrolls independently.
+            Close is pinned to the top-right corner (doesn't fight for horizontal
+            space with the title). Deactivate / Delete sit on their own row
+            below the header so the meta never gets clipped. */}
+        <div className="session-right scroll-panel" style={{ position: "relative" }}>
+          <button
+            className="secondary"
+            onClick={props.onClose}
+            title="Close"
+            style={{
+              position: "absolute", top: 10, right: 14,
+              padding: "4px 10px", fontSize: 13, zIndex: 2,
+            }}
+          >×</button>
+          <div style={{ paddingRight: 40 /* leave room for × */ }}>
+            <h2 style={{ marginTop: 0, marginBottom: 4, wordBreak: "break-all", fontSize: 16 }}>
+              Session {props.id}
+            </h2>
+            {session && (
+              <div className="mono muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
+                <SessionPill session={session} />{" "}
+                {session.machine} · {session.workdir}
+              </div>
+            )}
           </div>
+
+          {session?.status === "active" && (
+            <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              <button className="secondary" style={{ fontSize: 12, padding: "4px 12px" }} onClick={onStop}>Deactivate</button>
+            </div>
+          )}
+          {session && (session.status === "exited" || session.status === "failed_to_start") && (
+            <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              <button className="secondary" style={{ fontSize: 12, padding: "4px 12px" }} onClick={onDelete}>Delete</button>
+            </div>
+          )}
 
           {err && <div className="error-banner">{err}</div>}
           {session && <Meta s={session} />}
@@ -782,6 +796,10 @@ function roleBadgeStyle(kind: TranscriptTurn["kind"]): { label: string; bg: stri
 
 function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?: boolean }) {
   const [zoomed, setZoomed] = useState(false);
+  // Changing reloadKey remounts the iframe, which forces ttyd to do a
+  // fresh handshake and re-measure its container — useful after modal
+  // resizes that left the terminal drawn to stale dimensions.
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     if (!zoomed) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setZoomed(false); };
@@ -836,28 +854,38 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
       // Legacy single-column modal: fixed height so the flow below still fits.
       : { height: 420, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" };
 
+  const iconBtn: React.CSSProperties = {
+    padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
+  };
+
   return (
     <>
       {!zoomed && (
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-          <h2 style={{ margin: 0 }}>Terminal</h2>
-          <div className="row" style={{ gap: 6 }}>
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="secondary"
-              style={{
-                padding: "6px 14px", borderRadius: 6, textDecoration: "none",
-                background: "#323844", color: "var(--fg)",
-                border: "1px solid #3f4754", fontSize: 13,
-              }}
-              title="Open this session's terminal in a new browser tab"
-            >↗ New tab</a>
-            <button className="secondary" onClick={() => setZoomed(true)} title="Expand to full screen (Esc to exit)">
-              ⛶ Full screen
-            </button>
-          </div>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+          <button
+            className="secondary"
+            style={iconBtn}
+            onClick={() => setReloadKey((k) => k + 1)}
+            title="Reload the ttyd iframe (forces tmux to re-measure the pane)"
+          >↻ Reload</button>
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="secondary"
+            style={{
+              ...iconBtn, textDecoration: "none",
+              background: "#323844", color: "var(--fg)",
+              border: "1px solid #3f4754",
+            }}
+            title="Open in a new browser tab"
+          >↗ New tab</a>
+          <button
+            className="secondary"
+            style={iconBtn}
+            onClick={() => setZoomed(true)}
+            title="Expand to full screen (Esc to exit)"
+          >⛶ Full screen</button>
         </div>
       )}
       <div style={containerStyle}>
@@ -867,13 +895,15 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
               Session {session.id} · {session.machine} · {session.tmux_session}
             </span>
             <div style={{ flex: 1 }} />
+            <button className="secondary" onClick={() => setReloadKey((k) => k + 1)} title="Reload" style={{ marginRight: 6 }}>↻ Reload</button>
             <button className="secondary" onClick={() => setZoomed(false)} title="Exit full screen (Esc)">× Exit</button>
           </div>
         )}
         <iframe
+          key={reloadKey}
           title={`session-${session.id}-terminal`}
           src={url}
-          style={{ flex: 1, border: "none", width: "100%" }}
+          style={{ flex: 1, border: "none", width: "100%", display: "block" }}
         />
       </div>
     </>
