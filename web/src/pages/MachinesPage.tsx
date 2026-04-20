@@ -170,7 +170,7 @@ export function MachinesPage() {
                   <td>
                     <div className="actions">
                       <button className="secondary" disabled={testing === m.name} onClick={() => onTest(m.name)}>
-                        {testing === m.name ? "testing…" : "test"}
+                        {testing === m.name ? "Testing…" : "Test"}
                       </button>
                       <button className="secondary" onClick={() => setEdit({ mode: "edit", name: m.name })}>Edit</button>
                       <button className="secondary" onClick={() => onDelete(m.name)}>Remove</button>

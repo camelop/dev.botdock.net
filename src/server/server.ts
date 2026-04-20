@@ -162,9 +162,24 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
         return error(400, "expected websocket");
       }
 
+      // REST routes get first dibs — our own endpoints like
+      // /api/machines/:name/terminal/start must not be eaten by the ttyd
+      // proxy. If no route matches, we fall through to the proxy check.
+      if (url.pathname.startsWith("/api/")) {
+        try {
+          const m = router.match(req);
+          if (m) return await m.handler({ req, params: m.params, url: m.url });
+        } catch (e) {
+          if (e instanceof HttpError) return error(e.status, e.message);
+          const msg = e instanceof Error ? e.message : String(e);
+          return error(500, msg);
+        }
+      }
+
       // Reverse proxy for per-machine terminals (ttyd under --base-path).
       // Matches /api/machines/:name/terminal and /api/machines/:name/terminal/*
-      // for both HTTP and WebSocket traffic.
+      // for both HTTP and WebSocket traffic. Runs AFTER the REST router so
+      // our own endpoints (/start, /stop) win when both patterns apply.
       const termMatch = url.pathname.match(/^\/api\/machines\/([^/]+)\/terminal(\/.*)?$/);
       if (termMatch) {
         const machineName = decodeURIComponent(termMatch[1]!);
@@ -187,17 +202,9 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
         return proxyHttp(req, port, upstreamPath);
       }
 
-      // REST routes.
+      // Nothing matched under /api/ — return 404 rather than serving the SPA.
       if (url.pathname.startsWith("/api/")) {
-        try {
-          const m = router.match(req);
-          if (!m) return error(404, "no such route");
-          return await m.handler({ req, params: m.params, url: m.url });
-        } catch (e) {
-          if (e instanceof HttpError) return error(e.status, e.message);
-          const msg = e instanceof Error ? e.message : String(e);
-          return error(500, msg);
-        }
+        return error(404, "no such route");
       }
 
       // Dev mode: frontend is on Vite. Return a hint for accidental / hits.
