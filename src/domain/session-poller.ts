@@ -73,23 +73,33 @@ RAW_SIZE=0; [ -f "$RAW_PATH" ] && RAW_SIZE=$(wc -c < "$RAW_PATH" | tr -d ' ')
 TX_SIZE=0; [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ] && TX_SIZE=$(wc -c < "$TX_PATH" | tr -d ' ')
 TMUX_ALIVE=0
 if tmux has-session -t ${shQ(tmuxName)} >/dev/null 2>&1; then TMUX_ALIVE=1; fi
+# Cap how much we transport per tick so spawnSync's 1 MiB stdout buffer
+# doesn't ENOBUFS on a large backlog (resumed conversations can start
+# with a multi-MB jsonl). The client re-polls on the next tick and the
+# offsets walk forward.
+CHUNK_MAX=${CHUNK_MAX_BYTES}
 printf 'SIZES %s %s %s %s\\n' "$EV_SIZE" "$RAW_SIZE" "$TMUX_ALIVE" "$TX_SIZE"
 printf 'TX_PATH=%s\\n' "$TX_PATH"
 printf -- '---EVENTS-B64---\\n'
 if [ "$EV_SIZE" -gt ${evOffset} ]; then
-  tail -c +$((${evOffset}+1)) "$EV_PATH" | base64 | tr -d '\\n'
+  tail -c +$((${evOffset}+1)) "$EV_PATH" | head -c "$CHUNK_MAX" | base64 | tr -d '\\n'
 fi
 printf '\\n---RAW-B64---\\n'
 if [ "$RAW_SIZE" -gt ${rawOffset} ]; then
-  tail -c +$((${rawOffset}+1)) "$RAW_PATH" | base64 | tr -d '\\n'
+  tail -c +$((${rawOffset}+1)) "$RAW_PATH" | head -c "$CHUNK_MAX" | base64 | tr -d '\\n'
 fi
 printf '\\n---TRANSCRIPT-B64---\\n'
 if [ -n "$TX_PATH" ] && [ "$TX_SIZE" -gt ${txOffset} ]; then
-  tail -c +$((${txOffset}+1)) "$TX_PATH" | base64 | tr -d '\\n'
+  tail -c +$((${txOffset}+1)) "$TX_PATH" | head -c "$CHUNK_MAX" | base64 | tr -d '\\n'
 fi
 printf '\\n---END---\\n'
 `;
 }
+
+// Max bytes per stream per tick. 256 KiB of raw data → ~350 KiB base64,
+// well under spawnSync's 1 MiB default even with three streams concatenated.
+// Large backlogs drain over several ticks instead of a single ENOBUFS-y blast.
+const CHUNK_MAX_BYTES = 256 * 1024;
 
 function shQ(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
@@ -230,6 +240,14 @@ export class SessionPoller extends EventEmitter {
   private apply(s: Session, report: Report): void {
     let changed = false;
 
+    // Snapshot offsets before any updateSession() call. With the chunk cap
+    // in pollScript(), the delta may be smaller than remote_size - offset
+    // on a large backlog — the new offset must be prev + bytes, not full
+    // remote_size (which would skip the unsent tail).
+    const prevEvents = s.remote_events_offset ?? 0;
+    const prevRaw = s.remote_raw_offset ?? 0;
+    const prevTx = s.remote_transcript_offset ?? 0;
+
     // Poller may have discovered the CC jsonl path on its own if the shim
     // missed it. Commit the discovery to meta so future ticks skip the
     // find() and so the UI can surface the absolute path.
@@ -276,7 +294,10 @@ export class SessionPoller extends EventEmitter {
           });
         }
       }
-      const patch: Partial<Session> = { remote_events_offset: report.eventsSize };
+      const evBytes = Buffer.byteLength(report.eventsDelta, "utf8");
+      const patch: Partial<Session> = {
+        remote_events_offset: Math.min(prevEvents + evBytes, report.eventsSize),
+      };
       if (exitCodeFromEvent !== undefined) patch.exit_code = exitCodeFromEvent;
       updateSession(this.dir, s.id, patch);
     }
@@ -284,7 +305,7 @@ export class SessionPoller extends EventEmitter {
     if (report.rawDelta.length > 0) {
       appendRaw(this.dir, s.id, report.rawDelta);
       updateSession(this.dir, s.id, {
-        remote_raw_offset: report.rawSize,
+        remote_raw_offset: Math.min(prevRaw + report.rawDelta.length, report.rawSize),
         last_raw_at: new Date().toISOString(),
       });
       changed = true;
@@ -292,8 +313,9 @@ export class SessionPoller extends EventEmitter {
 
     if (report.transcriptDelta.length > 0) {
       appendTranscript(this.dir, s.id, report.transcriptDelta);
+      const txBytes = Buffer.byteLength(report.transcriptDelta, "utf8");
       updateSession(this.dir, s.id, {
-        remote_transcript_offset: report.transcriptSize,
+        remote_transcript_offset: Math.min(prevTx + txBytes, report.transcriptSize),
         last_transcript_at: new Date().toISOString(),
       });
       changed = true;
