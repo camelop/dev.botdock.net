@@ -1,7 +1,11 @@
 # BotDock
 
-Local agent command center. Manage SSH keys, machines (with jump host chains), secrets,
-and push reusable context to agent sessions running on those machines.
+Single-user local command center for agent sessions. Manage SSH keys, machines
+(with jump host chains), secrets, and launch `claude-code` or generic shell
+sessions on those machines — each session lives in a remote `tmux`, streams
+back event + raw logs, and (for Claude Code) mirrors the transcript jsonl.
+Embedded React UI ships inside the binary; no external database, everything
+persists as TOML/NDJSON under the data dir.
 
 Design is in [`design/overview.md`](design/overview.md).
 
@@ -68,11 +72,29 @@ Push a `v*` tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`). The
 `release` workflow cross-compiles the four platforms and attaches them
 (plus `SHA256SUMS`) to the GitHub Release.
 
+## What's in the UI
+
+- **Dashboard** — counts + recent-session list, "+ New session" launcher.
+- **Sessions → War Room** — boring-avatar grid of live sessions with pending/running
+  state badges, acks, geographic view.
+- **Sessions → Workspace** — three-column view: grouped session list
+  (Needs attention / Active / Other) with aliases, terminal in the middle,
+  meta + transcript + events on the right.
+- **Sessions → List** — table + detail modal (terminal, transcript, events).
+- **Machines → Machines / Forwards / Terminals** — SSH targets, user-managed
+  port forwards (with an optional web proxy for local `-L` forwards), and
+  lazy-connected per-machine terminals.
+- **Private → Keys / Secrets** — ed25519 key management + secret storage.
+
 ## Status
 
 - **M0** storage + CLI CRUD · **done**
 - **M1** web UI + REST/WS · **done**
-- **M2** remote session (`generic-cmd`) · not started
-- **M3** Claude Code session + transcript · not started
-- **M4** resource push (mirrored to `.botdock/`) · not started
-- **M5** git-repo resources + jump host polish · not started
+- **M2** remote session (`generic-cmd`) · **done**
+- **M3** Claude Code session + transcript sync · **done**
+- **M4** port forwards + per-machine / per-session ttyd terminals · **done**
+- **M5** resource push (mirrored to `.botdock/`) · in design
+- **M6** git-repo resources + jump host polish · not started
+
+The Budgets tab (Anthropic cost auto-refresh) is temporarily disabled while
+the integration is hardened.

@@ -45,7 +45,10 @@ const NAV: NavEntry[] = [
       { id: "terminals", label: "Terminals" },
     ],
   },
-  { id: "budgets",  label: "Budgets" },
+  // Budgets: temporarily disabled until the Anthropic cost-report integration
+  // is hardened. Re-enable by uncommenting this entry and restoring the
+  // {tab === "budgets" && <CreditsPage />} line below.
+  // { id: "budgets",  label: "Budgets" },
 ];
 
 const ALL_TABS: Tab[] = NAV.flatMap((e) =>
@@ -161,7 +164,7 @@ export function App() {
         {tab === "warroom" && <WarRoomPage />}
         {tab === "hub" && <SessionHubPage />}
         {tab === "sessions" && <SessionsPage />}
-        {tab === "budgets" && <CreditsPage />}
+        {/* {tab === "budgets" && <CreditsPage />} */}
         {tab === "keys" && <KeysPage />}
         {tab === "secrets" && <SecretsPage />}
         {tab === "machines" && <MachinesPage />}
