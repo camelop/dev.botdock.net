@@ -48,6 +48,21 @@ export function freshDraft(machines: Machine[]): SessionDraft {
   };
 }
 
+/**
+ * Short label for the `cmd` column in session tables. For generic-cmd that's
+ * just the shell command. For claude-code, `cmd` is the initial prompt; if
+ * empty (fresh start) or resumed (prompt ignored), surface that instead of
+ * rendering a blank cell.
+ */
+export function sessionCmdLabel(s: Pick<Session, "cmd" | "agent_kind" | "cc_resume_uuid">): string {
+  if (s.cmd && s.cmd.length > 0) return s.cmd;
+  if (s.agent_kind === "claude-code") {
+    if (s.cc_resume_uuid) return `(resume ${s.cc_resume_uuid.slice(0, 8)})`;
+    return "(no prompt)";
+  }
+  return "";
+}
+
 export function SessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [err, setErr] = useState("");
@@ -106,7 +121,7 @@ export function SessionsPage() {
                   <td className="mono">{s.id}</td>
                   <td><SessionPill session={s} /></td>
                   <td>{s.machine}</td>
-                  <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cmd}</td>
+                  <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionCmdLabel(s)}</td>
                   <td className="muted" title={fullTime(s.started_at)}>{relativeTime(s.started_at)}</td>
                   <td className="mono">{s.exit_code ?? (s.status === "active" ? "…" : "—")}</td>
                   <td>

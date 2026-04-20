@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
-import { SessionDetailModal, NewSessionModal, freshDraft, type SessionDraft } from "./SessionsPage";
+import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, type SessionDraft } from "./SessionsPage";
 import { relativeTime, fullTime } from "../lib/time";
 import { isAcked } from "../lib/acks";
 
@@ -75,7 +75,7 @@ export function DashboardPage() {
                   <td><DashboardPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.cmd}
+                    {sessionCmdLabel(s)}
                   </td>
                   <td className="muted" title={fullTime(s.started_at ?? s.created_at)}>
                     {relativeTime(s.started_at ?? s.created_at)}

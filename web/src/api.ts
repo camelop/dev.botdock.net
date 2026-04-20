@@ -88,6 +88,8 @@ export type Session = {
   last_raw_at?: string;
   last_transcript_at?: string;
   activity?: "running" | "pending";
+  cc_skip_trust?: boolean;
+  cc_resume_uuid?: string;
 };
 export type SessionEventRecord = {
   ts: string;

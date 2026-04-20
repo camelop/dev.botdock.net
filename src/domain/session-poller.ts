@@ -405,12 +405,19 @@ function readLastTranscriptEntry(
 }
 
 function lastEntryLooksFinal(entry: Record<string, unknown>): boolean {
-  // CC emits explicit system events when a turn closes. turn_duration lands
-  // immediately after the last assistant message of a turn; away_summary is
-  // written after the agent has been idle and is summarizing state. Either
-  // one is a hard signal that the agent is now waiting on the user.
+  // CC emits a grab-bag of idle-state metadata entries after the agent
+  // finishes a turn. Treat any of them as "not running":
+  //   system/turn_duration   — lands right after the last assistant msg
+  //   system/away_summary    — written while idle (summarizing state)
+  //   last-prompt            — records the next-user-prompt scaffold
+  //   permission-mode        — records the tool-permission mode (idle setting)
+  // Newer CC versions add variants; keeping the allowlist explicit is safer
+  // than a default-final policy that could mis-flag real in-flight output.
   const topType = entry.type as string | undefined;
   const subtype = (entry as any).subtype as string | undefined;
+  if (topType === "last-prompt" || topType === "permission-mode") {
+    return true;
+  }
   if (topType === "system" && (subtype === "turn_duration" || subtype === "away_summary")) {
     return true;
   }
