@@ -14,14 +14,14 @@ import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 
-type SessionDraft = {
+export type SessionDraft = {
   machine: string;
   workdir: string;
   agent_kind: AgentKind;
   cmd: string;
 };
 
-function freshDraft(machines: Machine[]): SessionDraft {
+export function freshDraft(machines: Machine[]): SessionDraft {
   return {
     machine: machines[0]?.name ?? "",
     workdir: `~/.botdock/projects/${twoWordSlug()}`,
@@ -151,7 +151,7 @@ function StatusPill({ status }: { status: SessionStatus }) {
   return <SessionPill session={{ status, agent_kind: "generic-cmd" }} />;
 }
 
-function NewSessionModal(props: {
+export function NewSessionModal(props: {
   machines: Machine[];
   draft: SessionDraft;
   onDraft: (d: SessionDraft) => void;
@@ -438,64 +438,75 @@ export function SessionDetailModal(props: {
   return (
     <div className="modal-backdrop">
       <div
-        className="modal"
-        style={{ minWidth: 800, maxWidth: 1100, maxHeight: "90vh", overflowY: "auto" }}
+        className="modal session-modal"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <h2 style={{ marginTop: 0, marginBottom: 4 }}>Session {props.id}</h2>
-            {session && (
-              <div className="mono muted" style={{ fontSize: 12 }}>
-                <SessionPill session={session} />{" "}
-                {session.machine} · {session.workdir}
-              </div>
+        {/* LEFT: terminal fills the column, SendInput pins to the bottom. */}
+        <div className="session-left">
+          <div className="terminal-fill">
+            {session?.agent_kind === "claude-code" ? (
+              <ClaudeTerminal session={session} fillParent />
+            ) : (
+              <>
+                <h2 style={{ margin: "0 0 8px" }}>Live log</h2>
+                <div
+                  ref={logRef}
+                  className="mono scroll-panel"
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    background: "#0a0c10",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    padding: 10,
+                    whiteSpace: "pre-wrap",
+                    fontSize: 12,
+                  }}
+                >
+                  <AnsiText text={rawText} />
+                  {session?.status === "active" && (
+                    <span className="pill ok" style={{ fontSize: 10, marginTop: 8, display: "inline-block" }}>streaming</span>
+                  )}
+                </div>
+              </>
             )}
           </div>
-          <div className="actions">
-            {session?.status === "active" && <button className="secondary" onClick={onStop}>Deactivate</button>}
-            {session && session.status !== "active" && session.status !== "provisioning" && (
-              <button className="secondary" onClick={onDelete}>Delete</button>
-            )}
-            <button className="secondary" onClick={props.onClose}>Close</button>
-          </div>
+          {session?.status === "active" && <SendInput id={session.id} />}
         </div>
 
-        {err && <div className="error-banner">{err}</div>}
-        {session && <Meta s={session} />}
-        {session?.status === "active" && <SendInput id={session.id} />}
-
-        {session?.agent_kind === "claude-code" ? (
-          <>
-            <ClaudeTerminal session={session} />
-            <TranscriptView text={transcriptText} hasFile={!!session.cc_session_file} />
-          </>
-        ) : (
-          <>
-            <h2>Live log</h2>
-            <div
-              ref={logRef}
-              className="mono scroll-panel"
-              style={{
-                background: "#0a0c10",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                padding: 10,
-                height: 260,
-                whiteSpace: "pre-wrap",
-                fontSize: 12,
-              }}
-            >
-              <AnsiText text={rawText} />
-              {session?.status === "active" && (
-                <span className="pill ok" style={{ fontSize: 10, marginTop: 8, display: "inline-block" }}>streaming</span>
+        {/* RIGHT: title / meta / transcript / events — scrolls independently. */}
+        <div className="session-right scroll-panel">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <div style={{ minWidth: 0 }}>
+              <h2 style={{ marginTop: 0, marginBottom: 4, wordBreak: "break-all" }}>
+                Session {props.id}
+              </h2>
+              {session && (
+                <div className="mono muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
+                  <SessionPill session={session} />{" "}
+                  {session.machine} · {session.workdir}
+                </div>
               )}
             </div>
-          </>
-        )}
+            <div className="actions" style={{ flexShrink: 0 }}>
+              {session?.status === "active" && <button className="secondary" onClick={onStop}>Deactivate</button>}
+              {session && session.status !== "active" && session.status !== "provisioning" && (
+                <button className="secondary" onClick={onDelete}>Delete</button>
+              )}
+              <button className="secondary" onClick={props.onClose}>Close</button>
+            </div>
+          </div>
 
-        <h2>Events</h2>
-        <EventsTable events={events} />
+          {err && <div className="error-banner">{err}</div>}
+          {session && <Meta s={session} />}
+
+          {session?.agent_kind === "claude-code" && (
+            <TranscriptView text={transcriptText} hasFile={!!session.cc_session_file} />
+          )}
+
+          <h2>Events</h2>
+          <EventsTable events={events} />
+        </div>
       </div>
     </div>
   );
@@ -769,7 +780,7 @@ function roleBadgeStyle(kind: TranscriptTurn["kind"]): { label: string; bg: stri
   }
 }
 
-function ClaudeTerminal({ session }: { session: Session }) {
+function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?: boolean }) {
   const [zoomed, setZoomed] = useState(false);
   useEffect(() => {
     if (!zoomed) return;
@@ -819,7 +830,11 @@ function ClaudeTerminal({ session }: { session: Session }) {
 
   const containerStyle: React.CSSProperties = zoomed
     ? { position: "fixed", inset: 0, zIndex: 1000, background: "#0a0c10", display: "flex", flexDirection: "column" }
-    : { height: 420, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" };
+    : fillParent
+      // Fill the surrounding flex column (two-column modal layout).
+      ? { flex: 1, minHeight: 320, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" }
+      // Legacy single-column modal: fixed height so the flow below still fits.
+      : { height: 420, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" };
 
   return (
     <>

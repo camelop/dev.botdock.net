@@ -270,3 +270,102 @@ pre.code {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* Agent state badges — overlaid on avatars in the War Room. */
+@keyframes botdock-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes botdock-pulse {
+  0%, 100% { transform: translateY(0) scale(1); box-shadow: 0 0 0 0 rgba(242,185,75,0.6); }
+  50%      { transform: translateY(-1px) scale(1.08); box-shadow: 0 0 0 6px rgba(242,185,75,0); }
+}
+.agent-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-elev);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  line-height: 1;
+  color: #0e1116;
+}
+.agent-badge.state-active      { background: var(--ok); }
+.agent-badge.state-exited      { background: #4a5160; color: var(--fg-dim); }
+.agent-badge.state-failed      { background: var(--danger); color: #2a0a0a; }
+.agent-badge.state-provisioning{ background: var(--warn); color: #2a1e00; }
+.agent-badge.state-running {
+  background: var(--ok);
+  color: rgba(14,17,22,0.0);  /* hide any accidental text */
+}
+.agent-badge.state-running::before {
+  content: "";
+  box-sizing: border-box;
+  width: 62%;
+  height: 62%;
+  border: 1.5px solid rgba(14,17,22,0.85);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: botdock-spin 0.9s linear infinite;
+}
+.agent-badge.state-pending {
+  background: var(--warn);
+  color: #2a1e00;
+  animation: botdock-pulse 1.15s ease-in-out infinite;
+}
+.agent-badge.state-pending::before { content: "!"; }
+.agent-badge.state-pending-acked {
+  background: #3a3f4a;
+  color: var(--fg-dim);
+}
+.agent-badge.state-pending-acked::before { content: "!"; }
+
+/* Two-column layout for the session detail modal on wide screens:
+   left = terminal (fixed, non-scrolling), right = meta/transcript/events
+   (scrolls independently). Below the breakpoint we stack single-column. */
+.session-modal {
+  padding: 0 !important;  /* override .modal default padding; inner cols pad themselves */
+  display: flex;
+  flex-direction: column;
+  width: min(1400px, 94vw);
+  max-width: none;
+  max-height: 90vh;
+  overflow: hidden;
+}
+.session-modal .session-left,
+.session-modal .session-right {
+  padding: 16px;
+  min-width: 0;
+}
+.session-modal .session-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;  /* allow inner iframe to shrink */
+}
+.session-modal .session-right {
+  overflow-y: auto;
+  max-height: 90vh;
+}
+.session-modal .session-left > .terminal-fill {
+  flex: 1;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+@media (min-width: 1100px) {
+  .session-modal {
+    flex-direction: row;
+  }
+  .session-modal .session-left {
+    flex: 1 1 0;
+    border-right: 1px solid var(--border);
+  }
+  .session-modal .session-right {
+    width: 420px;
+    flex: 0 0 420px;
+    max-height: none;   /* bounded by outer modal max-height */
+  }
+}

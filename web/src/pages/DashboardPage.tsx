@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
-import { SessionDetailModal } from "./SessionsPage";
+import { SessionDetailModal, NewSessionModal, freshDraft, type SessionDraft } from "./SessionsPage";
 import { relativeTime, fullTime } from "../lib/time";
 
 export function DashboardPage() {
@@ -10,6 +10,8 @@ export function DashboardPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SessionDraft | null>(null);
+  const openNew = () => setDraft((cur) => cur ?? freshDraft(machines));
 
   const refresh = () =>
     Promise.all([api.listKeys(), api.listMachines(), api.listSecrets(), api.listSessions()])
@@ -33,7 +35,12 @@ export function DashboardPage() {
 
   return (
     <div>
-      <h1>Dashboard</h1>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h1 style={{ margin: 0 }}>Dashboard</h1>
+        <button onClick={openNew} disabled={machines.length === 0}>
+          {machines.length === 0 ? "Add a machine first" : "+ New session"}
+        </button>
+      </div>
       {err && <div className="error-banner">{err}</div>}
 
       <div className="card">
@@ -79,6 +86,20 @@ export function DashboardPage() {
           id={selected}
           onClose={() => setSelected(null)}
           onChange={refresh}
+        />
+      )}
+
+      {draft && (
+        <NewSessionModal
+          machines={machines}
+          draft={draft}
+          onDraft={setDraft}
+          onCancel={() => setDraft(null)}
+          onDone={async (id) => {
+            setDraft(null);
+            await refresh();
+            setSelected(id);
+          }}
         />
       )}
     </div>

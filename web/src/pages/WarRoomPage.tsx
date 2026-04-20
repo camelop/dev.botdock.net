@@ -120,7 +120,7 @@ export function WarRoomPage() {
                 key={s.id}
                 onClick={() => setSelected(s.id)}
                 style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
+                  display: "inline-flex", alignItems: "center", gap: 8,
                   padding: "4px 10px 4px 6px",
                   background: "var(--bg-card)",
                   border: "1px solid var(--border)",
@@ -129,7 +129,7 @@ export function WarRoomPage() {
                   fontSize: 12,
                 }}
               >
-                <AgentAvatar session={s} size={22} />
+                <AgentAvatar session={s} size={26} />
                 <span className="mono">{shortLabel(s)}</span>
                 <button
                   className="secondary"
@@ -195,8 +195,11 @@ function shortLabel(s: Session): string {
   return s.id;
 }
 
-export function AgentAvatar({ session, size = 40 }: { session: Session; size?: number }) {
-  const tint = statusTint(session);
+export function AgentAvatar({ session, size = 40, acked = false }: {
+  session: Session; size?: number; acked?: boolean;
+}) {
+  const state = badgeState(session, acked);
+  const badgeSize = Math.max(14, Math.round(size * 0.38));
   return (
     <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
       <Avatar
@@ -206,26 +209,45 @@ export function AgentAvatar({ session, size = 40 }: { session: Session; size?: n
         colors={AVATAR_PALETTE}
       />
       <span
-        title={tint.label}
+        title={badgeLabel(state)}
+        className={`agent-badge state-${state}`}
         style={{
-          position: "absolute", right: -2, bottom: -2,
-          width: Math.round(size * 0.3), height: Math.round(size * 0.3),
-          borderRadius: "50%",
-          background: tint.color,
-          border: "2px solid var(--bg-elev)",
+          width: badgeSize, height: badgeSize,
+          fontSize: Math.max(9, Math.round(badgeSize * 0.65)),
         }}
       />
     </div>
   );
 }
 
-function statusTint(s: Session): { color: string; label: string } {
-  if (s.status === "exited") return { color: "#4a5160", label: "exited" };
-  if (s.status === "failed_to_start") return { color: "var(--danger)", label: "failed" };
-  if (s.status === "provisioning") return { color: "var(--warn)", label: "provisioning" };
-  if (s.agent_kind === "claude-code" && s.activity === "pending") return { color: "var(--warn)", label: "pending" };
-  if (s.agent_kind === "claude-code" && s.activity === "running") return { color: "var(--ok)", label: "running" };
-  return { color: "var(--ok)", label: "active" };
+export type AgentBadgeState =
+  | "active"
+  | "exited"
+  | "failed"
+  | "provisioning"
+  | "running"
+  | "pending"
+  | "pending-acked";
+
+export function badgeState(s: Session, acked: boolean): AgentBadgeState {
+  if (s.status === "exited") return "exited";
+  if (s.status === "failed_to_start") return "failed";
+  if (s.status === "provisioning") return "provisioning";
+  if (s.agent_kind === "claude-code" && s.activity === "pending") return acked ? "pending-acked" : "pending";
+  if (s.agent_kind === "claude-code" && s.activity === "running") return "running";
+  return "active";
+}
+
+function badgeLabel(state: AgentBadgeState): string {
+  switch (state) {
+    case "running":       return "agent is working";
+    case "pending":       return "agent waiting on you";
+    case "pending-acked": return "pending (acknowledged)";
+    case "provisioning":  return "provisioning";
+    case "exited":        return "exited";
+    case "failed":        return "failed to start";
+    case "active":        return "active";
+  }
 }
 
 function SessionCard(props: {
@@ -252,7 +274,7 @@ function SessionCard(props: {
       onClick={props.onOpen}
     >
       <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-        <AgentAvatar session={s} size={40} />
+        <AgentAvatar session={s} size={40} acked={acked} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {shortLabel(s)}
