@@ -380,6 +380,9 @@ export function SessionView(props: {
   id: string;
   onClose?: () => void;
   onChange?: () => void | Promise<void>;
+  // When true, the view styles itself as a floating modal (background,
+  // border, shadow). When false (hub embed), it's a bare two-column pane.
+  inModal?: boolean;
 }) {
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEventRecord[]>([]);
@@ -444,7 +447,7 @@ export function SessionView(props: {
 
   return (
     <div
-      className="session-modal"
+      className={props.inModal ? "modal session-modal" : "session-modal"}
       onClick={(e) => e.stopPropagation()}
     >
         {/* LEFT: terminal fills the column, SendInput pins to the bottom. */}
@@ -545,7 +548,7 @@ export function SessionDetailModal(props: {
 }) {
   return (
     <div className="modal-backdrop" onClick={() => { /* no-op; no backdrop dismiss */ }}>
-      <SessionView id={props.id} onClose={props.onClose} onChange={props.onChange} />
+      <SessionView id={props.id} onClose={props.onClose} onChange={props.onChange} inModal />
     </div>
   );
 }
