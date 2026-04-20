@@ -75,6 +75,28 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
     return readForward(dir, fname).local_port;
   }
 
+  /**
+   * Lookup for the generic /api/forwards/:name/proxy/* route. Returns the
+   * local port if the named forward exists, is direction=local, and is
+   * currently running; otherwise an error string explaining why.
+   */
+  function userForwardProxyPort(name: string):
+    | { port: number }
+    | { error: string } {
+    if (!forwardExists(dir, name)) return { error: `forward "${name}" not found` };
+    const f = readForward(dir, name);
+    if (f.direction !== "local") {
+      return {
+        error: `forward "${name}" is direction=${f.direction}; only local (-L) forwards can be proxied through the web server`,
+      };
+    }
+    const status = forwardManager.getStatus(name);
+    if (status.state !== "running") {
+      return { error: `forward "${name}" is not running (state=${status.state}); start it first` };
+    }
+    return { port: f.local_port };
+  }
+
   poller.on("update", (sessionId: string) => {
     const set = subs.get(sessionId);
     if (!set || set.size === 0) return;
@@ -217,6 +239,29 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
         const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
         if (wsResp) return wsResp;
         return proxyHttp(req, port, upstreamPath);
+      }
+
+      // Generic reverse proxy for any user-managed local (-L) forward.
+      // Unlike the terminal proxies above, we STRIP the prefix before
+      // forwarding upstream — user apps generally assume they're at /
+      // and don't support a base-path. Relative URLs work; absolute URLs
+      // that don't honor a base path will break. That's the trade-off
+      // to make most dev servers embed-ready out of the box.
+      const fwdProxyMatch = url.pathname.match(/^\/api\/forwards\/([^/]+)\/proxy(\/.*)?$/);
+      if (fwdProxyMatch) {
+        const name = decodeURIComponent(fwdProxyMatch[1]!);
+        const remainingPath = fwdProxyMatch[2] ?? "/";
+        const resolved = userForwardProxyPort(name);
+        if ("error" in resolved) {
+          return new Response(`${resolved.error}\n`, {
+            status: 503,
+            headers: { "content-type": "text/plain" },
+          });
+        }
+        const upstreamPath = remainingPath;  // no prefix carried upstream
+        const wsResp = tryUpgradeWsProxy(srv, req, resolved.port, upstreamPath);
+        if (wsResp) return wsResp;
+        return proxyHttp(req, resolved.port, upstreamPath);
       }
 
       // Nothing matched under /api/ — return 404 rather than serving the SPA.

@@ -15,6 +15,7 @@ export function ForwardsPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [err, setErr] = useState("");
   const [edit, setEdit] = useState<{ mode: "new" } | { mode: "edit"; name: string } | null>(null);
+  const [embedded, setEmbedded] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -69,6 +70,7 @@ export function ForwardsPage() {
         forwards={userForwards}
         onStart={onStart} onStop={onStop} onDelete={onDelete}
         onEdit={(name) => setEdit({ mode: "edit", name })}
+        onEmbed={(name) => setEmbedded(name)}
         emptyHint="No user forwards yet. Local, reverse, and dynamic (SOCKS) SSH tunnels can be managed here."
         readOnlyActions={false}
       />
@@ -79,6 +81,7 @@ export function ForwardsPage() {
         forwards={systemForwards}
         onStart={onStart} onStop={onStop} onDelete={onDelete}
         onEdit={(name) => setEdit({ mode: "edit", name })}
+        onEmbed={() => undefined}  // system forwards aren't meant to be surface-browsed
         emptyHint="No system-managed forwards yet. Start a terminal from the Machines page to spawn one."
         readOnlyActions={true}
       />
@@ -91,6 +94,57 @@ export function ForwardsPage() {
           onDone={async () => { setEdit(null); await refresh(); }}
         />
       )}
+      {embedded && (
+        <EmbedOverlay name={embedded} onClose={() => setEmbedded(null)} />
+      )}
+    </div>
+  );
+}
+
+function EmbedOverlay({ name, onClose }: { name: string; onClose: () => void }) {
+  const url = `/api/forwards/${encodeURIComponent(name)}/proxy/`;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "#0a0c10",
+        display: "flex", flexDirection: "column",
+      }}
+    >
+      <div
+        className="row"
+        style={{
+          padding: "6px 10px",
+          background: "var(--bg-elev)",
+          borderBottom: "1px solid var(--border)",
+          gap: 8,
+        }}
+      >
+        <span className="mono" style={{ fontSize: 13 }}>{name}</span>
+        <span className="muted" style={{ fontSize: 12 }}>proxied through /api/forwards/{name}/proxy</span>
+        <div style={{ flex: 1 }} />
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="secondary"
+          style={{
+            padding: "4px 10px", fontSize: 12, borderRadius: 6, textDecoration: "none",
+            background: "#323844", color: "var(--fg)", border: "1px solid #3f4754",
+          }}
+        >↗ New tab</a>
+        <button className="secondary" onClick={onClose} title="Exit (Esc)">× Exit</button>
+      </div>
+      <iframe
+        title={`proxy-${name}`}
+        src={url}
+        style={{ flex: 1, border: "none", width: "100%" }}
+      />
     </div>
   );
 }
@@ -100,6 +154,7 @@ type ForwardActionHandlers = {
   onStop: (name: string) => void | Promise<void>;
   onDelete: (name: string) => void | Promise<void>;
   onEdit: (name: string) => void;
+  onEmbed: (name: string) => void;
 };
 
 function ForwardSection(props: ForwardActionHandlers & {
@@ -159,6 +214,29 @@ function ForwardSection(props: ForwardActionHandlers & {
                       )}
                       {(f.status.state === "running" || f.status.state === "starting") && (
                         <button className="secondary" onClick={() => props.onStop(f.name)}>Stop</button>
+                      )}
+                      {/* Web proxy controls for user local (-L) forwards that are live. */}
+                      {!props.readOnlyActions && f.direction === "local" && f.status.state === "running" && (
+                        <>
+                          <a
+                            href={`/api/forwards/${encodeURIComponent(f.name)}/proxy/`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="secondary"
+                            style={{
+                              padding: "6px 14px", borderRadius: 6, textDecoration: "none",
+                              background: "#323844", color: "var(--fg)",
+                              border: "1px solid #3f4754", fontSize: 13,
+                              display: "inline-flex", alignItems: "center",
+                            }}
+                            title="Open the forwarded service in a new browser tab, via BotDock's web proxy"
+                          >↗ Open</a>
+                          <button
+                            className="secondary"
+                            onClick={() => props.onEmbed(f.name)}
+                            title="Embed the forwarded service in a full-screen iframe inside BotDock"
+                          >⛶ Embed</button>
+                        </>
                       )}
                       {!props.readOnlyActions && (
                         <>
