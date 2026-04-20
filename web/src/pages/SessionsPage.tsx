@@ -865,7 +865,7 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [sorted.length]);
   return (
-    <div ref={scrollRef} className="scroll-panel" style={{ maxHeight: 220, border: "1px solid var(--border)", borderRadius: 6 }}>
+    <div ref={scrollRef} className="scroll-panel" style={{ maxHeight: 140, border: "1px solid var(--border)", borderRadius: 6 }}>
       <table className="table" style={{ fontSize: 11.5 }}>
         <tbody>
           {sorted.map((ev, i) => (
@@ -883,14 +883,29 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
   );
 }
 
+const TRANSCRIPT_PAGE_SIZE = 20;
+
 function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
   const turns = useMemo(() => parseTranscript(text), [text]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showRaw, setShowRaw] = useState(false);
+  // 0-indexed, counted from the END (page 0 = newest slice). Lets the view
+  // default to the latest turns without re-computing every time the transcript
+  // grows, and "Jump to latest" is just setPage(0).
+  const [pageFromEnd, setPageFromEnd] = useState(0);
 
+  const totalPages = Math.max(1, Math.ceil(turns.length / TRANSCRIPT_PAGE_SIZE));
+  // Clamp: if the transcript shrank (unlikely but defensive), drop the page.
+  const clampedPage = Math.min(pageFromEnd, totalPages - 1);
+  const pageEnd = turns.length - clampedPage * TRANSCRIPT_PAGE_SIZE;
+  const pageStart = Math.max(0, pageEnd - TRANSCRIPT_PAGE_SIZE);
+  const pageTurns = turns.slice(pageStart, pageEnd);
+  const onLatest = clampedPage === 0;
+
+  // Auto-scroll to bottom only when we're on the latest page and new turns land.
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [turns.length]);
+    if (onLatest && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [onLatest, pageTurns.length]);
 
   if (!hasFile) {
     return (
@@ -918,14 +933,44 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 8, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0 }}>Transcript</h2>
-        <button
-          className="secondary"
-          style={{ padding: "4px 10px", fontSize: 12 }}
-          onClick={() => setShowRaw((v) => !v)}
-          title="Show the underlying JSONL lines for debugging"
-        >{showRaw ? "Hide raw" : "View raw"}</button>
+        <div className="row" style={{ gap: 4 }}>
+          {!showRaw && totalPages > 1 && (
+            <>
+              <button
+                className="secondary"
+                style={{ padding: "4px 8px", fontSize: 12 }}
+                disabled={clampedPage >= totalPages - 1}
+                onClick={() => setPageFromEnd((p) => Math.min(totalPages - 1, p + 1))}
+                title="Older turns"
+              >←</button>
+              <span className="muted mono" style={{ fontSize: 11, minWidth: 72, textAlign: "center" }}>
+                {totalPages - clampedPage}/{totalPages} · {turns.length}
+              </span>
+              <button
+                className="secondary"
+                style={{ padding: "4px 8px", fontSize: 12 }}
+                disabled={clampedPage <= 0}
+                onClick={() => setPageFromEnd((p) => Math.max(0, p - 1))}
+                title="Newer turns"
+              >→</button>
+              <button
+                className="secondary"
+                style={{ padding: "4px 8px", fontSize: 12 }}
+                disabled={onLatest}
+                onClick={() => setPageFromEnd(0)}
+                title="Jump to the most recent turns"
+              >⤓</button>
+            </>
+          )}
+          <button
+            className="secondary"
+            style={{ padding: "4px 10px", fontSize: 12 }}
+            onClick={() => setShowRaw((v) => !v)}
+            title="Show the underlying JSONL lines for debugging"
+          >{showRaw ? "Hide raw" : "View raw"}</button>
+        </div>
       </div>
       <div
         ref={scrollRef}
@@ -941,7 +986,7 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
         {showRaw ? (
           <pre className="code" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{text}</pre>
         ) : (
-          turns.map((t, i) => <TranscriptTurnRow key={i} turn={t} />)
+          pageTurns.map((t, i) => <TranscriptTurnRow key={pageStart + i} turn={t} />)
         )}
       </div>
     </>
