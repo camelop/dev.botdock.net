@@ -141,7 +141,7 @@ ttyd_installed_at = "${nowIso}"
 MARKER
 echo "BOTDOCK_TTYD_INSTALLED"
 `;
-  const r = sshExec(dir, machine, "bash -s", script, 60_000);
+  const r = sshExec(dir, machine, "bash -s", script, 60_000, { noControlMaster: true });
   if (r.code !== 0 || !r.stdout.includes("BOTDOCK_TTYD_INSTALLED")) {
     throw new Error(`ttyd install failed: ${r.stderr.trim() || r.stdout.trim()}`);
   }
@@ -198,7 +198,7 @@ DEBIAN_FRONTEND=noninteractive APT update -qq >/dev/null 2>&1 || true
 DEBIAN_FRONTEND=noninteractive APT install -y tmux
 echo "BOTDOCK_TMUX_INSTALLED"
 `;
-  const r = sshExec(dir, machine, "bash -s", script, 90_000);
+  const r = sshExec(dir, machine, "bash -s", script, 90_000, { noControlMaster: true });
   if (r.code !== 0 || !r.stdout.includes("BOTDOCK_TMUX_INSTALLED")) {
     throw new Error(`tmux install failed: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`);
   }
@@ -324,7 +324,7 @@ fi
 
 echo "BOTDOCK_TTYD_STARTED port=$PORT"
 `;
-  const r = sshExec(dir, machine, "bash -s", script, 30_000);
+  const r = sshExec(dir, machine, "bash -s", script, 30_000, { noControlMaster: true });
   if (r.code !== 0 || !/BOTDOCK_TTYD_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
     const detail = r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
     throw new Error(`ttyd start failed: ${detail}`);
@@ -420,7 +420,7 @@ fi
 
 echo "BOTDOCK_SESSION_TTYD_STARTED port=$PORT"
 `;
-  const r = sshExec(dir, machine, "bash -s", script, 30_000);
+  const r = sshExec(dir, machine, "bash -s", script, 30_000, { noControlMaster: true });
   if (r.code !== 0 || !/BOTDOCK_SESSION_TTYD_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
     throw new Error(
       `session-ttyd start failed: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`,

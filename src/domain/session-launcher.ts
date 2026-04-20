@@ -48,7 +48,10 @@ export async function launchSession(
     agentKind: s.agent_kind,
   });
 
-  const r = sshExec(dir, machine, "bash -s", bootstrap, 60_000);
+  // Bypass ControlMaster for the bootstrap: it's a 60s-capped heredoc that
+  // would otherwise hold the shared SSH mux and stall pollers/forwards for
+  // other sessions on the same machine, making them appear unreachable.
+  const r = sshExec(dir, machine, "bash -s", bootstrap, 60_000, { noControlMaster: true });
   if (r.code !== 0 || !r.stdout.includes("BOTDOCK_PROVISIONED")) {
     appendEvent(dir, id, {
       ts: new Date().toISOString(),

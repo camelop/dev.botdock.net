@@ -485,24 +485,35 @@ export function SessionView(props: {
     >
         {/* LEFT: terminal fills the column, SendInput collapses behind a toggle. */}
         <div className="session-left">
-          {session?.status === "active" && (
-            <div className="row" style={{ gap: 6, marginBottom: 0 }}>
-              <button
-                className="secondary"
-                style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6 }}
-                onClick={() => setShowInput((v) => !v)}
-                title="Toggle the input pane (send text / quick keys to tmux)"
-              >
-                {showInput ? "▾ Hide input" : "⌨ Input"}
-              </button>
-            </div>
-          )}
           <div className="terminal-fill">
             {session?.agent_kind === "claude-code" ? (
-              <ClaudeTerminal session={session} fillParent />
+              <ClaudeTerminal
+                session={session}
+                fillParent
+                extraButtons={session.status === "active" ? (
+                  <button
+                    className="secondary"
+                    style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                    onClick={() => setShowInput((v) => !v)}
+                    title="Toggle the input pane (send text / quick keys to tmux)"
+                  >
+                    {showInput ? "▾ Hide input" : "⌨ Input"}
+                  </button>
+                ) : null}
+              />
             ) : (
               <>
-                <h2 style={{ margin: "0 0 8px" }}>Live log</h2>
+                <div className="row" style={{ gap: 6, alignItems: "center", marginBottom: 8 }}>
+                  <h2 style={{ margin: 0, flex: 1 }}>Live log</h2>
+                  {session?.status === "active" && (
+                    <button
+                      className="secondary"
+                      style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                      onClick={() => setShowInput((v) => !v)}
+                      title="Toggle the input pane"
+                    >{showInput ? "▾ Hide input" : "⌨ Input"}</button>
+                  )}
+                </div>
                 <div
                   ref={logRef}
                   className="mono scroll-panel"
@@ -879,7 +890,11 @@ function roleBadgeStyle(kind: TranscriptTurn["kind"]): { label: string; bg: stri
   }
 }
 
-function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?: boolean }) {
+function ClaudeTerminal({ session, fillParent, extraButtons }: {
+  session: Session;
+  fillParent?: boolean;
+  extraButtons?: React.ReactNode;
+}) {
   const [zoomed, setZoomed] = useState(false);
   // Changing reloadKey remounts the iframe, which forces ttyd to do a
   // fresh handshake and re-measure its container — useful after modal
@@ -1019,6 +1034,7 @@ function ClaudeTerminal({ session, fillParent }: { session: Session; fillParent?
             disabled
             title="Attach extra context to this session (coming soon)"
           >＋ Context</button>
+          {extraButtons}
         </div>
       )}
       <div ref={containerRef} style={containerStyle}>
