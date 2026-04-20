@@ -49,8 +49,19 @@ export function MachinesPage() {
   const onStartTerminal = async (name: string) => {
     setSpawningTerminal(name); setErr("");
     try {
-      await api.startMachineTerminal(name);
+      const res = await api.startMachineTerminal(name);
       await refresh();
+      // Open the ttyd URL in a new tab as soon as the forward is up.
+      // Popup-blockers typically allow window.open inside an explicit click
+      // handler even after an await, but some browsers still block — in
+      // that case the user can click the "open :PORT" pill instead.
+      if (res.url) {
+        const w = window.open(res.url, "_blank", "noopener,noreferrer");
+        if (!w) {
+          // Popup blocked; message is informative, not an error.
+          setErr(`Terminal started at ${res.url} — click the "open :PORT" link if your browser blocked the popup.`);
+        }
+      }
     } catch (e) { setErr(String((e as Error).message ?? e)); }
     finally { setSpawningTerminal(null); }
   };

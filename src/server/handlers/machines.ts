@@ -134,7 +134,12 @@ echo "ENTRIES_END"
       const cur = readForward(dir, fname);
       const status = forwardManager.getStatus(fname);
       if (status.state === "running") {
-        return json({ forward: cur, status, installed: readInstalledState(dir, machine) });
+        return json({
+          forward: cur,
+          status,
+          installed: readInstalledState(dir, machine),
+          url: `http://127.0.0.1:${cur.local_port}`,
+        });
       }
     }
 
