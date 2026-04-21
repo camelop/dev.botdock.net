@@ -23,9 +23,9 @@ const NAV: NavEntry[] = [
     kind: "group",
     label: "Sessions",
     items: [
-      { id: "warroom",  label: "War Room" },
       { id: "hub",      label: "Workspace" },
-      { id: "sessions", label: "List" },
+      { id: "warroom",  label: "Card view" },
+      { id: "sessions", label: "List view" },
     ],
   },
   {
@@ -110,6 +110,18 @@ export function App() {
 
   useEffect(() => {
     window.location.hash = tab;
+  }, [tab]);
+
+  // React to external hash changes — e.g. the session modal's "Open in
+  // workspace" button that navigates via `location.hash = "hub"`. Without
+  // this listener the address bar would update but the active tab wouldn't.
+  useEffect(() => {
+    const onHash = () => {
+      const h = window.location.hash.slice(1) as Tab;
+      if (ALL_TABS.includes(h) && h !== tab) setTab(h);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, [tab]);
 
   // Click outside the nav closes any open dropdown.

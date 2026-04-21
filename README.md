@@ -7,7 +7,8 @@ back event + raw logs, and (for Claude Code) mirrors the transcript jsonl.
 Embedded React UI ships inside the binary; no external database, everything
 persists as TOML/NDJSON under the data dir.
 
-Design is in [`design/overview.md`](design/overview.md).
+Design is in [`design/overview.md`](design/overview.md). User-visible
+changes by day: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Install
 

@@ -712,16 +712,32 @@ export function SessionView(props: {
               <ClaudeTerminal
                 session={session}
                 fillParent
-                extraButtons={session.status === "active" ? (
-                  <button
-                    className="secondary"
-                    style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
-                    onClick={() => setShowInput((v) => !v)}
-                    title="Toggle the input pane (send text / quick keys to tmux)"
-                  >
-                    {showInput ? "▾ Hide input" : "⌨ Input"}
-                  </button>
-                ) : null}
+                extraButtons={
+                  <>
+                    {session.status === "active" && (
+                      <button
+                        className="secondary"
+                        style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                        onClick={() => setShowInput((v) => !v)}
+                        title="Toggle the input pane (send text / quick keys to tmux)"
+                      >
+                        {showInput ? "▾ Hide input" : "⌨ Input"}
+                      </button>
+                    )}
+                    {props.inModal && (
+                      <button
+                        className="secondary"
+                        style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                        onClick={() => {
+                          try { sessionStorage.setItem("botdock:hub-preselect", session.id); } catch {}
+                          props.onClose?.();
+                          window.location.hash = "hub";
+                        }}
+                        title="Close this modal and open the session in the Workspace view"
+                      >⇲ Workspace</button>
+                    )}
+                  </>
+                }
               />
             ) : (
               <>

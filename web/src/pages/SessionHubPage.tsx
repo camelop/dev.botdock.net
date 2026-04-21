@@ -48,9 +48,22 @@ export function SessionHubPage() {
     return list[0]?.id ?? null;
   };
 
-  // On first mount, pick a sensible default.
+  // On first mount, honor a preselect hint (set by the detail modal's
+  // "Open in workspace" button) if it points at a still-present session.
+  // Otherwise fall back to the pending/running heuristic.
   useEffect(() => {
-    if (selected == null && sessions.length > 0) setSelected(pickDefault(sessions));
+    if (selected != null) return;
+    if (sessions.length === 0) return;
+    let preselect: string | null = null;
+    try {
+      preselect = sessionStorage.getItem("botdock:hub-preselect");
+      sessionStorage.removeItem("botdock:hub-preselect");
+    } catch { /* private-browsing / no sessionStorage */ }
+    if (preselect && sessions.find((s) => s.id === preselect)) {
+      setSelected(preselect);
+    } else {
+      setSelected(pickDefault(sessions));
+    }
   }, [sessions.length]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const grouped = useMemo(() => {
