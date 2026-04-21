@@ -1537,14 +1537,14 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
           border: "1px solid #3f4754",
         }}
         title="Open the filebrowser UI in a new tab"
-      >📁 Open ↗</a>
+      >📁 Open FileBrowser ↗</a>
       <button
         className="secondary"
         style={iconBtn}
         onClick={onStop}
         disabled={state !== "idle"}
         title="Kill the remote filebrowser and drop its SSH forward"
-      >{state === "stopping" ? "Stopping…" : "Stop"}</button>
+      >{state === "stopping" ? "Stopping FileBrowser…" : "⏹ Stop FileBrowser"}</button>
       {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
     </div>
   );
@@ -1739,7 +1739,7 @@ function ClaudeTerminal({ session, fillParent, inputToggle, fileBrowserControls,
             </span>
             <div style={{ flex: 1 }} />
             <button className="secondary" onClick={() => setReloadKey((k) => k + 1)} title="Reload" style={{ marginRight: 6 }}>↻ Reload</button>
-            <button className="secondary" onClick={() => setZoomed(false)} title="Exit full screen (Esc)">× Exit</button>
+            <button className="secondary" onClick={() => setZoomed(false)} title="Exit full screen (Esc) — the session keeps running">× Exit full screen</button>
           </div>
         )}
         <iframe
