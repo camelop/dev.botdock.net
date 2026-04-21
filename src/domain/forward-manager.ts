@@ -222,6 +222,34 @@ export class ForwardManager extends EventEmitter {
     }
   }
 
+  /**
+   * Like stopAll but waits for every child ssh to actually exit (or a
+   * timeout, whichever comes first). Used by the self-update flow so we
+   * don't orphan ssh processes across the execv boundary.
+   */
+  async stopAllAsync(timeoutMs = 3000): Promise<void> {
+    const waits: Promise<void>[] = [];
+    for (const e of this.entries.values()) {
+      const proc = e.proc;
+      if (!proc) continue;
+      e.stopRequested = true;
+      waits.push(new Promise<void>((resolve) => {
+        let done = false;
+        const onClose = () => { if (done) return; done = true; resolve(); };
+        proc.once("close", onClose);
+        setTimeout(() => {
+          if (done) return; done = true;
+          proc.removeListener("close", onClose);
+          // Escalate — if SIGTERM didn't take, SIGKILL before giving up.
+          try { proc.kill("SIGKILL"); } catch {}
+          resolve();
+        }, timeoutMs);
+        try { proc.kill("SIGTERM"); } catch { resolve(); }
+      }));
+    }
+    await Promise.all(waits);
+  }
+
   /** Drop an entry after the forward is deleted from disk. */
   forget(name: string): void {
     this.entries.delete(name);

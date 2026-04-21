@@ -10,6 +10,7 @@ import { mountSecrets } from "./handlers/secrets.ts";
 import { mountSessions } from "./handlers/sessions.ts";
 import { mountForwards } from "./handlers/forwards.ts";
 import { mountCredits } from "./handlers/credits.ts";
+import { mountUpdate } from "./handlers/update.ts";
 import { proxyHttp, tryUpgradeWsProxy, openProxyWs, relayProxyWsMessage, closeProxyWs, type WsProxyData } from "./proxy.ts";
 import { forwardExists, readForward } from "../domain/forwards.ts";
 import { embeddedFiles } from "./embedded.ts";
@@ -68,6 +69,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
   mountSessions(router, dir, poller, forwardManager);
   mountForwards(router, dir, forwardManager);
   mountCredits(router, dir);
+  mountUpdate(router, forwardManager);
 
   // Per-session WebSocket subscriptions: { sessionId → set of ws }
   type SessionWatchData = {

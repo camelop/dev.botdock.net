@@ -55,6 +55,31 @@ export type Status = {
   instance_id: string;
 };
 
+export type UpdateCheckResult = {
+  current: string;
+  latest: string;
+  tag: string;
+  published_at: string;
+  newer_available: boolean;
+  asset_url: string | null;
+  checksums_url: string | null;
+};
+
+export type UpdatePhase =
+  | "idle" | "downloading" | "verifying" | "preflight"
+  | "stopping-forwards" | "swapping" | "restarting" | "done" | "error";
+
+export type UpdateStatus = {
+  phase: UpdatePhase;
+  message?: string;
+  bytes_downloaded?: number;
+  bytes_total?: number;
+  target_tag?: string;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+};
+
 export type CcSessionEntry = {
   uuid: string;
   workdir: string;
@@ -126,6 +151,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   status: () => request<Status>("/api/status"),
+  checkUpdate: () => request<UpdateCheckResult>("/api/update/check"),
+  updateStatus: () => request<UpdateStatus>("/api/update/status"),
+  installUpdate: () =>
+    request<{ accepted: true; target: string }>("/api/update/install", { method: "POST" }),
 
   listKeys: () => request<KeyMeta[]>("/api/keys"),
   getKey: (nickname: string) => request<KeyDetail>(`/api/keys/${encodeURIComponent(nickname)}`),

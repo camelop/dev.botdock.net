@@ -2,6 +2,10 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.3 — 2026-04-22
+
+- In-process self-upgrade: click the topbar status to check GitHub for a newer release and install it in-place (download → SHA256 verify → preflight → `.bak` + hot-swap → `execv` same PID; frontend auto-reloads when the new daemon is up).
+
 ## v0.4.2 — 2026-04-22
 
 - Top-bar logo bumped 24 → 32 px; README gets a header logo.

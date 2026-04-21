@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Status } from "./api";
+import { api, type Status, type UpdateCheckResult, type UpdateStatus } from "./api";
 import { KeysPage } from "./pages/KeysPage";
 import { MachinesPage } from "./pages/MachinesPage";
 import { SecretsPage } from "./pages/SecretsPage";
@@ -207,9 +207,7 @@ export function App() {
           })}
         </div>
         <div className="spacer" />
-        <div className="status">
-          {status ? `${status.home}${status.dev ? " · dev" : ""}` : err ? "offline" : "…"}
-        </div>
+        <StatusBar status={status} err={err} />
       </div>
       <div className={`main ${tab === "hub" ? "main-wide" : ""}`}>
         {err && <div className="error-banner">connection error: {err}</div>}
@@ -273,6 +271,179 @@ function ServerDownOverlay() {
         </div>
         <button onClick={() => window.location.reload()}>↻ Reload page</button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Topbar status line. Click to open the UpdatePopover that checks GitHub
+ * for newer releases and lets the user install them in-place (the daemon
+ * execv's itself, the frontend's instance_id-restart detection reloads
+ * the page automatically).
+ */
+function StatusBar({ status, err }: { status: Status | null; err: string }) {
+  const [open, setOpen] = useState(false);
+  const text = status
+    ? `v${status.version}${status.dev ? " · dev" : ""} · ${status.home}`
+    : err ? "offline" : "…";
+  return (
+    <div style={{ position: "relative" }}>
+      <div
+        className="status"
+        onClick={() => status && setOpen((v) => !v)}
+        style={{ cursor: status ? "pointer" : "default", userSelect: "none" }}
+        title="Click to check for updates"
+      >
+        {text}
+      </div>
+      {open && status && (
+        <UpdatePopover onClose={() => setOpen(false)} currentVersion={status.version} />
+      )}
+    </div>
+  );
+}
+
+function UpdatePopover({ onClose, currentVersion }: { onClose: () => void; currentVersion: string }) {
+  const [check, setCheck] = useState<UpdateCheckResult | null>(null);
+  const [checkErr, setCheckErr] = useState<string>("");
+  const [checking, setChecking] = useState(true);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<UpdateStatus | null>(null);
+
+  // Close on outside click / Escape.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("mousedown", onDocClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  // Auto-run a check on open.
+  useEffect(() => {
+    let cancelled = false;
+    api.checkUpdate().then((r) => {
+      if (!cancelled) { setCheck(r); setCheckErr(""); }
+    }).catch((e) => {
+      if (!cancelled) setCheckErr(String((e as Error)?.message ?? e));
+    }).finally(() => { if (!cancelled) setChecking(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Poll status while installing so the user sees phase transitions.
+  useEffect(() => {
+    if (!installing) return;
+    const tick = () => api.updateStatus().then(setProgress).catch(() => {});
+    tick();
+    const h = window.setInterval(tick, 700);
+    return () => window.clearInterval(h);
+  }, [installing]);
+
+  const install = async () => {
+    setInstalling(true);
+    try { await api.installUpdate(); }
+    catch (e) {
+      setInstalling(false);
+      setCheckErr(String((e as Error)?.message ?? e));
+    }
+    // Once the daemon execv's, App's /api/status poll will see a new
+    // instance_id and do a hard reload — no action needed here.
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      style={{
+        position: "absolute",
+        top: "calc(100% + 8px)",
+        right: 0,
+        minWidth: 300,
+        background: "var(--bg-elev)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: 14,
+        boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
+        zIndex: 100,
+      }}
+    >
+      <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 600 }}>BotDock updates</div>
+      <div className="mono muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        current: v{currentVersion}
+      </div>
+
+      {checking && <div className="muted" style={{ fontSize: 12 }}>Checking GitHub…</div>}
+      {!checking && checkErr && (
+        <div className="error-banner" style={{ fontSize: 11 }}>{checkErr}</div>
+      )}
+
+      {!checking && check && !check.newer_available && !installing && (
+        <div className="muted" style={{ fontSize: 12 }}>
+          You're on the latest release.
+          <div className="mono" style={{ fontSize: 11, marginTop: 4 }}>
+            latest: {check.tag}
+          </div>
+        </div>
+      )}
+
+      {!checking && check && check.newer_available && !installing && (
+        <>
+          <div style={{ fontSize: 12, marginBottom: 4 }}>
+            <span className="pill warn" style={{ fontSize: 10 }}>update available</span>
+            {" "}
+            <span className="mono">{check.tag}</span>
+          </div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            BotDock will download, verify (SHA256), keep your old binary as
+            <span className="mono">{" "}botdock.bak</span>, and hot-swap into the
+            new version — the page will auto-reload when the new daemon is up.
+          </div>
+          <button onClick={install}>Install {check.tag}</button>
+        </>
+      )}
+
+      {installing && <InstallProgress status={progress} />}
+    </div>
+  );
+}
+
+function InstallProgress({ status }: { status: UpdateStatus | null }) {
+  const p = status?.phase ?? "downloading";
+  const label =
+    p === "downloading" ? "Downloading…" :
+    p === "verifying" ? "Verifying SHA256…" :
+    p === "preflight" ? "Preflighting new binary…" :
+    p === "stopping-forwards" ? "Stopping port forwards…" :
+    p === "swapping" ? "Swapping binary…" :
+    p === "restarting" ? "Restarting daemon (page will reload)…" :
+    p === "error" ? "Install failed" :
+    "Done";
+  const dl = status?.bytes_downloaded ?? 0;
+  const tot = status?.bytes_total ?? 0;
+  const pct = tot > 0 ? Math.min(100, Math.round(dl / tot * 100)) : 0;
+  return (
+    <div>
+      <div style={{ fontSize: 12, marginBottom: 6 }}>{label}</div>
+      {p === "downloading" && tot > 0 && (
+        <div style={{
+          width: "100%", height: 6, background: "var(--bg-card)",
+          border: "1px solid var(--border)", borderRadius: 3, overflow: "hidden",
+        }}>
+          <div style={{
+            width: `${pct}%`, height: "100%", background: "var(--accent)",
+            transition: "width 200ms ease",
+          }} />
+        </div>
+      )}
+      {p === "error" && status?.error && (
+        <div className="error-banner" style={{ marginTop: 6, fontSize: 11 }}>{status.error}</div>
+      )}
     </div>
   );
 }
