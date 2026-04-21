@@ -1484,15 +1484,24 @@ function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }:
  * Modal for setting a session's alias + accent color. Writes to the server
  * and calls onSaved with the updated Session so the parent can refresh.
  */
-function SessionConfigDialog({ session, onClose, onSaved }: {
+export function SessionConfigDialog({ session, onClose, onSaved }: {
   session: Session;
   onClose: () => void;
   onSaved: (s: Session) => void;
 }) {
   const [alias, setAliasText] = useState(session.alias ?? "");
   const [color, setColor] = useState(session.alias_color || "none");
+  const [tags, setTags] = useState<string[]>(session.tags ?? []);
+  const [tagDraft, setTagDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  const addTag = (raw: string) => {
+    const n = raw.trim().toLowerCase().slice(0, 32);
+    if (!n || tags.includes(n) || tags.length >= 16) return;
+    setTags((t) => [...t, n]);
+  };
+  const removeTag = (t: string) => setTags((cur) => cur.filter((x) => x !== t));
 
   const save = async () => {
     setSaving(true); setErr("");
@@ -1500,6 +1509,7 @@ function SessionConfigDialog({ session, onClose, onSaved }: {
       const next = await api.updateSessionMeta(session.id, {
         alias: alias.trim(),
         alias_color: color === "none" ? "" : color,
+        tags,
       });
       onSaved(next);
       onClose();
@@ -1568,6 +1578,57 @@ function SessionConfigDialog({ session, onClose, onSaved }: {
               </button>
             );
           })}
+        </div>
+        <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
+          Tags <span style={{ opacity: 0.7 }}>(session appears once per tag in the Workspace sidebar)</span>
+        </div>
+        <div
+          className="row"
+          style={{
+            flexWrap: "wrap", gap: 4, marginBottom: 8,
+            minHeight: 28,
+            padding: 4,
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            background: "var(--bg-card)",
+          }}
+        >
+          {tags.map((t) => (
+            <span
+              key={t}
+              className="pill mono"
+              style={{ fontSize: 11, padding: "2px 6px", display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              {t}
+              <button
+                type="button"
+                onClick={() => removeTag(t)}
+                title="Remove tag"
+                style={{
+                  padding: 0, fontSize: 11, lineHeight: 1,
+                  background: "transparent", color: "inherit",
+                  border: "none", cursor: "pointer", opacity: 0.7,
+                }}
+              >×</button>
+            </span>
+          ))}
+          <input
+            value={tagDraft}
+            onChange={(e) => setTagDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === ",") {
+                e.preventDefault();
+                if (tagDraft.trim()) { addTag(tagDraft); setTagDraft(""); }
+              } else if (e.key === "Backspace" && !tagDraft && tags.length > 0) {
+                removeTag(tags[tags.length - 1]!);
+              }
+            }}
+            placeholder={tags.length === 0 ? "type a tag + Enter" : ""}
+            style={{
+              flex: 1, minWidth: 80, padding: "2px 4px",
+              background: "transparent", border: "none", fontSize: 12,
+            }}
+          />
         </div>
         {err && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
         <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>

@@ -81,17 +81,36 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
   // don't accidentally let the client rewrite status/offsets via PATCH.
   router.post("/api/sessions/:id/meta", async ({ req, params }) => {
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
-    const body = await parseJsonBody<{ alias?: string | null; alias_color?: string | null }>(req);
-    const patch: { alias?: string; alias_color?: string } = {};
+    const body = await parseJsonBody<{
+      alias?: string | null;
+      alias_color?: string | null;
+      tags?: string[] | null;
+    }>(req);
+    const patch: { alias?: string; alias_color?: string; tags?: string[] } = {};
     if (body.alias !== undefined) {
       const trimmed = typeof body.alias === "string" ? body.alias.trim() : "";
       if (trimmed) patch.alias = trimmed.slice(0, 64);
-      else         patch.alias = "";  // store empty → treated as cleared by reader
+      else         patch.alias = "";
     }
     if (body.alias_color !== undefined) {
       const c = typeof body.alias_color === "string" ? body.alias_color.trim() : "";
       if (c) patch.alias_color = c.slice(0, 32);
       else   patch.alias_color = "";
+    }
+    if (body.tags !== undefined) {
+      // Normalize: trim, lowercase, dedupe, drop empties, cap per-tag + total.
+      const raw = Array.isArray(body.tags) ? body.tags : [];
+      const seen = new Set<string>();
+      const cleaned: string[] = [];
+      for (const t of raw) {
+        if (typeof t !== "string") continue;
+        const n = t.trim().toLowerCase().slice(0, 32);
+        if (!n || seen.has(n)) continue;
+        seen.add(n);
+        cleaned.push(n);
+        if (cleaned.length >= 16) break;
+      }
+      patch.tags = cleaned;
     }
     const next = updateSession(dir, params.id!, patch);
     return json(next);

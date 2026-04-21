@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Session } from "../api";
-import { SessionView } from "./SessionsPage";
+import { SessionView, SessionConfigDialog } from "./SessionsPage";
 import { AgentAvatar } from "./WarRoomPage";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
 import { relativeTime, fullTime } from "../lib/time";
@@ -73,36 +73,59 @@ export function SessionHubPage() {
   }, [sessions]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const grouped = useMemo(() => {
-    const pending: Session[] = [];
-    const running: Session[] = [];
-    const other:   Session[] = [];
-    for (const s of sessions) {
-      if (s.status === "active"
-          && s.agent_kind === "claude-code"
-          && s.activity === "pending"
-          && !isAcked(s.id, s.last_transcript_at)) {
-        pending.push(s);
-      } else if (s.status === "active" || s.status === "provisioning") {
-        running.push(s);
-      } else {
-        other.push(s);
-      }
-    }
-    // Sort by newest agent activity first — last_transcript_at is the
-    // strongest signal of "this session just did something". Fall back
-    // to started_at / created_at for sessions that haven't produced any
-    // transcript yet (generic-cmd, or a CC session still booting).
     const cmp = (a: Session, b: Session) => {
       const ta = a.last_transcript_at ?? a.started_at ?? a.created_at;
       const tb = b.last_transcript_at ?? b.started_at ?? b.created_at;
       return tb.localeCompare(ta);
     };
-    pending.sort(cmp); running.sort(cmp); other.sort(cmp);
-    return { pending, running, other };
+
+    const needsAttention: Session[] = [];   // overlay — duplicates OK
+    const active: Session[] = [];           // active + no tags
+    const tagMap = new Map<string, Session[]>();  // tag → sessions
+    const other: Session[] = [];
+
+    for (const s of sessions) {
+      const isLive = s.status === "active" || s.status === "provisioning";
+      const isPendingUnacked = s.status === "active"
+        && s.agent_kind === "claude-code"
+        && s.activity === "pending"
+        && !isAcked(s.id, s.last_transcript_at);
+
+      if (isPendingUnacked) needsAttention.push(s);
+
+      // A session with tags shows up in EACH tag group (and NOT in the
+      // catch-all "Active / Other"). Needs attention is an overlay on top
+      // of that — it duplicates the pending session's appearance so the
+      // user can see it both under a tag and in the attention group.
+      const tags = (s.tags ?? []).filter((t) => t.length > 0);
+      if (tags.length > 0) {
+        for (const t of tags) {
+          const bucket = tagMap.get(t) ?? [];
+          bucket.push(s);
+          tagMap.set(t, bucket);
+        }
+      } else if (isLive) {
+        active.push(s);
+      } else {
+        other.push(s);
+      }
+    }
+
+    needsAttention.sort(cmp);
+    active.sort(cmp);
+    other.sort(cmp);
+    const tagGroups: Array<{ tag: string; sessions: Session[] }> = Array.from(tagMap.entries())
+      .map(([tag, list]) => ({ tag, sessions: list.slice().sort(cmp) }))
+      .sort((a, b) => a.tag.localeCompare(b.tag));
+
+    return { needsAttention, active, tagGroups, other };
   }, [sessions, tick]);
 
   const onAck = (s: Session) => { ackSession(s.id, s.last_transcript_at); setTick((v) => v + 1); };
   const onUnack = (s: Session) => { unackSession(s.id); setTick((v) => v + 1); };
+  // Merge a just-saved session back into state so the sidebar reflects the
+  // alias / color / tag edit immediately without waiting for the 3s poll.
+  const onSaved = (next: Session) => setSessions((cur) => cur.map((s) => s.id === next.id ? next : s));
 
 
   return (
@@ -124,6 +147,7 @@ export function SessionHubPage() {
         onSelect={(id) => setSelected(id)}
         onAck={onAck}
         onUnack={onUnack}
+        onSaved={onSaved}
       />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         {err && (
@@ -163,10 +187,16 @@ type SidebarCommonProps = {
   onSelect: (id: string) => void;
   onAck: (s: Session) => void;
   onUnack: (s: Session) => void;
+  onSaved: (s: Session) => void;
 };
 
 function SessionSidebar(props: SidebarCommonProps & {
-  grouped: { pending: Session[]; running: Session[]; other: Session[] };
+  grouped: {
+    needsAttention: Session[];
+    active: Session[];
+    tagGroups: Array<{ tag: string; sessions: Session[] }>;
+    other: Session[];
+  };
 }) {
   const { grouped, ...rest } = props;
   return (
@@ -181,8 +211,11 @@ function SessionSidebar(props: SidebarCommonProps & {
         flexDirection: "column",
       }}
     >
-      <Group title="Needs attention" sessions={grouped.pending} {...rest} />
-      <Group title="Active" sessions={grouped.running} {...rest} />
+      <Group title="Needs attention" sessions={grouped.needsAttention} {...rest} />
+      {grouped.tagGroups.map((g) => (
+        <Group key={g.tag} title={`# ${g.tag}`} sessions={g.sessions} {...rest} />
+      ))}
+      <Group title="Active" sessions={grouped.active} {...rest} />
       <Group title="Other" sessions={grouped.other} {...rest} collapsedByDefault />
     </div>
   );
@@ -220,14 +253,15 @@ function Group(props: SidebarCommonProps & {
   return (
     <div>
       {header}
-      {!collapsed && props.sessions.map((s) => (
+      {!collapsed && props.sessions.map((s, i) => (
         <SidebarRow
-          key={s.id}
+          key={`${s.id}:${i}`}
           session={s}
           selected={props.selectedId === s.id}
           onClick={() => props.onSelect(s.id)}
           onAck={() => props.onAck(s)}
           onUnack={() => props.onUnack(s)}
+          onSaved={props.onSaved}
         />
       ))}
     </div>
@@ -240,62 +274,84 @@ function SidebarRow(props: {
   onClick: () => void;
   onAck: () => void;
   onUnack: () => void;
+  onSaved: (s: Session) => void;
 }) {
   const { session: s, selected } = props;
   const isPending = s.status === "active" && s.agent_kind === "claude-code" && s.activity === "pending";
   const acked = isPending && isAcked(s.id, s.last_transcript_at);
   const color = aliasColor(s.alias_color);
   const hasColor = !!color && color.name !== "none";
-  const borderAccent = color?.accent ?? (selected ? "var(--accent)" : "transparent");
+  // Selection highlight: strong accent stripe + a subtle inset ring so the
+  // row visibly stands out even when the user's eye is on another group
+  // (a tagged session selected in one group should still be obviously
+  // active in every other group it appears in).
+  const [editing, setEditing] = useState(false);
+  const selectionBg = selected ? "rgba(106,164,255,0.12)" : "transparent";
+  const selectionBorder = color?.accent ?? "var(--accent)";
 
   return (
-    <div
-      onClick={props.onClick}
-      style={{
-        display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 12px",
-        cursor: "pointer",
-        background: selected ? "var(--bg-card)" : "transparent",
-        borderLeft: `3px solid ${selected || hasColor ? borderAccent : "transparent"}`,
-      }}
-    >
-      <AgentAvatar session={s} size={32} acked={acked} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontWeight: selected ? 600 : 500,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          <SessionNameChip session={s} fallback={shortCmd(s)} size={13} />
+    <>
+      <div
+        onClick={props.onClick}
+        onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title={`${s.id}${s.cmd ? " — " + s.cmd : ""}\n(double-click for config)`}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "8px 12px",
+          cursor: "pointer",
+          background: selected ? selectionBg : "transparent",
+          borderLeft: selected
+            ? `4px solid ${selectionBorder}`
+            : `3px solid ${hasColor ? (color!.accent) : "transparent"}`,
+          boxShadow: selected ? `inset 0 0 0 1px ${selectionBorder}` : undefined,
+          fontWeight: selected ? 600 : undefined,
+        }}
+      >
+        <AgentAvatar session={s} size={32} acked={acked} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: selected ? 600 : 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            <SessionNameChip session={s} fallback={shortCmd(s)} size={13} />
+          </div>
+          <div
+            className="muted mono"
+            style={{ fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+            title={fullTime(s.last_transcript_at ?? s.started_at ?? s.created_at)}
+          >
+            {s.machine} · {relativeTime(s.last_transcript_at ?? s.started_at ?? s.created_at)}
+          </div>
         </div>
-        <div
-          className="muted mono"
-          style={{ fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-          title={fullTime(s.last_transcript_at ?? s.started_at ?? s.created_at)}
-        >
-          {s.machine} · {relativeTime(s.last_transcript_at ?? s.started_at ?? s.created_at)}
-        </div>
+        {isPending && !acked && (
+          <button
+            className="secondary"
+            onClick={(e) => { e.stopPropagation(); props.onAck(); }}
+            style={{ padding: "2px 6px", fontSize: 10 }}
+            title="Acknowledge — demote from the needs-attention group"
+          >Ack</button>
+        )}
+        {isPending && acked && (
+          <button
+            className="secondary"
+            onClick={(e) => { e.stopPropagation(); props.onUnack(); }}
+            style={{ padding: "2px 6px", fontSize: 10, opacity: 0.6 }}
+            title="Un-acknowledge"
+          >✓</button>
+        )}
       </div>
-      {isPending && !acked && (
-        <button
-          className="secondary"
-          onClick={(e) => { e.stopPropagation(); props.onAck(); }}
-          style={{ padding: "2px 6px", fontSize: 10 }}
-          title="Acknowledge — demote from the needs-attention group"
-        >Ack</button>
+      {editing && (
+        <SessionConfigDialog
+          session={s}
+          onClose={() => setEditing(false)}
+          onSaved={(next) => { props.onSaved(next); setEditing(false); }}
+        />
       )}
-      {isPending && acked && (
-        <button
-          className="secondary"
-          onClick={(e) => { e.stopPropagation(); props.onUnack(); }}
-          style={{ padding: "2px 6px", fontSize: 10, opacity: 0.6 }}
-          title="Un-acknowledge"
-        >✓</button>
-      )}
-    </div>
+    </>
   );
 }
 

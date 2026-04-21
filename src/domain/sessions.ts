@@ -61,6 +61,10 @@ export type Session = {
   /** User-chosen accent color name for the session's sidebar row / avatar
    * frame. One of the keys in ALIAS_COLORS (see lib/alias-colors.ts). */
   alias_color?: string;
+  /** User-chosen tags. A session with N tags is shown N times in the
+   * Workspace sidebar (once under each tag group); selection is keyed on
+   * session id so every appearance highlights together. */
+  tags?: string[];
 };
 
 export type SessionEvent = {

@@ -4,6 +4,23 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Session tags for the Workspace sidebar.** Configure any number of
+  tags per session (Config dialog → Tags row, Enter to add). The
+  sidebar grows one group per distinct tag; a session with multiple
+  tags is rendered once per tag so it's visible from any of its
+  perspectives. Active sessions without tags stay in the classic
+  "Active" group; Needs attention is now an overlay that duplicates
+  pending-unacked rows so they always surface at the top of the
+  sidebar regardless of tags. Selecting a session highlights every
+  appearance of it, across all groups it's in.
+- **Stronger selection highlight.** The selected sidebar row now has a
+  thicker 4px accent border, a tinted background, and an inset ring —
+  much easier to spot when the same session is repeated under multiple
+  groups.
+- **Double-click config is back.** In addition to the Config button in
+  the session header, double-clicking a sidebar row opens the same
+  config dialog directly on that session.
+
 - **Aliases + colors apply globally.** Dashboard Recent, Sessions List,
   Card view (both the pending-strip and the grid cards), Workspace
   sidebar, and the session modal title now all render the session name
