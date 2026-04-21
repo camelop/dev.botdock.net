@@ -37,6 +37,11 @@ export type Session = {
   /** For claude-code: the remote port ttyd is listening on (useful for
    * debugging; not used by the proxy directly). */
   terminal_remote_port?: number;
+  /** Local port the daemon forwards to this session's filebrowser.
+   * Only populated while filebrowser is running for this session. */
+  filebrowser_local_port?: number;
+  /** The port filebrowser is listening on, on the remote machine. */
+  filebrowser_remote_port?: number;
   /** Byte offset into the remote CC jsonl we've already mirrored locally. */
   remote_transcript_offset?: number;
   /** Last observed size of the remote CC jsonl. When offset < size, the
@@ -204,7 +209,15 @@ export function listSessions(dir: DataDir): Session[] {
 
 export function updateSession(dir: DataDir, id: string, patch: Partial<Session>): Session {
   const s = readSession(dir, id);
-  const next = { ...s, ...patch };
+  const next = { ...s, ...patch } as Session;
+  // Drop undefined keys explicitly — callers use `undefined` in the patch
+  // as "clear this field" (e.g. teardown wiping filebrowser_*_port).
+  // Passing them to writeToml would emit broken TOML.
+  for (const k of Object.keys(next) as (keyof Session)[]) {
+    if ((next as Record<string, unknown>)[k as string] === undefined) {
+      delete (next as Record<string, unknown>)[k as string];
+    }
+  }
   writeSession(dir, next);
   return next;
 }

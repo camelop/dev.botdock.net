@@ -4,6 +4,19 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Per-session file browser.** New button in the session action bar
+  (right of Keyboard). Idle → "📁 File Browser" to start. Running →
+  "📁 Open ↗" (new tab) + "Stop". On Start, BotDock downloads the
+  filebrowser static binary (github.com/filebrowser/filebrowser) to
+  `~/.botdock/bin/` if missing, bootstraps a per-session SQLite/Bolt
+  DB at `<workdir>/.botdock/session/filebrowser.db` with noauth + a
+  single admin user, launches it inside a supervisor tmux named
+  `botdock-fb-<sid>`, and sets up an SSH forward to a local port in
+  48000-48999. The daemon reverse-proxies `/api/sessions/:id/files/*`
+  (including WS upgrades for the command runner) to that forward.
+  Stop kills the supervisor + drops the forward. Teardown also runs
+  on session delete.
+
 - **Advanced options in the New Session modal.** New collapsed section
   (claude-code only) for overrides that default to the current behavior:
   - **Launch command** — empty defaults to `claude`; set to e.g.

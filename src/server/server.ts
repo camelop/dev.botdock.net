@@ -93,6 +93,12 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
     return readForward(dir, fname).local_port;
   }
 
+  function sessionFilebrowserForwardPort(sessionId: string): number | null {
+    const fname = `session-${sessionId}-filebrowser`;
+    if (!forwardExists(dir, fname)) return null;
+    return readForward(dir, fname).local_port;
+  }
+
   /**
    * Lookup for the generic /api/forwards/:name/proxy/* route. Returns the
    * local port if the named forward exists, is direction=local, and is
@@ -274,6 +280,27 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
           );
         }
         const upstreamPath = `/api/sessions/${encodeURIComponent(sessionId)}/terminal${remainingPath === "/" ? "" : remainingPath}`;
+        const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
+        if (wsResp) return wsResp;
+        return proxyHttp(req, port, upstreamPath);
+      }
+
+      // Reverse proxy for per-session filebrowser. filebrowser serves its
+      // SPA + API under the configured --baseURL (matching our path), so we
+      // don't need to strip the prefix — just forward verbatim. WS upgrades
+      // are forwarded for the (currently rarely used) command runner.
+      const sessFbMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/files(\/.*)?$/);
+      if (sessFbMatch) {
+        const sessionId = decodeURIComponent(sessFbMatch[1]!);
+        const remainingPath = sessFbMatch[2] ?? "/";
+        const port = sessionFilebrowserForwardPort(sessionId);
+        if (port === null) {
+          return new Response(
+            `Filebrowser isn't running for session "${sessionId}". Start it from the session's action bar.`,
+            { status: 503, headers: { "content-type": "text/plain" } },
+          );
+        }
+        const upstreamPath = `/api/sessions/${encodeURIComponent(sessionId)}/files${remainingPath === "/" ? "" : remainingPath}`;
         const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
         if (wsResp) return wsResp;
         return proxyHttp(req, port, upstreamPath);

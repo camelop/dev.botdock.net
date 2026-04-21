@@ -84,6 +84,8 @@ export type Session = {
   cc_session_uuid?: string;
   terminal_local_port?: number;
   terminal_remote_port?: number;
+  filebrowser_local_port?: number;
+  filebrowser_remote_port?: number;
   remote_transcript_offset?: number;
   remote_transcript_size?: number;
   last_raw_at?: string;
@@ -200,6 +202,14 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  startSessionFilebrowser: (id: string) =>
+    request<{ ok: true; url: string; local_port: number; remote_port: number }>(
+      `/api/sessions/${encodeURIComponent(id)}/filebrowser/start`, { method: "POST" },
+    ),
+  stopSessionFilebrowser: (id: string) =>
+    request<{ ok: true }>(
+      `/api/sessions/${encodeURIComponent(id)}/filebrowser/stop`, { method: "POST" },
+    ),
   getSessionTranscriptPage: (id: string, page: number, size = 20) =>
     request<{
       line_count: number;

@@ -8,7 +8,10 @@ import {
 } from "./sessions.ts";
 import { sshExec } from "../lib/remote.ts";
 import { provisioningScript, buildCmdB64 } from "../lib/shim.ts";
-import { startSessionTerminal, sessionTerminalBasePath, stopSessionTerminal } from "../lib/remote-install.ts";
+import {
+  startSessionTerminal, sessionTerminalBasePath, stopSessionTerminal,
+  startSessionFilebrowser, sessionFilebrowserBasePath, stopSessionFilebrowser,
+} from "../lib/remote-install.ts";
 import { findFreeLocalPort } from "../lib/free-port.ts";
 import {
   deleteForward,
@@ -161,6 +164,87 @@ export async function teardownSessionTerminal(
     const machine = readMachine(dir, s.machine);
     stopSessionTerminal(dir, machine, id);
   } catch { /* best effort */ }
+}
+
+/**
+ * Spawn a per-session filebrowser bound to the session's workdir, bind a
+ * local forward, and record the ports on the session. Opt-in: only runs
+ * when the UI explicitly calls the start endpoint. Returns an error
+ * message on failure so the API can surface it (we don't swallow like
+ * the terminal helper does because the button is an explicit action).
+ */
+export async function setupSessionFilebrowser(
+  dir: DataDir,
+  manager: ForwardManager,
+  id: string,
+): Promise<{ local_port: number; remote_port: number; base_path: string }> {
+  const s = readSession(dir, id);
+  const machine = readMachine(dir, s.machine);
+  const basePath = sessionFilebrowserBasePath(id);
+  const res = startSessionFilebrowser(dir, machine, {
+    sessionId: id,
+    workdir: s.workdir,
+    basePath,
+  });
+  // If we already had a forward for this session (start → stop → start),
+  // wipe it clean so we don't leak an old local port.
+  const fname = `session-${id}-filebrowser`;
+  if (forwardExists(dir, fname)) {
+    manager.stop(fname);
+    manager.forget(fname);
+    deleteForward(dir, fname);
+  }
+  const localPort = await findFreeLocalPort(48000, 48999);
+  const forward: Forward = {
+    name: fname,
+    machine: s.machine,
+    direction: "local",
+    local_port: localPort,
+    remote_host: "127.0.0.1",
+    remote_port: res.remote_port,
+    auto_start: false,
+    managed_by: "system:session-filebrowser",
+    description: `Managed filebrowser for session ${id}`,
+  };
+  writeForward(dir, forward);
+  await manager.start(fname);
+  updateSession(dir, id, {
+    filebrowser_local_port: localPort,
+    filebrowser_remote_port: res.remote_port,
+  });
+  appendEvent(dir, id, {
+    ts: new Date().toISOString(),
+    kind: "error",
+    message: `filebrowser ready at ${basePath}/`,
+  });
+  return { local_port: localPort, remote_port: res.remote_port, base_path: basePath };
+}
+
+export async function teardownSessionFilebrowser(
+  dir: DataDir,
+  manager: ForwardManager,
+  id: string,
+): Promise<void> {
+  const s = readSession(dir, id);
+  const fname = `session-${id}-filebrowser`;
+  if (forwardExists(dir, fname)) {
+    manager.stop(fname);
+    manager.forget(fname);
+    deleteForward(dir, fname);
+  }
+  try {
+    const machine = readMachine(dir, s.machine);
+    stopSessionFilebrowser(dir, machine, id);
+  } catch { /* best effort */ }
+  updateSession(dir, id, {
+    filebrowser_local_port: undefined,
+    filebrowser_remote_port: undefined,
+  });
+  appendEvent(dir, id, {
+    ts: new Date().toISOString(),
+    kind: "error",
+    message: `filebrowser stopped`,
+  });
 }
 
 /**

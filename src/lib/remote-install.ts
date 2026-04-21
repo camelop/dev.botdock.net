@@ -35,6 +35,7 @@ export function detectPlatform(dir: DataDir, machine: Machine): RemotePlatform {
 
 export type InstalledState = {
   ttyd?: { path: string; version?: string; installed_at: string };
+  filebrowser?: { path: string; version?: string; installed_at: string };
   tmux_available: boolean;
   claude_available: boolean;
 };
@@ -46,10 +47,16 @@ MARKER="$HOME/.botdock/installed.toml"
 TTYD_PATH=""
 TTYD_VERSION=""
 TTYD_INSTALLED_AT=""
+FB_PATH=""
+FB_VERSION=""
+FB_INSTALLED_AT=""
 if [ -f "$MARKER" ]; then
   TTYD_PATH=$(awk -F ' = ' '/^ttyd_path/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
   TTYD_VERSION=$(awk -F ' = ' '/^ttyd_version/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
   TTYD_INSTALLED_AT=$(awk -F ' = ' '/^ttyd_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  FB_PATH=$(awk -F ' = ' '/^filebrowser_path/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  FB_VERSION=$(awk -F ' = ' '/^filebrowser_version/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  FB_INSTALLED_AT=$(awk -F ' = ' '/^filebrowser_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
 fi
 
 # Look up each tool. which searches PATH; whereis looks in standard system
@@ -61,10 +68,14 @@ find_bin() {
 TTYD_BIN=$(find_bin ttyd)
 TMUX_BIN=$(find_bin tmux)
 CLAUDE_BIN=$(find_bin claude)
+FB_BIN=$(find_bin filebrowser)
 
 printf 'TTYD_PATH=%s\n'          "\${TTYD_PATH:-$TTYD_BIN}"
 printf 'TTYD_VERSION=%s\n'       "$TTYD_VERSION"
 printf 'TTYD_INSTALLED_AT=%s\n'  "$TTYD_INSTALLED_AT"
+printf 'FB_PATH=%s\n'            "\${FB_PATH:-$FB_BIN}"
+printf 'FB_VERSION=%s\n'         "$FB_VERSION"
+printf 'FB_INSTALLED_AT=%s\n'    "$FB_INSTALLED_AT"
 printf 'TMUX_BIN=%s\n'           "$TMUX_BIN"
 printf 'TMUX_AVAILABLE=%s\n'     "$([ -n "$TMUX_BIN" ] && echo 1 || echo 0)"
 printf 'CLAUDE_BIN=%s\n'         "$CLAUDE_BIN"
@@ -90,6 +101,14 @@ printf 'CLAUDE_AVAILABLE=%s\n'   "$([ -n "$CLAUDE_BIN" ] && echo 1 || echo 0)"
       path: ttydPath,
       version: lines.TTYD_VERSION?.trim() || undefined,
       installed_at: lines.TTYD_INSTALLED_AT?.trim() || "",
+    };
+  }
+  const fbPath = (lines.FB_PATH ?? "").trim();
+  if (fbPath) {
+    state.filebrowser = {
+      path: fbPath,
+      version: lines.FB_VERSION?.trim() || undefined,
+      installed_at: lines.FB_INSTALLED_AT?.trim() || "",
     };
   }
   return state;
@@ -444,6 +463,204 @@ export function stopSessionTerminal(
 
 export function sessionTerminalBasePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/terminal`;
+}
+
+// --- filebrowser -----------------------------------------------------------
+
+const FILEBROWSER_VERSION = "2.63.2";
+
+function filebrowserAssetFor(platform: RemotePlatform): string | null {
+  const arch = platform.arch === "x86_64"  ? "amd64"
+             : platform.arch === "aarch64" ? "arm64"
+             : null;
+  if (!arch) return null;
+  if (platform.os === "linux")  return `linux-${arch}-filebrowser.tar.gz`;
+  if (platform.os === "darwin") return `darwin-${arch}-filebrowser.tar.gz`;
+  return null;
+}
+
+/**
+ * Download filebrowser into ~/.botdock/bin/filebrowser. Preserves the
+ * existing ttyd fields in the marker file so neither install blows the
+ * other one's record away.
+ */
+export function installFilebrowser(dir: DataDir, machine: Machine): InstalledState {
+  const platform = detectPlatform(dir, machine);
+  const asset = filebrowserAssetFor(platform);
+  if (!asset) {
+    throw new Error(
+      `no prebuilt filebrowser for ${platform.raw_os}/${platform.raw_arch}.`,
+    );
+  }
+  const url = `https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/${asset}`;
+  const nowIso = new Date().toISOString();
+  const script = `
+set -euo pipefail
+mkdir -p "$HOME/.botdock/bin"
+TMPDIR_FB=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_FB"' EXIT
+
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "$TMPDIR_FB/fb.tgz" ${shQ(url)}
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$TMPDIR_FB/fb.tgz" ${shQ(url)}
+else
+  echo "neither curl nor wget available on remote" >&2; exit 127
+fi
+tar -C "$TMPDIR_FB" -xzf "$TMPDIR_FB/fb.tgz"
+[ -f "$TMPDIR_FB/filebrowser" ] || { echo "tarball did not contain filebrowser binary" >&2; exit 1; }
+chmod +x "$TMPDIR_FB/filebrowser"
+mv -f "$TMPDIR_FB/filebrowser" "$HOME/.botdock/bin/filebrowser"
+
+# Preserve any existing ttyd marker fields while writing filebrowser fields.
+MARKER="$HOME/.botdock/installed.toml"
+EXISTING_TTYD_PATH=""
+EXISTING_TTYD_VERSION=""
+EXISTING_TTYD_INSTALLED_AT=""
+if [ -f "$MARKER" ]; then
+  EXISTING_TTYD_PATH=$(awk -F ' = ' '/^ttyd_path/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  EXISTING_TTYD_VERSION=$(awk -F ' = ' '/^ttyd_version/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  EXISTING_TTYD_INSTALLED_AT=$(awk -F ' = ' '/^ttyd_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+fi
+cat > "$MARKER" <<MARKER
+ttyd_path = "$EXISTING_TTYD_PATH"
+ttyd_version = "$EXISTING_TTYD_VERSION"
+ttyd_installed_at = "$EXISTING_TTYD_INSTALLED_AT"
+filebrowser_path = "$HOME/.botdock/bin/filebrowser"
+filebrowser_version = "${FILEBROWSER_VERSION}"
+filebrowser_installed_at = "${nowIso}"
+MARKER
+echo "BOTDOCK_FB_INSTALLED"
+`;
+  const r = sshExec(dir, machine, "bash -s", script, 120_000, { noControlMaster: true });
+  if (r.code !== 0 || !r.stdout.includes("BOTDOCK_FB_INSTALLED")) {
+    throw new Error(`filebrowser install failed: ${r.stderr.trim() || r.stdout.trim()}`);
+  }
+  return readInstalledState(dir, machine);
+}
+
+export function ensureFilebrowser(dir: DataDir, machine: Machine): InstalledState {
+  const state = readInstalledState(dir, machine);
+  if (state.filebrowser?.path) return state;
+  return installFilebrowser(dir, machine);
+}
+
+/**
+ * Spawn a per-session filebrowser bound to the session's workdir, listening
+ * on 127.0.0.1 on the remote. BotDock's `forward-manager` pairs it with an
+ * ssh -L so the local side can reverse-proxy into it.
+ *
+ * Supervision: like ttyd, the binary runs inside a dedicated tmux session
+ * named `botdock-fb-<sid>`. Auth method is "noauth" so the UI goes straight
+ * to the file listing. The DB lives inside the session's `.botdock/`
+ * directory so it's cleaned when the session is deleted.
+ */
+export function startSessionFilebrowser(
+  dir: DataDir,
+  machine: Machine,
+  opts: { sessionId: string; workdir: string; basePath: string },
+): { remote_port: number; installed: InstalledState } {
+  let installed = ensureTmux(dir, machine);
+  installed = ensureFilebrowser(dir, machine);
+  if (!installed.tmux_available) {
+    throw new Error("tmux still not available after install attempt.");
+  }
+  const supervisorSession = `botdock-fb-${opts.sessionId}`;
+  const script = `
+set -euo pipefail
+SUPER=${shQ(supervisorSession)}
+FB=${shQ(installed.filebrowser!.path)}
+BASE_PATH=${shQ(opts.basePath)}
+WORKDIR=${shQ(opts.workdir)}
+
+case "$WORKDIR" in
+  "~")   WORKDIR="$HOME" ;;
+  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+mkdir -p "$WORKDIR/.botdock/session"
+DB="$WORKDIR/.botdock/session/filebrowser.db"
+
+# Reuse an already-running supervisor if it's still up for this session —
+# idempotent Start call from the UI should be cheap.
+if tmux has-session -t "$SUPER" 2>/dev/null; then
+  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$FB" | grep -F "$DB" | grep -v grep \\
+         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
+  if [ -n "$PORT" ]; then
+    echo "BOTDOCK_SESSION_FB_ALREADY_RUNNING port=$PORT"
+    exit 0
+  fi
+  tmux kill-session -t "$SUPER" 2>/dev/null || true
+fi
+
+# Initialize the DB the first time we see this session. noauth + a single
+# admin user whose password is never used (strength check only). The perms
+# default to full read/write — BotDock is a single-user local tool, so
+# locking this down further is not worthwhile.
+if [ ! -s "$DB" ]; then
+  "$FB" config init -d "$DB" --auth.method=noauth -b "$BASE_PATH" --minimumPasswordLength 1 >/dev/null
+  "$FB" users add admin 'Xq9!pr3zA#bL' -d "$DB" --perm.admin --scope . >/dev/null 2>&1 || true
+else
+  # Update baseURL on each start — a restarted BotDock may have different
+  # mount path in dev; writing is cheap and keeps the DB in sync.
+  "$FB" config set -d "$DB" -b "$BASE_PATH" >/dev/null 2>&1 || true
+fi
+
+PORT=""
+for p in $(seq 61000 61999); do
+  if command -v ss >/dev/null 2>&1; then
+    if ! ss -ltn 2>/dev/null | grep -q ":$p "; then PORT=$p; break; fi
+  else
+    if ! (bash -c "exec 3<>/dev/tcp/127.0.0.1/$p" 2>/dev/null); then PORT=$p; break; fi
+  fi
+done
+if [ -z "$PORT" ]; then echo "no free port on remote" >&2; exit 1; fi
+
+tmux new-session -d -s "$SUPER" "$FB -d $DB -a 127.0.0.1 -p $PORT -r $WORKDIR"
+
+ALIVE=0
+for i in 1 2 3 4 5 6 7 8; do
+  sleep 0.5
+  if command -v ss >/dev/null 2>&1; then
+    if ss -ltn 2>/dev/null | grep -q ":$PORT "; then ALIVE=1; break; fi
+  else
+    if (bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT" 2>/dev/null); then ALIVE=1; break; fi
+  fi
+done
+if [ "$ALIVE" != "1" ]; then
+  PANE_OUT=$(tmux capture-pane -p -t "$SUPER" 2>/dev/null || true)
+  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  echo "BOTDOCK_SESSION_FB_FAILED port=$PORT" >&2
+  echo "--- pane output ---" >&2
+  printf '%s\\n' "$PANE_OUT" >&2
+  exit 2
+fi
+
+echo "BOTDOCK_SESSION_FB_STARTED port=$PORT"
+`;
+  const r = sshExec(dir, machine, "bash -s", script, 60_000, { noControlMaster: true });
+  if (r.code !== 0 || !/BOTDOCK_SESSION_FB_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
+    throw new Error(
+      `session-filebrowser start failed: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`,
+    );
+  }
+  const m = /port=(\d+)/.exec(r.stdout);
+  if (!m) throw new Error("could not parse session-filebrowser port from remote output");
+  return { remote_port: Number(m[1]), installed };
+}
+
+export function stopSessionFilebrowser(
+  dir: DataDir,
+  machine: Machine,
+  sessionId: string,
+): void {
+  const supervisor = `botdock-fb-${sessionId}`;
+  sshExec(dir, machine, "bash -s",
+    `tmux kill-session -t ${shQ(supervisor)} 2>/dev/null; echo ok`,
+    10_000);
+}
+
+export function sessionFilebrowserBasePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/files`;
 }
 
 function shQ(s: string): string {

@@ -760,6 +760,11 @@ export function SessionView(props: {
   // a button in the terminal toolbar toggles it.
   const [showInput, setShowInput] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  // Filebrowser lifecycle: null while not-starting, "starting" during the
+  // server round-trip, string url once it's up. Errors surface inline.
+  type FbState = "idle" | "starting" | "stopping";
+  const [fbState, setFbState] = useState<FbState>("idle");
+  const [fbErr, setFbErr] = useState<string>("");
 
   // WebSocket carries events + raw + session-meta deltas. Transcript is
   // NOT streamed anymore — TranscriptView pulls it a page at a time via
@@ -808,6 +813,33 @@ export function SessionView(props: {
       await props.onChange?.();
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
+
+  const onStartFilebrowser = async () => {
+    setFbErr(""); setFbState("starting");
+    try {
+      const r = await api.startSessionFilebrowser(props.id);
+      // Update local session immediately so the UI flips without waiting
+      // for the next WS meta push.
+      setSession((cur) => cur ? { ...cur, filebrowser_local_port: r.local_port, filebrowser_remote_port: r.remote_port } : cur);
+      await props.onChange?.();
+    } catch (e) {
+      setFbErr(String((e as Error)?.message ?? e));
+    } finally {
+      setFbState("idle");
+    }
+  };
+  const onStopFilebrowser = async () => {
+    setFbErr(""); setFbState("stopping");
+    try {
+      await api.stopSessionFilebrowser(props.id);
+      setSession((cur) => cur ? { ...cur, filebrowser_local_port: undefined, filebrowser_remote_port: undefined } : cur);
+      await props.onChange?.();
+    } catch (e) {
+      setFbErr(String((e as Error)?.message ?? e));
+    } finally {
+      setFbState("idle");
+    }
+  };
   const onDelete = async () => {
     if (!confirm("Delete this session (files and all)?")) return;
     try {
@@ -838,6 +870,15 @@ export function SessionView(props: {
                   >
                     {showInput ? "▾ Hide keyboard" : "⌨ Keyboard"}
                   </button>
+                ) : null}
+                fileBrowserControls={session.status === "active" ? (
+                  <FileBrowserControls
+                    session={session}
+                    state={fbState}
+                    err={fbErr}
+                    onStart={onStartFilebrowser}
+                    onStop={onStopFilebrowser}
+                  />
                 ) : null}
                 onOpenInWorkspace={props.inModal ? () => {
                   try { sessionStorage.setItem("botdock:hub-preselect", session.id); } catch {}
@@ -1452,12 +1493,73 @@ function roleBadgeStyle(kind: TranscriptTurn["kind"]): { label: string; bg: stri
   }
 }
 
-function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }: {
+/**
+ * Three-state button group for per-session filebrowser. Idle → Start.
+ * Running → Open (new tab) + Stop. Disabled while the server round-trip
+ * is in flight. Error toasts inline below the button with a small pill.
+ */
+function FileBrowserControls({ session, state, err, onStart, onStop }: {
+  session: Session;
+  state: "idle" | "starting" | "stopping";
+  err: string;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  const iconBtn: React.CSSProperties = {
+    padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
+  };
+  const running = !!session.filebrowser_local_port;
+  const url = `/api/sessions/${encodeURIComponent(session.id)}/files/`;
+  if (!running) {
+    return (
+      <div className="row" style={{ gap: 4, alignItems: "center" }}>
+        <button
+          className="secondary"
+          style={iconBtn}
+          onClick={onStart}
+          disabled={state !== "idle"}
+          title="Spawn filebrowser on the remote scoped to this session's workdir"
+        >📁 {state === "starting" ? "Starting…" : "File Browser"}</button>
+        {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
+      </div>
+    );
+  }
+  return (
+    <div className="row" style={{ gap: 4, alignItems: "center" }}>
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="secondary"
+        style={{
+          ...iconBtn, textDecoration: "none",
+          background: "#323844", color: "var(--fg)",
+          border: "1px solid #3f4754",
+        }}
+        title="Open the filebrowser UI in a new tab"
+      >📁 Open ↗</a>
+      <button
+        className="secondary"
+        style={iconBtn}
+        onClick={onStop}
+        disabled={state !== "idle"}
+        title="Kill the remote filebrowser and drop its SSH forward"
+      >{state === "stopping" ? "Stopping…" : "Stop"}</button>
+      {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
+    </div>
+  );
+}
+
+function ClaudeTerminal({ session, fillParent, inputToggle, fileBrowserControls, onOpenInWorkspace }: {
   session: Session;
   fillParent?: boolean;
   /** Rendered on the LEFT side of the action bar, alongside the Context
    * button. Used by SessionView to pass the Keyboard/input toggle. */
   inputToggle?: React.ReactNode;
+  /** LEFT side, right after Keyboard. The File Browser start/open/stop
+   * button group. Separated from inputToggle so SessionView can own the
+   * filebrowser lifecycle state without touching the terminal. */
+  fileBrowserControls?: React.ReactNode;
   /** When set, a ⇲ Workspace button appears on the RIGHT side of the
    * action bar between + and New tab. SessionView passes this only when
    * the view is mounted as a modal. */
@@ -1575,6 +1677,7 @@ function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }:
               title="Attach extra context to this session (coming soon)"
             >＋ Context</button>
             {inputToggle}
+            {fileBrowserControls}
           </div>
           {/* RIGHT: viewport controls — zoom, nav, window. */}
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
