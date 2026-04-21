@@ -83,6 +83,20 @@ function saveNotesRect(r: PersistedNotesRect): void {
   try { localStorage.setItem(NOTES_RECT_KEY, JSON.stringify(r)); } catch {}
 }
 
+// Notes textarea font size is a single global preference so a user's
+// "I like 14px" choice follows them across sessions and reloads.
+const NOTES_FONT_KEY = "botdock:notes-font";
+function loadNotesFont(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(NOTES_FONT_KEY) ?? "");
+    if (Number.isFinite(v) && v >= 10 && v <= 22) return v;
+  } catch {}
+  return 12.5;
+}
+function saveNotesFont(v: number): void {
+  try { localStorage.setItem(NOTES_FONT_KEY, String(v)); } catch {}
+}
+
 // Shared "toggle button is currently active" styling — picked once so the
 // Notes / Keyboard / FileBrowser left-side toggles all look the same when
 // their thing is on. Colored border + inset ring + subtle tint.
@@ -1184,6 +1198,17 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
   // the panel "sticks" to the mouse until we pass back over our own window.
   const [dragMode, setDragMode] = useState<"none" | "move" | "resize">("none");
 
+  // Font size for the textarea. Global preference (matches terminal zoom's
+  // model — per-user, not per-session). Clamped to the sane range above.
+  const [fontSize, setFontSizeState] = useState<number>(() => loadNotesFont());
+  const bumpFont = (delta: number) => {
+    setFontSizeState((prev) => {
+      const next = Math.max(10, Math.min(22, +(prev + delta).toFixed(1)));
+      saveNotesFont(next);
+      return next;
+    });
+  };
+
   const onHeaderDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;   // don't drag when clicking ×
     e.preventDefault();
@@ -1279,6 +1304,24 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
         <span className="muted" style={{ fontSize: 10 }}>
           {loading ? "loading…" : saving ? "saving…" : "saved"}
         </span>
+        {/* Font-size control — one step per click, clamped to 10–22. */}
+        <button
+          className="secondary"
+          onClick={() => bumpFont(-1)}
+          disabled={fontSize <= 10}
+          style={{ padding: "2px 6px", fontSize: 11 }}
+          title="Smaller text"
+        >A-</button>
+        <span className="muted mono" style={{ fontSize: 10, minWidth: 22, textAlign: "center" }}>
+          {Math.round(fontSize)}
+        </span>
+        <button
+          className="secondary"
+          onClick={() => bumpFont(1)}
+          disabled={fontSize >= 22}
+          style={{ padding: "2px 6px", fontSize: 11 }}
+          title="Larger text"
+        >A+</button>
         <button
           className="secondary"
           onClick={onClose}
@@ -1296,7 +1339,7 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
           border: "none",
           borderRadius: 0,
           fontFamily: "var(--mono)",
-          fontSize: 12.5,
+          fontSize,
           background: "transparent",
           resize: "none",
           padding: 10,

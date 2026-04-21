@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" alt="BotDock" width="128" height="128"></p>
+
 # BotDock
 
 Single-user local command center for agent sessions. Manage SSH keys, machines

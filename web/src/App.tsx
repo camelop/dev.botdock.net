@@ -282,9 +282,9 @@ function BotdockLogo() {
     <img
       src="/logo.png"
       alt="BotDock"
-      width={24}
-      height={24}
-      style={{ display: "block", borderRadius: 4 }}
+      width={32}
+      height={32}
+      style={{ display: "block", borderRadius: 6 }}
     />
   );
 }

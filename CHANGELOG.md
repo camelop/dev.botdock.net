@@ -2,6 +2,11 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.2 — 2026-04-22
+
+- Top-bar logo bumped 24 → 32 px; README gets a header logo.
+- Notes panel: `A-` / `A+` buttons left of the close × for persistent font-size control (10–22 px, localStorage).
+
 ## v0.4.1 — 2026-04-22
 
 - Real BotDock logo now sits in the top bar and tab favicon (replaces the placeholder "three bars" SVG).

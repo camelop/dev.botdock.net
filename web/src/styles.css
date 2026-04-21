@@ -39,13 +39,11 @@ body {
 .topbar .brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-weight: 600;
+  font-size: 16px;
   letter-spacing: 0.02em;
   margin-right: 24px;
-}
-.topbar .brand svg {
-  display: block;
 }
 .topbar .tabs {
   display: flex;
