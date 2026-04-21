@@ -18,3 +18,8 @@ dist-bin/
 
 # BotDock runtime state written by the shim when a session runs in this repo
 .botdock/
+
+# Upstream design assets (source zips etc.) — only the picked-out PNGs in
+# web/public/ should land in git.
+BotDock Logo.zip
+*.zip

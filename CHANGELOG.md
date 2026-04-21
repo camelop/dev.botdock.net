@@ -2,6 +2,10 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.1 — 2026-04-22
+
+- Real BotDock logo now sits in the top bar and tab favicon (replaces the placeholder "three bars" SVG).
+
 ## v0.4.0 — 2026-04-21
 
 - Resume an existing Claude Code conversation from the New Session modal.

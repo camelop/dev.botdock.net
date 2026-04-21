@@ -279,10 +279,12 @@ function ServerDownOverlay() {
 
 function BotdockLogo() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="3"  y="13" width="4" height="8"  rx="1" fill="var(--accent)" opacity="0.55" />
-      <rect x="10" y="9"  width="4" height="12" rx="1" fill="var(--accent)" opacity="0.8" />
-      <rect x="17" y="4"  width="4" height="17" rx="1" fill="var(--accent)" />
-    </svg>
+    <img
+      src="/logo.png"
+      alt="BotDock"
+      width={24}
+      height={24}
+      style={{ display: "block", borderRadius: 4 }}
+    />
   );
 }
