@@ -211,7 +211,7 @@ function SessionSidebar(props: SidebarCommonProps & {
         flexDirection: "column",
       }}
     >
-      <Group title="Needs attention" sessions={grouped.needsAttention} {...rest} />
+      <Group title="Needs attention" sessions={grouped.needsAttention} {...rest} tone="warn" />
       {grouped.tagGroups.map((g) => (
         <Group key={g.tag} title={`# ${g.tag}`} sessions={g.sessions} {...rest} />
       ))}
@@ -240,6 +240,10 @@ function Group(props: SidebarCommonProps & {
   title: string;
   sessions: Session[];
   collapsedByDefault?: boolean;
+  /** Optional accent — when set, the whole group (header + rows) sits on
+   * a tinted background so it's obvious at a glance. Currently used only
+   * by Needs attention so a non-empty attention group can't be missed. */
+  tone?: "warn";
 }) {
   const [collapsed, setCollapsedState] = useState(() =>
     loadGroupCollapsed(props.title, !!props.collapsedByDefault),
@@ -251,6 +255,15 @@ function Group(props: SidebarCommonProps & {
       return next;
     });
   };
+
+  const toneStyle = props.tone === "warn" && props.sessions.length > 0 ? {
+    background: "rgba(242,185,75,0.10)",
+    borderLeft: "3px solid rgba(242,185,75,0.6)",
+  } : undefined;
+  const headerColor = props.tone === "warn" && props.sessions.length > 0
+    ? "var(--warn)"
+    : "var(--fg-dim)";
+
   const header = (
     <div
       onClick={() => setCollapsed((v) => !v)}
@@ -259,7 +272,8 @@ function Group(props: SidebarCommonProps & {
         fontSize: 11,
         textTransform: "uppercase",
         letterSpacing: 0.5,
-        color: "var(--fg-dim)",
+        color: headerColor,
+        fontWeight: props.tone === "warn" && props.sessions.length > 0 ? 600 : undefined,
         cursor: "pointer",
         userSelect: "none",
         display: "flex",
@@ -275,7 +289,7 @@ function Group(props: SidebarCommonProps & {
   );
   if (props.sessions.length === 0) return <>{header}</>;
   return (
-    <div>
+    <div style={toneStyle}>
       {header}
       {!collapsed && props.sessions.map((s, i) => (
         <SidebarRow

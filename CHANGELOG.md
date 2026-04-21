@@ -4,6 +4,11 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Needs attention stands out.** When the Workspace's Needs attention
+  group is non-empty, the whole strip (header + rows) now sits on a
+  warm amber tint with a matching left accent bar. Empty groups stay
+  neutral, so no noise unless there's something pending.
+
 - **Workspace preferences persist across reloads.** Sidebar group
   collapsed state (Needs attention / tags / Active / Other) is now
   saved per title in localStorage, so the layout stays how you left
