@@ -121,7 +121,24 @@ function paths(dir: DataDir, id: string) {
     transcript: join(base, "transcript.ndjson"),
     pushes: join(base, "pushes.ndjson"),
     raw: join(base, "raw.log"),
+    notes: join(base, "notes.md"),
   };
+}
+
+/** Per-session scratchpad markdown. Empty string when the file doesn't exist. */
+export function readSessionNotes(dir: DataDir, id: string): string {
+  const p = paths(dir, id).notes;
+  try {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    return readFileSync(p, "utf8") as string;
+  } catch { return ""; }
+}
+
+export function writeSessionNotes(dir: DataDir, id: string, text: string): void {
+  const p = paths(dir, id);
+  mkdirSync(p.base, { recursive: true });
+  const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+  writeFileSync(p.notes, text, "utf8");
 }
 
 export function newSessionId(): string {

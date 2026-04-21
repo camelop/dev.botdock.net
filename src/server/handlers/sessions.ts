@@ -7,8 +7,10 @@ import {
   readEvents,
   readRawRange,
   readRecentTranscriptLines,
+  readSessionNotes,
   readTranscriptPage,
   readTranscriptRange,
+  writeSessionNotes,
   readSession,
   sessionExists,
   updateSession,
@@ -174,6 +176,22 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
     await teardownSessionFilebrowser(dir, forwardManager, params.id!);
     return json({ ok: true });
+  });
+
+  // Per-session scratchpad notes (plain text, saved as notes.md next to the
+  // session's meta.toml). Debounced autosave from the floating notepad UI.
+  router.get("/api/sessions/:id/notes", ({ params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    return json({ text: readSessionNotes(dir, params.id!) });
+  });
+  router.put("/api/sessions/:id/notes", async ({ req, params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const body = await parseJsonBody<{ text?: string }>(req);
+    // Cap at 1 MiB so an accidentally pasted megabyte of binary doesn't
+    // fill the disk. Notes are for scratch, not archival.
+    const text = typeof body.text === "string" ? body.text.slice(0, 1024 * 1024) : "";
+    writeSessionNotes(dir, params.id!, text);
+    return json({ ok: true, bytes: Buffer.byteLength(text, "utf8") });
   });
 
   router.get("/api/sessions/:id/events", ({ params, url }) => {

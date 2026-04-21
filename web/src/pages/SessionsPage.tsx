@@ -760,6 +760,12 @@ export function SessionView(props: {
   // a button in the terminal toolbar toggles it.
   const [showInput, setShowInput] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  // Floating scratchpad. Open/close is transient (per-mount); text is
+  // loaded once on first open and debounce-saved to notes.md on change.
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesText, setNotesText] = useState<string | null>(null);  // null = not yet loaded
+  const [notesSaving, setNotesSaving] = useState(false);
+  const notesSaveTimer = useRef<number | null>(null);
   // Filebrowser lifecycle: null while not-starting, "starting" during the
   // server round-trip, string url once it's up. Errors surface inline.
   type FbState = "idle" | "starting" | "stopping";
@@ -814,6 +820,40 @@ export function SessionView(props: {
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
 
+  // Fetch notes on first open. Subsequent opens keep the last-fetched state
+  // so the user doesn't see a flash while the round-trip happens.
+  useEffect(() => {
+    if (!notesOpen || notesText !== null) return;
+    api.getSessionNotes(props.id).then((r) => setNotesText(r.text ?? ""))
+      .catch(() => setNotesText(""));
+  }, [notesOpen, notesText, props.id]);
+
+  const onNotesChange = (next: string) => {
+    setNotesText(next);
+    // Debounce: 500ms after the last keystroke, PUT. Cheap enough that
+    // losing the last second of typing on tab-close is a non-issue.
+    if (notesSaveTimer.current != null) window.clearTimeout(notesSaveTimer.current);
+    notesSaveTimer.current = window.setTimeout(() => {
+      setNotesSaving(true);
+      api.putSessionNotes(props.id, next)
+        .catch(() => { /* transient — next keystroke will retry */ })
+        .finally(() => setNotesSaving(false));
+    }, 500);
+  };
+
+  // Flush pending write on unmount / session switch.
+  useEffect(() => {
+    return () => {
+      if (notesSaveTimer.current != null) {
+        window.clearTimeout(notesSaveTimer.current);
+        if (notesText !== null) {
+          // Fire-and-forget; no await in cleanup.
+          api.putSessionNotes(props.id, notesText).catch(() => {});
+        }
+      }
+    };
+  }, [props.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   const onStartFilebrowser = async () => {
     setFbErr(""); setFbState("starting");
     try {
@@ -861,6 +901,17 @@ export function SessionView(props: {
               <ClaudeTerminal
                 session={session}
                 fillParent
+                notesToggle={(
+                  <button
+                    className="secondary"
+                    style={{
+                      padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
+                      ...(notesOpen ? { borderColor: "var(--accent)", boxShadow: "inset 0 0 0 1px var(--accent)" } : {}),
+                    }}
+                    onClick={() => setNotesOpen((v) => !v)}
+                    title="Toggle the floating scratchpad (persisted to notes.md)"
+                  >📝 {notesOpen ? "Hide notes" : "Notes"}</button>
+                )}
                 inputToggle={session.status === "active" ? (
                   <button
                     className="secondary"
@@ -1001,6 +1052,93 @@ export function SessionView(props: {
           <h2>Events</h2>
           <EventsTable events={events} />
         </div>
+        {notesOpen && session && (
+          <NotesPanel
+            sessionId={props.id}
+            alias={session.alias}
+            text={notesText ?? ""}
+            loading={notesText === null}
+            saving={notesSaving}
+            onChange={onNotesChange}
+            onClose={() => setNotesOpen(false)}
+          />
+        )}
+    </div>
+  );
+}
+
+/**
+ * Floating scratchpad pinned to the top-right of the viewport. Text is
+ * debounce-saved to `sessions/<id>/notes.md`. Pure textarea; no rich
+ * rendering — the file ends in .md so the user can pipe it into their
+ * markdown editor of choice externally if they want.
+ */
+function NotesPanel({ sessionId, alias, text, loading, saving, onChange, onClose }: {
+  sessionId: string;
+  alias?: string;
+  text: string;
+  loading: boolean;
+  saving: boolean;
+  onChange: (next: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 100,
+        right: 24,
+        width: 360,
+        height: 420,
+        background: "var(--bg-elev)",
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
+        zIndex: 50,
+        display: "flex",
+        flexDirection: "column",
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div
+        className="row"
+        style={{
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--border)",
+          gap: 6,
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 600 }}>📝 Notes</span>
+        <span className="muted mono" style={{ fontSize: 11 }}>
+          {alias ? alias : sessionId}
+        </span>
+        <div style={{ flex: 1 }} />
+        <span className="muted" style={{ fontSize: 10 }}>
+          {loading ? "loading…" : saving ? "saving…" : "saved"}
+        </span>
+        <button
+          className="secondary"
+          onClick={onClose}
+          style={{ padding: "2px 8px", fontSize: 11 }}
+          title="Close the notes panel (content is already saved)"
+        >×</button>
+      </div>
+      <textarea
+        value={text}
+        disabled={loading}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Scratch notes for this session. Auto-saved to notes.md."
+        style={{
+          flex: 1,
+          border: "none",
+          borderRadius: 0,
+          fontFamily: "var(--mono)",
+          fontSize: 12.5,
+          background: "transparent",
+          resize: "none",
+          padding: 10,
+        }}
+      />
     </div>
   );
 }
@@ -1550,9 +1688,12 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
   );
 }
 
-function ClaudeTerminal({ session, fillParent, inputToggle, fileBrowserControls, onOpenInWorkspace }: {
+function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBrowserControls, onOpenInWorkspace }: {
   session: Session;
   fillParent?: boolean;
+  /** LEFT side, between Context and the Keyboard toggle. The 📝 Notes
+   * button that opens the floating scratchpad for this session. */
+  notesToggle?: React.ReactNode;
   /** Rendered on the LEFT side of the action bar, alongside the Context
    * button. Used by SessionView to pass the Keyboard/input toggle. */
   inputToggle?: React.ReactNode;
@@ -1676,6 +1817,7 @@ function ClaudeTerminal({ session, fillParent, inputToggle, fileBrowserControls,
               disabled
               title="Attach extra context to this session (coming soon)"
             >＋ Context</button>
+            {notesToggle}
             {inputToggle}
             {fileBrowserControls}
           </div>

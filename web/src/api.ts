@@ -202,6 +202,13 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getSessionNotes: (id: string) =>
+    request<{ text: string }>(`/api/sessions/${encodeURIComponent(id)}/notes`),
+  putSessionNotes: (id: string, text: string) =>
+    request<{ ok: true; bytes: number }>(
+      `/api/sessions/${encodeURIComponent(id)}/notes`,
+      { method: "PUT", body: JSON.stringify({ text }) },
+    ),
   startSessionFilebrowser: (id: string) =>
     request<{ ok: true; url: string; local_port: number; remote_port: number }>(
       `/api/sessions/${encodeURIComponent(id)}/filebrowser/start`, { method: "POST" },

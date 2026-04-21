@@ -4,6 +4,14 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Floating per-session notepad.** New `📝 Notes` button in the action
+  bar between Context and Keyboard. Click to pop a 360×420 floating
+  panel anchored to the top-right of the viewport; type freely;
+  content saves (debounced 500ms) to `sessions/<id>/notes.md` on the
+  daemon's disk. Pending writes flush on session switch / unmount.
+  Header shows `loading…` / `saving…` / `saved`. Click the × or the
+  toggle button again to close — content stays persisted.
+
 - **Per-session file browser.** New button in the session action bar
   (right of Keyboard). Idle → "📁 File Browser" to start. Running →
   "📁 Open ↗" (new tab) + "Stop". On Start, BotDock downloads the
