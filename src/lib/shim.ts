@@ -94,6 +94,8 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"cla
 PROMPT=""
 SKIP_TRUST=""
 RESUME_UUID=""
+LAUNCH_CMD=""
+AGENT_TEAMS=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
 
@@ -137,16 +139,30 @@ __BOTDOCK_TRUST__
   fi
 fi
 
+# LAUNCH_CMD overrides the claude invocation for advanced users (e.g.
+# "claude --verbose" or a pinned binary path). Defaults to plain "claude"
+# so unset behavior is identical to the pre-override path. Unquoted
+# expansion below is intentional — we want word-splitting so "claude -v"
+# becomes two argv entries.
+[ -z "$LAUNCH_CMD" ] && LAUNCH_CMD=claude
+
+# Opt-in experimental agent-teams flag. Exported only when the user ticked
+# the Advanced checkbox; otherwise the env var stays unset and claude
+# behaves exactly as before.
+if [ -n "$AGENT_TEAMS" ]; then
+  export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+fi
+
 if [ -n "$RESUME_UUID" ]; then
   # Resuming an existing conversation. Any initial prompt is ignored —
-  # claude --resume picks up the transcript as-is. If the prior session's
-  # jsonl is still held by a live claude process, claude will fork a new
-  # branch; we warn the user in the UI before they hit Launch.
-  claude --resume "$RESUME_UUID"
+  # --resume picks up the transcript as-is. If the prior session's jsonl
+  # is still held by a live claude process, CC will fork a new branch;
+  # we warn the user in the UI before they hit Launch.
+  $LAUNCH_CMD --resume "$RESUME_UUID"
 elif [ -n "$PROMPT" ]; then
-  claude "$PROMPT"
+  $LAUNCH_CMD "$PROMPT"
 else
-  claude
+  $LAUNCH_CMD
 fi
 EC=$?
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"
@@ -167,12 +183,14 @@ function shimFor(kind: AgentKind): string {
 export function buildCmdB64(
   kind: AgentKind,
   cmd: string,
-  opts?: { skipTrust?: boolean; resumeUuid?: string },
+  opts?: { skipTrust?: boolean; resumeUuid?: string; launchCommand?: string; agentTeams?: boolean },
 ): string {
   const content = kind === "claude-code"
     ? `PROMPT=${shSingleQuote(cmd)}\n`
       + `SKIP_TRUST=${opts?.skipTrust ? "1" : ""}\n`
       + `RESUME_UUID=${shSingleQuote(opts?.resumeUuid ?? "")}\n`
+      + `LAUNCH_CMD=${shSingleQuote(opts?.launchCommand ?? "")}\n`
+      + `AGENT_TEAMS=${opts?.agentTeams ? "1" : ""}\n`
     : cmd;
   return Buffer.from(content, "utf8").toString("base64");
 }

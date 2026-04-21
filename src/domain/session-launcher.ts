@@ -43,6 +43,8 @@ export async function launchSession(
   const cmdB64 = buildCmdB64(s.agent_kind, s.cmd, {
     skipTrust: s.cc_skip_trust,
     resumeUuid: s.cc_resume_uuid,
+    launchCommand: s.launch_command,
+    agentTeams: s.cc_agent_teams,
   });
   const bootstrap = provisioningScript({
     workdir: s.workdir,

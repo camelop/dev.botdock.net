@@ -31,6 +31,11 @@ export type SessionDraft = {
    * instead of starting fresh. Selecting a session in the UI also
    * overwrites `workdir` with the resumed session's cwd. */
   cc_resume_uuid?: string;
+  /** Advanced: override the claude launch command. Empty = "claude". */
+  launch_command: string;
+  /** Advanced: opt into CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in the
+   * remote shim before launching claude. */
+  cc_agent_teams: boolean;
 };
 
 const TRUST_PREF_KEY = "botdock:cc-skip-trust";
@@ -63,6 +68,8 @@ export function freshDraft(machines: Machine[]): SessionDraft {
     agent_kind: "claude-code",
     cmd: "",
     cc_skip_trust: loadTrustPref(),
+    launch_command: "",
+    cc_agent_teams: false,
   };
 }
 
@@ -324,6 +331,11 @@ export function NewSessionModal(props: {
           </label>
         </div>
       )}
+      <AdvancedSessionOptions
+        draft={draft}
+        onLaunchCommand={(v) => patch({ launch_command: v })}
+        onAgentTeams={(v) => patch({ cc_agent_teams: v })}
+      />
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
         <button className="secondary" onClick={props.onCancel}>Cancel (keep draft)</button>
@@ -333,6 +345,89 @@ export function NewSessionModal(props: {
         >Create &amp; launch</button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Collapsible "Advanced" block inside NewSessionModal. Everything in here
+ * defaults to identical-to-current-behavior so an unmodified draft is
+ * byte-identical on the wire to what the old modal sent.
+ */
+function AdvancedSessionOptions(props: {
+  draft: SessionDraft;
+  onLaunchCommand: (v: string) => void;
+  onAgentTeams: (v: boolean) => void;
+}) {
+  const { draft } = props;
+  const [open, setOpen] = useState(false);
+  // Visual hint when an advanced option is non-default, so the user
+  // remembers they've tweaked something even when the section is folded.
+  const hasOverrides = (draft.launch_command && draft.launch_command.trim().length > 0)
+    || draft.cc_agent_teams;
+
+  // Advanced is claude-code-scoped for now (launch_command is CC-specific,
+  // agent_teams is a CC env var). Hide for generic-cmd.
+  if (draft.agent_kind !== "claude-code") return null;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          fontSize: 12, color: "var(--fg-dim)",
+          cursor: "pointer", userSelect: "none",
+          padding: "4px 0",
+        }}
+      >
+        <span>{open ? "▾" : "▸"}</span>
+        <span>Advanced</span>
+        {hasOverrides && <span className="pill" style={{ fontSize: 10, padding: "1px 6px" }}>customized</span>}
+      </div>
+      {open && (
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: 10,
+            background: "var(--bg-card)",
+            marginTop: 4,
+          }}
+        >
+          <label style={{ marginBottom: 10 }}>
+            <span>Launch command</span>
+            <input
+              value={draft.launch_command}
+              onChange={(e) => props.onLaunchCommand(e.target.value)}
+              placeholder="claude"
+              style={{ fontSize: 12 }}
+            />
+            <span className="muted" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
+              Word-split into argv. Leave empty for the default{" "}
+              <code className="mono">claude</code>. Example:{" "}
+              <code className="mono">claude --verbose</code>.
+            </span>
+          </label>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <input
+              id="cc-agent-teams"
+              type="checkbox"
+              checked={draft.cc_agent_teams}
+              onChange={(e) => props.onAgentTeams(e.target.checked)}
+              style={{ width: 16, height: 16, marginTop: 2, cursor: "pointer" }}
+            />
+            <label
+              htmlFor="cc-agent-teams"
+              style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0, cursor: "pointer", lineHeight: 1.5 }}
+            >
+              Use agent teams — sets{" "}
+              <code className="mono">CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</code>{" "}
+              in the remote environment before launching claude.
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

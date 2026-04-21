@@ -44,9 +44,16 @@ export function DashboardPage() {
     <div>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Dashboard</h1>
-        <button onClick={openNew} disabled={machines.length === 0}>
-          {machines.length === 0 ? "Add a machine first" : "+ New session"}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="secondary"
+            onClick={() => { window.location.hash = "hub"; }}
+            title="Open the full-screen Workspace view"
+          >⇲ Workspace</button>
+          <button onClick={openNew} disabled={machines.length === 0}>
+            {machines.length === 0 ? "Add a machine first" : "+ New session"}
+          </button>
+        </div>
       </div>
       {err && <div className="error-banner">{err}</div>}
 

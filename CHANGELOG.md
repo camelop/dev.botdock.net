@@ -4,6 +4,19 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Advanced options in the New Session modal.** New collapsed section
+  (claude-code only) for overrides that default to the current behavior:
+  - **Launch command** — empty defaults to `claude`; set to e.g.
+    `claude --verbose` to word-split the override into argv before the
+    shim adds `--resume` or the initial prompt.
+  - **Use agent teams** — when ticked, the shim exports
+    `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` before launching claude.
+  A "customized" badge appears next to the Advanced header when either
+  knob is non-default, so the folded state still hints at changes.
+- **Dashboard → Workspace button.** The Dashboard header has a new
+  `⇲ Workspace` button next to `+ New session` that sets the hash to
+  `#hub` and opens the full-screen Workspace view.
+
 - **Needs attention stands out.** When the Workspace's Needs attention
   group is non-empty, the whole strip (header + rows) now sits on a
   warm amber tint with a matching left accent bar. Empty groups stay

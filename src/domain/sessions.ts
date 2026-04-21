@@ -72,6 +72,14 @@ export type Session = {
    * Workspace sidebar (once under each tag group); selection is keyed on
    * session id so every appearance highlights together. */
   tags?: string[];
+  /** For claude-code: advanced override for the binary+args the shim runs.
+   * Defaults to "claude" when empty. Word-split into argv (so "claude -v"
+   * yields two args). Useful when the user wants to pin a specific
+   * binary path, a model flag, or a verbose mode. */
+  launch_command?: string;
+  /** For claude-code: export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 before
+   * launching claude. Opt-in; default unset behaves identically to before. */
+  cc_agent_teams?: boolean;
 };
 
 export type SessionEvent = {
@@ -125,6 +133,8 @@ export function createSessionRecord(
     cmd: string;
     cc_skip_trust?: boolean;
     cc_resume_uuid?: string;
+    launch_command?: string;
+    cc_agent_teams?: boolean;
   },
 ): Session {
   const id = newSessionId();
@@ -141,6 +151,8 @@ export function createSessionRecord(
     remote_raw_offset: 0,
     ...(args.cc_skip_trust ? { cc_skip_trust: true } : {}),
     ...(args.cc_resume_uuid ? { cc_resume_uuid: args.cc_resume_uuid } : {}),
+    ...(args.launch_command && args.launch_command.trim() ? { launch_command: args.launch_command.trim() } : {}),
+    ...(args.cc_agent_teams ? { cc_agent_teams: true } : {}),
   };
   const p = paths(dir, id);
   mkdirSync(p.base, { recursive: true });

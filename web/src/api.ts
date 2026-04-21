@@ -91,6 +91,8 @@ export type Session = {
   activity?: "running" | "pending" | "syncing";
   cc_skip_trust?: boolean;
   cc_resume_uuid?: string;
+  launch_command?: string;
+  cc_agent_teams?: boolean;
   alias?: string;
   alias_color?: string;
   tags?: string[];
@@ -181,6 +183,8 @@ export const api = {
     cmd: string;
     cc_skip_trust?: boolean;
     cc_resume_uuid?: string;
+    launch_command?: string;
+    cc_agent_teams?: boolean;
   }) => request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),

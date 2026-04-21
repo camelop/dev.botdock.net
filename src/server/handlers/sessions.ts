@@ -40,6 +40,8 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       cmd: string;
       cc_skip_trust?: boolean;
       cc_resume_uuid?: string;
+      launch_command?: string;
+      cc_agent_teams?: boolean;
     }>(req);
     for (const k of ["machine", "workdir", "agent_kind"] as const) {
       if (!body[k]) throw new HttpError(400, `${k} required`);
@@ -66,6 +68,8 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       cmd: body.cmd,
       cc_skip_trust: !!body.cc_skip_trust,
       cc_resume_uuid: body.cc_resume_uuid || undefined,
+      launch_command: body.launch_command || undefined,
+      cc_agent_teams: !!body.cc_agent_teams,
     });
     // Launch asynchronously so the HTTP request returns quickly. The
     // launcher itself now stands up the per-session ttyd + forward
