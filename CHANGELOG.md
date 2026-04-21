@@ -4,6 +4,20 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Notes panel: drag + resize + fix per-session content.** The floating
+  scratchpad from earlier today had three issues all patched now:
+  1. Switching sessions didn't re-fetch — you'd see the previous
+     session's content. Fixed: SessionView clears `notesText` on `id`
+     change, re-fetches on next open, and guards against late in-flight
+     responses for a session you've already moved off of. Pending
+     debounced saves still flush to the correct (old) session id via a
+     ref-captured cleanup.
+  2. Position was hardcoded top-right. Now the panel anchors directly
+     under the Notes button on first open; after that, drag the header
+     anywhere, drag the bottom-right grip to resize (clamped 240×160
+     to 900×800). Layout persists globally in localStorage — same
+     position for every session; only the text content is per-session.
+
 - **Floating per-session notepad.** New `📝 Notes` button in the action
   bar between Context and Keyboard. Click to pop a 360×420 floating
   panel anchored to the top-right of the viewport; type freely;

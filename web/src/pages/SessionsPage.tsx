@@ -61,6 +61,28 @@ function saveTerminalZoom(v: number): void {
   try { localStorage.setItem(TERM_ZOOM_KEY, String(v)); } catch {}
 }
 
+// Persisted layout for the floating Notes panel — one global position +
+// size pair shared across sessions, so a power user's "I always want my
+// notes in the lower-left corner at 400x300" preference sticks.
+const NOTES_RECT_KEY = "botdock:notes-rect";
+type PersistedNotesRect = { top: number; left: number; width: number; height: number };
+function loadNotesRect(): PersistedNotesRect | null {
+  try {
+    const raw = localStorage.getItem(NOTES_RECT_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (typeof o === "object" && o
+        && typeof o.top === "number" && typeof o.left === "number"
+        && typeof o.width === "number" && typeof o.height === "number") {
+      return o;
+    }
+  } catch {}
+  return null;
+}
+function saveNotesRect(r: PersistedNotesRect): void {
+  try { localStorage.setItem(NOTES_RECT_KEY, JSON.stringify(r)); } catch {}
+}
+
 export function freshDraft(machines: Machine[]): SessionDraft {
   return {
     machine: machines[0]?.name ?? "",
@@ -766,6 +788,17 @@ export function SessionView(props: {
   const [notesText, setNotesText] = useState<string | null>(null);  // null = not yet loaded
   const [notesSaving, setNotesSaving] = useState(false);
   const notesSaveTimer = useRef<number | null>(null);
+  // Refs so the unmount/session-switch cleanup can flush the RIGHT text to
+  // the RIGHT id — capturing them in a closure would lock us to the initial
+  // render's values.
+  const notesTextRef = useRef<string | null>(null);
+  notesTextRef.current = notesText;
+  // Position + size of the floating panel. Persisted in localStorage so the
+  // user's drag/resize choices stick across sessions and reloads. Initial
+  // null → open() anchors the panel under the Notes button.
+  type NotesRect = { top: number; left: number; width: number; height: number };
+  const [notesRect, setNotesRect] = useState<NotesRect | null>(() => loadNotesRect());
+  const notesButtonRef = useRef<HTMLButtonElement | null>(null);
   // Filebrowser lifecycle: null while not-starting, "starting" during the
   // server round-trip, string url once it's up. Errors surface inline.
   type FbState = "idle" | "starting" | "stopping";
@@ -820,18 +853,43 @@ export function SessionView(props: {
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   };
 
+  // Session switch: wipe notes state so the next open re-fetches for the
+  // new session. The cleanup branch of this same effect handles flushing
+  // any pending debounced save for the OLD session — using refs so the
+  // saved text + session id are always current, not stale-from-init.
+  useEffect(() => {
+    const sid = props.id;
+    return () => {
+      if (notesSaveTimer.current != null) {
+        window.clearTimeout(notesSaveTimer.current);
+        notesSaveTimer.current = null;
+      }
+      const pending = notesTextRef.current;
+      if (pending != null) {
+        // Fire-and-forget; no await in cleanup. Correct session id is the
+        // `sid` captured when THIS effect instance registered.
+        api.putSessionNotes(sid, pending).catch(() => {});
+      }
+    };
+  }, [props.id]);
+  useEffect(() => {
+    setNotesText(null);   // clear so the next fetch runs for the new id
+  }, [props.id]);
+
   // Fetch notes on first open. Subsequent opens keep the last-fetched state
   // so the user doesn't see a flash while the round-trip happens.
   useEffect(() => {
     if (!notesOpen || notesText !== null) return;
-    api.getSessionNotes(props.id).then((r) => setNotesText(r.text ?? ""))
-      .catch(() => setNotesText(""));
+    const sid = props.id;
+    api.getSessionNotes(sid).then((r) => {
+      // Ignore late responses for a session the user already switched away
+      // from — the reset effect above would otherwise clobber the new one.
+      if (sid === props.id) setNotesText(r.text ?? "");
+    }).catch(() => { if (sid === props.id) setNotesText(""); });
   }, [notesOpen, notesText, props.id]);
 
   const onNotesChange = (next: string) => {
     setNotesText(next);
-    // Debounce: 500ms after the last keystroke, PUT. Cheap enough that
-    // losing the last second of typing on tab-close is a non-issue.
     if (notesSaveTimer.current != null) window.clearTimeout(notesSaveTimer.current);
     notesSaveTimer.current = window.setTimeout(() => {
       setNotesSaving(true);
@@ -841,18 +899,33 @@ export function SessionView(props: {
     }, 500);
   };
 
-  // Flush pending write on unmount / session switch.
-  useEffect(() => {
-    return () => {
-      if (notesSaveTimer.current != null) {
-        window.clearTimeout(notesSaveTimer.current);
-        if (notesText !== null) {
-          // Fire-and-forget; no await in cleanup.
-          api.putSessionNotes(props.id, notesText).catch(() => {});
+  // Open the panel: if we don't have a persisted layout yet, anchor it
+  // directly under the Notes button so the user can see where it came
+  // from. Clamped so it never spawns off-screen.
+  const onToggleNotes = () => {
+    setNotesOpen((v) => {
+      const next = !v;
+      if (next && !notesRect) {
+        const btn = notesButtonRef.current;
+        if (btn) {
+          const r = btn.getBoundingClientRect();
+          const width = 360;
+          const height = 420;
+          const left = Math.max(8, Math.min(window.innerWidth - width - 8, r.left));
+          const top = Math.max(8, Math.min(window.innerHeight - height - 8, r.bottom + 6));
+          setNotesRect({ top, left, width, height });
+        } else {
+          setNotesRect({ top: 120, left: 24, width: 360, height: 420 });
         }
       }
-    };
-  }, [props.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+      return next;
+    });
+  };
+
+  const onNotesRectChange = (r: NotesRect) => {
+    setNotesRect(r);
+    saveNotesRect(r);
+  };
 
   const onStartFilebrowser = async () => {
     setFbErr(""); setFbState("starting");
@@ -903,12 +976,13 @@ export function SessionView(props: {
                 fillParent
                 notesToggle={(
                   <button
+                    ref={notesButtonRef}
                     className="secondary"
                     style={{
                       padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
                       ...(notesOpen ? { borderColor: "var(--accent)", boxShadow: "inset 0 0 0 1px var(--accent)" } : {}),
                     }}
-                    onClick={() => setNotesOpen((v) => !v)}
+                    onClick={onToggleNotes}
                     title="Toggle the floating scratchpad (persisted to notes.md)"
                   >📝 {notesOpen ? "Hide notes" : "Notes"}</button>
                 )}
@@ -1052,13 +1126,15 @@ export function SessionView(props: {
           <h2>Events</h2>
           <EventsTable events={events} />
         </div>
-        {notesOpen && session && (
+        {notesOpen && session && notesRect && (
           <NotesPanel
             sessionId={props.id}
             alias={session.alias}
             text={notesText ?? ""}
             loading={notesText === null}
             saving={notesSaving}
+            rect={notesRect}
+            onRectChange={onNotesRectChange}
             onChange={onNotesChange}
             onClose={() => setNotesOpen(false)}
           />
@@ -1073,23 +1149,68 @@ export function SessionView(props: {
  * rendering — the file ends in .md so the user can pipe it into their
  * markdown editor of choice externally if they want.
  */
-function NotesPanel({ sessionId, alias, text, loading, saving, onChange, onClose }: {
+type NotesRect = { top: number; left: number; width: number; height: number };
+
+function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChange, onChange, onClose }: {
   sessionId: string;
   alias?: string;
   text: string;
   loading: boolean;
   saving: boolean;
+  rect: NotesRect;
+  onRectChange: (r: NotesRect) => void;
   onChange: (next: string) => void;
   onClose: () => void;
 }) {
+  // Drag: header mousedown captures pointer, mousemove updates top/left,
+  // mouseup releases. Resize handle: same pattern, updates width/height.
+  // Both clamp against viewport so the user can't lose the panel.
+  const onHeaderDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button")) return;   // don't drag when clicking ×
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const start = rect;
+    const move = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      const w = start.width, h = start.height;
+      const left = Math.max(0, Math.min(window.innerWidth - w, start.left + dx));
+      const top  = Math.max(0, Math.min(window.innerHeight - h, start.top + dy));
+      onRectChange({ ...start, left, top });
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+  const onResizeDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const start = rect;
+    const move = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      const width  = Math.max(240, Math.min(900, start.width + dx));
+      const height = Math.max(160, Math.min(800, start.height + dy));
+      onRectChange({ ...start, width, height });
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   return (
     <div
       style={{
         position: "fixed",
-        top: 100,
-        right: 24,
-        width: 360,
-        height: 420,
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
         background: "var(--bg-elev)",
         border: "1px solid var(--border)",
         borderRadius: 10,
@@ -1102,14 +1223,17 @@ function NotesPanel({ sessionId, alias, text, loading, saving, onChange, onClose
     >
       <div
         className="row"
+        onMouseDown={onHeaderDown}
         style={{
           padding: "8px 12px",
           borderBottom: "1px solid var(--border)",
           gap: 6,
+          cursor: "move",
+          userSelect: "none",
         }}
       >
         <span style={{ fontSize: 12, fontWeight: 600 }}>📝 Notes</span>
-        <span className="muted mono" style={{ fontSize: 11 }}>
+        <span className="muted mono" style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {alias ? alias : sessionId}
         </span>
         <div style={{ flex: 1 }} />
@@ -1137,6 +1261,20 @@ function NotesPanel({ sessionId, alias, text, loading, saving, onChange, onClose
           background: "transparent",
           resize: "none",
           padding: 10,
+        }}
+      />
+      {/* Resize grip — bottom-right corner. 14x14 of diagonal stripes, only
+          picks up mouse on its own box so text selection isn't blocked. */}
+      <div
+        onMouseDown={onResizeDown}
+        title="Drag to resize"
+        style={{
+          position: "absolute",
+          right: 0, bottom: 0,
+          width: 14, height: 14,
+          cursor: "nwse-resize",
+          background:
+            "linear-gradient(135deg, transparent 0, transparent 40%, var(--fg-dim) 40%, var(--fg-dim) 50%, transparent 50%, transparent 70%, var(--fg-dim) 70%, var(--fg-dim) 80%, transparent 80%)",
         }}
       />
     </div>
