@@ -1859,20 +1859,22 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
   };
   return (
     <div className="row" style={{ gap: 0, alignItems: "center" }}>
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
+      {/* Rendering Open as a <button> + window.open rather than <a> avoids
+          the browser's :visited color rules turning the text invisible on
+          the accent-tinted background after first use. `.secondary` CSS
+          only targets `button.secondary`, which is another reason <a> was
+          mis-styled here. */}
+      <button
         className="secondary"
         style={{
           ...groupBtn,
-          textDecoration: "none",
           borderTopLeftRadius: 6,
           borderBottomLeftRadius: 6,
           borderRight: "none",
         }}
+        onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
         title="Open the filebrowser UI in a new tab"
-      >📁 Open FileBrowser ↗</a>
+      >📁 Open FileBrowser ↗</button>
       <button
         className="secondary"
         style={{
