@@ -4,6 +4,12 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Workspace preferences persist across reloads.** Sidebar group
+  collapsed state (Needs attention / tags / Active / Other) is now
+  saved per title in localStorage, so the layout stays how you left
+  it. Terminal content zoom (−/%/+) is also stored globally so
+  switching sessions and reopening later keeps the zoom you picked.
+
 - **Transcript is server-paginated now.** Previously the UI streamed the
   entire multi-MB JSONL over the WS and re-parsed it client-side every
   time you opened a long session — visually you'd see the right pane

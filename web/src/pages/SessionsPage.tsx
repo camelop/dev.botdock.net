@@ -41,6 +41,21 @@ function saveTrustPref(v: boolean): void {
   try { localStorage.setItem(TRUST_PREF_KEY, v ? "1" : "0"); } catch {}
 }
 
+// Terminal content zoom is a single global preference — setting it in
+// one session's modal should carry to every other session's terminal
+// on next mount. Clamped to [0.5, 2.0] at write time.
+const TERM_ZOOM_KEY = "botdock:terminal-zoom";
+function loadTerminalZoom(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(TERM_ZOOM_KEY) ?? "");
+    if (Number.isFinite(v) && v >= 0.5 && v <= 2) return v;
+  } catch {}
+  return 1;
+}
+function saveTerminalZoom(v: number): void {
+  try { localStorage.setItem(TERM_ZOOM_KEY, String(v)); } catch {}
+}
+
 export function freshDraft(machines: Machine[]): SessionDraft {
   return {
     machine: machines[0]?.name ?? "",
@@ -1359,8 +1374,17 @@ function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }:
   // resizes that left the terminal drawn to stale dimensions.
   const [reloadKey, setReloadKey] = useState(0);
   // CSS zoom on the iframe scales the xterm content. Chrome/Safari/Edge
-  // support this; Firefox ignores — acceptable. Clamped to a sane range.
-  const [contentZoom, setContentZoom] = useState(1);
+  // support this; Firefox ignores — acceptable. Persisted globally so
+  // the user's preferred zoom sticks across reloads and sessions.
+  const [contentZoom, setContentZoomState] = useState<number>(() => loadTerminalZoom());
+  const setContentZoom = (updater: number | ((z: number) => number)) => {
+    setContentZoomState((prev) => {
+      const raw = typeof updater === "function" ? updater(prev) : updater;
+      const next = Math.max(0.5, Math.min(2, +raw.toFixed(2)));
+      saveTerminalZoom(next);
+      return next;
+    });
+  };
   const containerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   useEffect(() => {
@@ -1462,7 +1486,7 @@ function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }:
             <button
               className="secondary"
               style={iconBtn}
-              onClick={() => setContentZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
+              onClick={() => setContentZoom((z) => z - 0.1)}
               title="Shrink terminal content (CSS zoom; Chromium/Safari only)"
             >−</button>
             <span className="muted mono" style={{ fontSize: 11, minWidth: 32, textAlign: "center", alignSelf: "center" }}>
@@ -1471,7 +1495,7 @@ function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }:
             <button
               className="secondary"
               style={iconBtn}
-              onClick={() => setContentZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+              onClick={() => setContentZoom((z) => z + 0.1)}
               title="Enlarge terminal content (CSS zoom; Chromium/Safari only)"
             >+</button>
             {onOpenInWorkspace && (

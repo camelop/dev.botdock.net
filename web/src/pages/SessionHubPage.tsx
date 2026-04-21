@@ -221,12 +221,36 @@ function SessionSidebar(props: SidebarCommonProps & {
   );
 }
 
+// localStorage-backed collapsed state per group title. Keyed on the group
+// label so tag groups persist under their tag name too ("#urgent", etc.).
+const GROUP_COLLAPSED_KEY = (title: string) => `botdock:hub-group-collapsed:${title}`;
+function loadGroupCollapsed(title: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(GROUP_COLLAPSED_KEY(title));
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch { /* private-browsing */ }
+  return fallback;
+}
+function saveGroupCollapsed(title: string, collapsed: boolean): void {
+  try { localStorage.setItem(GROUP_COLLAPSED_KEY(title), collapsed ? "1" : "0"); } catch {}
+}
+
 function Group(props: SidebarCommonProps & {
   title: string;
   sessions: Session[];
   collapsedByDefault?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(!!props.collapsedByDefault);
+  const [collapsed, setCollapsedState] = useState(() =>
+    loadGroupCollapsed(props.title, !!props.collapsedByDefault),
+  );
+  const setCollapsed = (updater: boolean | ((v: boolean) => boolean)) => {
+    setCollapsedState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveGroupCollapsed(props.title, next);
+      return next;
+    });
+  };
   const header = (
     <div
       onClick={() => setCollapsed((v) => !v)}
