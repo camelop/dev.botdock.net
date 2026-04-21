@@ -15,3 +15,6 @@ dist-bin/
 
 # Claude Code per-machine permission overrides
 .claude/settings.local.json
+
+# BotDock runtime state written by the shim when a session runs in this repo
+.botdock/
