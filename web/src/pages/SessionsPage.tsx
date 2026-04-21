@@ -1658,7 +1658,7 @@ function Meta({ s }: { s: Session }) {
   return (
     <div className="card" style={{ padding: 12, fontSize: 12.5 }}>
       <Row k="kind"><span className="mono">{s.agent_kind}</span></Row>
-      <Row k={cmdLabel}><span className="mono">{s.cmd || <span className="muted">(none)</span>}</span></Row>
+      <PromptRow label={cmdLabel} cmd={s.cmd} />
       <Row k="tmux"><span className="mono">{s.tmux_session}</span></Row>
       <Row k="created"><T t={s.created_at} /></Row>
       <Row k="started"><T t={s.started_at} /></Row>
@@ -1670,6 +1670,58 @@ function Meta({ s }: { s: Session }) {
         <Row k="cc file"><span className="mono" style={{ wordBreak: "break-all" }}>{s.cc_session_file}</span></Row>
       )}
     </div>
+  );
+}
+
+/**
+ * Prompts / shell commands can be long (a resumed CC session's first user
+ * message is sometimes several paragraphs). Collapse it by default so the
+ * Meta card stays skinny — click to expand. Empty prompts render inline
+ * as "(none)" with no click affordance.
+ */
+function PromptRow({ label, cmd }: { label: string; cmd: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!cmd) {
+    return <Row k={label}><span className="muted">(none)</span></Row>;
+  }
+  if (!expanded) {
+    const oneLine = cmd.replace(/\s+/g, " ").trim();
+    const snippet = oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
+    return (
+      <Row k={label}>
+        <span
+          onClick={() => setExpanded(true)}
+          className="mono"
+          title="Click to expand"
+          style={{
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            display: "inline-flex",
+            alignItems: "baseline",
+            gap: 4,
+            maxWidth: "100%",
+          }}
+        >
+          <span style={{ opacity: 0.6, fontSize: 11 }}>▸</span>
+          <span>{snippet}</span>
+        </span>
+      </Row>
+    );
+  }
+  return (
+    <Row k={label}>
+      <div
+        onClick={() => setExpanded(false)}
+        className="mono"
+        title="Click to collapse"
+        style={{ cursor: "pointer", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+      >
+        <span style={{ opacity: 0.6, fontSize: 11, marginRight: 4 }}>▾</span>
+        {cmd}
+      </div>
+    </Row>
   );
 }
 

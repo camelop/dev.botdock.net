@@ -4,6 +4,12 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Collapsible prompt row in the Meta card.** Long Claude Code prompts
+  (and long shell commands for generic-cmd) no longer force the right
+  column to a second scrollbar. Shown as a one-line snippet by default;
+  click to expand to the full wrapped text, click again to collapse.
+  Empty prompt still renders as `(none)` without a click affordance.
+
 - **Incremental transcript loading.** SessionView now caches each session's
   transcript / raw / events bytes per-tab; re-opening the same session
   tells the daemon to stream only what's new instead of re-transferring
