@@ -1,0 +1,4 @@
+{"ts":"2026-04-21T02:48:39Z","kind":"shim_boot","agent":"claude-code","pid":1561730}
+{"ts":"2026-04-21T02:48:39Z","kind":"pre_claude","bin":"/home/xiaoyuanliu/.local/bin/claude"}
+{"ts":"2026-04-21T02:48:39Z","kind":"started","pid":1561730,"agent":"claude-code"}
+{"ts":"2026-04-21T02:48:41Z","kind":"cc_session","file":"/home/xiaoyuanliu/.claude/projects/-home-xiaoyuanliu-dev-botdock-net/fc3a8416-67b9-47fb-805b-615b673167ff.jsonl","uuid":"fc3a8416-67b9-47fb-805b-615b673167ff"}

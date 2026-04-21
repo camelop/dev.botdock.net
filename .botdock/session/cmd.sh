@@ -1,0 +1,5 @@
+PROMPT='我们来做一个本地的agent管理器，叫BotDock。BotDock可以像一个司令塔一样，帮助用户管理多台机器上的各类agent实例，追踪其执行状态和进度，并中心化的管理用户经验和credentials并可选的提供给agent。
+
+目前想到的第一版本采用本地文件夹来持久化数据，用户通过一条命令在这个文件夹内启动服务网站'
+SKIP_TRUST=1
+RESUME_UUID='fc3a8416-67b9-47fb-805b-615b673167ff'

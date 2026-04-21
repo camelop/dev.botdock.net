@@ -119,6 +119,7 @@ function DashboardPill({ session: s }: { session: Session }) {
   if (s.status === "exited") { label = "exited"; cls = ""; }
   else if (s.status === "failed_to_start") { label = "failed"; cls = "err"; }
   else if (s.status === "provisioning") { label = "provisioning"; cls = "warn"; }
+  else if (s.agent_kind === "claude-code" && s.activity === "syncing") { label = "syncing"; cls = "warn"; }
   else if (s.agent_kind === "claude-code" && s.activity === "pending") { label = "pending"; cls = "warn"; }
   else if (s.agent_kind === "claude-code" && s.activity === "running") { label = "running"; cls = "ok"; }
   else { label = "active"; cls = "ok"; }

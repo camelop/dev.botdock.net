@@ -85,9 +85,10 @@ export type Session = {
   terminal_local_port?: number;
   terminal_remote_port?: number;
   remote_transcript_offset?: number;
+  remote_transcript_size?: number;
   last_raw_at?: string;
   last_transcript_at?: string;
-  activity?: "running" | "pending";
+  activity?: "running" | "pending" | "syncing";
   cc_skip_trust?: boolean;
   cc_resume_uuid?: string;
   alias?: string;
@@ -213,9 +214,16 @@ export const api = {
     ),
 };
 
-export function sessionWatchUrl(id: string): string {
+export function sessionWatchUrl(id: string, offsets?: {
+  events?: number; raw?: number; transcript?: number;
+}): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/watch`;
+  const params = new URLSearchParams();
+  if (offsets?.events)     params.set("events_offset", String(offsets.events));
+  if (offsets?.raw)        params.set("raw_offset",    String(offsets.raw));
+  if (offsets?.transcript) params.set("tx_offset",     String(offsets.transcript));
+  const q = params.toString();
+  return `${proto}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/watch${q ? "?" + q : ""}`;
 }
 
 export type ForwardDirection = "local" | "remote" | "dynamic";

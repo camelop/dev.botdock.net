@@ -210,8 +210,19 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
       if (watchMatch) {
         const sessionId = decodeURIComponent(watchMatch[1]!);
         if (!sessionExists(dir, sessionId)) return error(404, "session not found");
+        // Clients may pass starting offsets to skip bytes they've already
+        // cached locally — avoids re-transferring a multi-MB transcript
+        // every time the user switches sessions or reloads. Parsed as
+        // unsigned integers; anything else falls back to 0 (full send).
+        const parseOff = (k: string) => {
+          const n = Number(url.searchParams.get(k) ?? 0);
+          return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+        };
+        const evOffset = parseOff("events_offset");
+        const rawOffset = parseOff("raw_offset");
+        const txOffset = parseOff("tx_offset");
         if (srv.upgrade(req, {
-          data: { kind: "session-watch", sessionId, evOffset: 0, rawOffset: 0, txOffset: 0 } satisfies SessionWatchData,
+          data: { kind: "session-watch", sessionId, evOffset, rawOffset, txOffset } satisfies SessionWatchData,
         })) {
           return new Response(null);
         }

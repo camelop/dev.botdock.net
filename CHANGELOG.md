@@ -4,6 +4,18 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Incremental transcript loading.** SessionView now caches each session's
+  transcript / raw / events bytes per-tab; re-opening the same session
+  tells the daemon to stream only what's new instead of re-transferring
+  the entire jsonl. Multi-MB resumed conversations used to reparse from
+  scratch on every session switch and every page-number click — that
+  round-trip is gone.
+- **New "syncing" activity state.** While the poller is still draining a
+  transcript backlog (remote_transcript_offset < remote_transcript_size)
+  the session shows a blue spinner badge and a "syncing" pill instead of
+  being misreported as "running". Flips to running/pending the moment
+  the local mirror catches up.
+
 - **Session tags for the Workspace sidebar.** Configure any number of
   tags per session (Config dialog → Tags row, Enter to add). The
   sidebar grows one group per distinct tag; a session with multiple

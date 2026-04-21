@@ -306,6 +306,23 @@ pre.code {
 .agent-badge.state-exited      { background: #4a5160; color: var(--fg-dim); }
 .agent-badge.state-failed      { background: var(--danger); color: #2a0a0a; }
 .agent-badge.state-provisioning{ background: var(--warn); color: #2a1e00; }
+/* "Syncing" = BotDock is still dragging down the transcript backlog from
+   the remote. Use the same spinner-in-pill as running but with an accent
+   blue so it reads as "BotDock is working" rather than "agent is working". */
+.agent-badge.state-syncing {
+  background: var(--accent);
+  color: rgba(14,17,22,0.0);
+}
+.agent-badge.state-syncing::before {
+  content: "";
+  box-sizing: border-box;
+  width: 68%;
+  height: 68%;
+  border: 2px solid rgba(14,17,22,0.9);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: botdock-spin 0.85s linear infinite;
+}
 .agent-badge.state-running {
   background: var(--ok);
   color: rgba(14,17,22,0.0);  /* hide any accidental text */

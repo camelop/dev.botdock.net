@@ -316,8 +316,14 @@ export class SessionPoller extends EventEmitter {
       const txBytes = Buffer.byteLength(report.transcriptDelta, "utf8");
       updateSession(this.dir, s.id, {
         remote_transcript_offset: Math.min(prevTx + txBytes, report.transcriptSize),
+        remote_transcript_size: report.transcriptSize,
         last_transcript_at: new Date().toISOString(),
       });
+      changed = true;
+    } else if (report.transcriptSize !== s.remote_transcript_size) {
+      // No delta this tick but the remote reported a different total —
+      // record it so the syncing-state check below sees fresh numbers.
+      updateSession(this.dir, s.id, { remote_transcript_size: report.transcriptSize });
       changed = true;
     }
 
@@ -392,7 +398,14 @@ export class SessionPoller extends EventEmitter {
 function computeActivity(
   s: Session,
   dir: import("../storage/index.ts").DataDir,
-): "running" | "pending" {
+): "running" | "pending" | "syncing" {
+  // Backlog draining: our local mirror is behind the remote. The last-line
+  // heuristic would read stale data in this window, so surface "syncing"
+  // explicitly. Tolerate a 1-byte slack to avoid flapping on the final
+  // partial chunk during steady-state writes.
+  const off = s.remote_transcript_offset ?? 0;
+  const size = s.remote_transcript_size ?? 0;
+  if (size > 0 && off + 1 < size) return "syncing";
   const lastEntry = readLastTranscriptEntry(dir, s.id);
   if (!lastEntry) return "running";
   return lastEntryLooksFinal(lastEntry) ? "pending" : "running";

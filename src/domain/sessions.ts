@@ -39,14 +39,21 @@ export type Session = {
   terminal_remote_port?: number;
   /** Byte offset into the remote CC jsonl we've already mirrored locally. */
   remote_transcript_offset?: number;
+  /** Last observed size of the remote CC jsonl. When offset < size, the
+   * poller is still draining a backlog — activity is surfaced as "syncing"
+   * so the UI doesn't mis-flag a catch-up period as "running". */
+  remote_transcript_size?: number;
   /** Wallclock timestamps of the last time the poller saw growth in each
    * stream. Used by the activity-state heuristic. */
   last_raw_at?: string;
   last_transcript_at?: string;
   /** Derived activity (only meaningful for active claude-code sessions):
    *   "running" = agent is producing output / using a tool,
-   *   "pending" = agent has completed its turn, awaiting the user. */
-  activity?: "running" | "pending";
+   *   "pending" = agent has completed its turn, awaiting the user,
+   *   "syncing" = BotDock hasn't finished mirroring the remote transcript
+   *               yet — the last-entry heuristic can't be trusted until
+   *               we're caught up. */
+  activity?: "running" | "pending" | "syncing";
   /** For claude-code: if true, the shim launches claude with
    *  --dangerously-skip-permissions so the folder-trust dialog and
    *  per-tool permission prompts are auto-accepted. Opt-in per session. */

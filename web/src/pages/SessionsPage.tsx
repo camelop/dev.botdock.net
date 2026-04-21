@@ -12,6 +12,7 @@ import {
 import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
 import { ALIAS_COLORS } from "../lib/alias-colors";
+import * as streamCache from "../lib/session-stream-cache";
 import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
@@ -173,6 +174,7 @@ function SessionPill({ session: s }: { session: Pick<Session, "status" | "activi
   if (s.status === "exited") { label = "exited"; cls = ""; }
   else if (s.status === "failed_to_start") { label = "failed"; cls = "err"; }
   else if (s.status === "provisioning") { label = "provisioning"; cls = "warn"; }
+  else if (s.agent_kind === "claude-code" && s.activity === "syncing") { label = "syncing"; cls = "warn"; }
   else if (s.agent_kind === "claude-code" && s.activity === "pending") { label = "pending"; cls = "warn"; }
   else if (s.agent_kind === "claude-code" && s.activity === "running") { label = "running"; cls = "ok"; }
   else { label = "active"; cls = "ok"; }
@@ -650,27 +652,35 @@ export function SessionView(props: {
   const [showInput, setShowInput] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
 
-  // WebSocket is the single source of truth for events + raw. The server's
-  // initial snapshot on open already covers everything up to "now", so we
-  // don't do a parallel HTTP fetch (doing so races with the WS snapshot and
-  // double-counts the raw log).
+  // WebSocket is the single source of truth for events + raw + transcript.
+  // On mount we seed from the per-tab cache (so re-opening the same session
+  // is instant) and ask the server to start its stream at the offsets we
+  // already have — avoids re-transporting a multi-MB transcript every time.
   useEffect(() => {
-    setEvents([]);
-    setRawText("");
-    setTranscriptText("");
+    const cached = streamCache.getCache(props.id);
+    setEvents(cached?.events ?? []);
+    setRawText(cached?.rawText ?? "");
+    setTranscriptText(cached?.transcriptText ?? "");
     setErr("");
     api.getSession(props.id).then(setSession).catch((e) => setErr(String(e.message ?? e)));
 
-    const ws = new WebSocket(sessionWatchUrl(props.id));
+    const ws = new WebSocket(sessionWatchUrl(props.id, cached ? {
+      events: cached.eventsOffset,
+      raw: cached.rawBytes,
+      transcript: cached.transcriptBytes,
+    } : undefined));
     wsRef.current = ws;
     ws.addEventListener("message", (e) => {
       const m = JSON.parse(e.data as string);
       if (m.type === "events") {
-        setEvents((cur) => [...cur, ...m.records]);
+        const merged = streamCache.appendEvents(props.id, m.records, m.nextOffset);
+        setEvents(merged);
       } else if (m.type === "raw") {
-        setRawText((cur) => cur + m.data);
+        const merged = streamCache.appendRaw(props.id, m.data);
+        setRawText(merged);
       } else if (m.type === "transcript") {
-        setTranscriptText((cur) => cur + m.data);
+        const merged = streamCache.appendTranscript(props.id, m.data);
+        setTranscriptText(merged);
       } else if (m.type === "session") {
         // Authoritative session meta from the server — picks up activity
         // transitions, exit_code, etc. without re-fetching HTTP.

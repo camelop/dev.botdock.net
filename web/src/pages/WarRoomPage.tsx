@@ -227,6 +227,7 @@ export type AgentBadgeState =
   | "failed"
   | "provisioning"
   | "running"
+  | "syncing"
   | "pending"
   | "pending-acked";
 
@@ -234,6 +235,7 @@ export function badgeState(s: Session, acked: boolean): AgentBadgeState {
   if (s.status === "exited") return "exited";
   if (s.status === "failed_to_start") return "failed";
   if (s.status === "provisioning") return "provisioning";
+  if (s.agent_kind === "claude-code" && s.activity === "syncing") return "syncing";
   if (s.agent_kind === "claude-code" && s.activity === "pending") return acked ? "pending-acked" : "pending";
   if (s.agent_kind === "claude-code" && s.activity === "running") return "running";
   return "active";
@@ -242,6 +244,7 @@ export function badgeState(s: Session, acked: boolean): AgentBadgeState {
 function badgeLabel(state: AgentBadgeState): string {
   switch (state) {
     case "running":       return "agent is working";
+    case "syncing":       return "catching up transcript";
     case "pending":       return "agent waiting on you";
     case "pending-acked": return "pending (acknowledged)";
     case "provisioning":  return "provisioning";
