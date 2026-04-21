@@ -18,18 +18,31 @@ export type AliasColorKey =
   | "purple"
   | "pink";
 
-type AliasColor = { name: AliasColorKey; label: string; swatch: string; accent: string };
+type AliasColor = {
+  name: AliasColorKey;
+  label: string;
+  /** Background fill on the sidebar row's name pill. */
+  bg: string;
+  /** Text color on top of bg, picked by luminance. */
+  fg: string;
+  /** Accent used for the row's left border. */
+  accent: string;
+};
 
+// fg is picked by eyeballing luminance on the dark theme — dark text on
+// warm/light backgrounds (red, orange, yellow, green, teal, pink), white
+// on deeper hues (blue, purple). Keeping it explicit beats computing
+// 0.299r + 0.587g + 0.114b at the edge of every row.
 export const ALIAS_COLORS: AliasColor[] = [
-  { name: "none",   label: "None",    swatch: "transparent", accent: "var(--accent)" },
-  { name: "red",    label: "Red",     swatch: "#ef6b6b",     accent: "#ef6b6b" },
-  { name: "orange", label: "Orange",  swatch: "#f2994b",     accent: "#f2994b" },
-  { name: "yellow", label: "Yellow",  swatch: "#f2b94b",     accent: "#f2b94b" },
-  { name: "green",  label: "Green",   swatch: "#6ecf6e",     accent: "#6ecf6e" },
-  { name: "teal",   label: "Teal",    swatch: "#4bc4c4",     accent: "#4bc4c4" },
-  { name: "blue",   label: "Blue",    swatch: "#6aa4ff",     accent: "#6aa4ff" },
-  { name: "purple", label: "Purple",  swatch: "#b388ff",     accent: "#b388ff" },
-  { name: "pink",   label: "Pink",    swatch: "#e57fb7",     accent: "#e57fb7" },
+  { name: "none",   label: "None",    bg: "transparent", fg: "var(--fg)",  accent: "var(--accent)" },
+  { name: "red",    label: "Red",     bg: "#ef6b6b",     fg: "#1a0606",    accent: "#ef6b6b" },
+  { name: "orange", label: "Orange",  bg: "#f2994b",     fg: "#1f0f03",    accent: "#f2994b" },
+  { name: "yellow", label: "Yellow",  bg: "#f2b94b",     fg: "#1f1603",    accent: "#f2b94b" },
+  { name: "green",  label: "Green",   bg: "#6ecf6e",     fg: "#061a06",    accent: "#6ecf6e" },
+  { name: "teal",   label: "Teal",    bg: "#4bc4c4",     fg: "#061a1a",    accent: "#4bc4c4" },
+  { name: "blue",   label: "Blue",    bg: "#6aa4ff",     fg: "#071225",    accent: "#6aa4ff" },
+  { name: "purple", label: "Purple",  bg: "#b388ff",     fg: "#130625",    accent: "#b388ff" },
+  { name: "pink",   label: "Pink",    bg: "#e57fb7",     fg: "#200916",    accent: "#e57fb7" },
 ];
 
 export function aliasColor(key?: string): AliasColor | undefined {

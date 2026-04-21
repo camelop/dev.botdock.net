@@ -4,6 +4,19 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Config dialog replaces double-click rename.** The session detail
+  header (modal + workspace) now has a `Config` button next to
+  Deactivate. Opens a dialog with an Alias input and a color-swatch
+  row. The picked color paints the sidebar row's **name background**
+  (not the text); foreground flips to dark-on-warm / light-on-deep
+  automatically so it stays readable.
+- **Fix: Open-in-workspace no longer lands on the first session.** The
+  hub's refresh loop was eagerly selecting `list[0]` on initial load,
+  which beat the `hub-preselect` hint to the punch. It now leaves
+  selection null when there's no prior choice, and the preselect effect
+  picks the intended session on the next render. Hub refresh failures
+  also surface as an error banner instead of being silently swallowed.
+
 - **Server-side aliases + colors for sessions.** Double-click a Workspace
   sidebar row to open a small editor: rename the session and pick an
   accent color from a 9-swatch palette. Stored in `meta.toml` (not

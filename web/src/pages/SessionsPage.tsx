@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
+import { ALIAS_COLORS } from "../lib/alias-colors";
 import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
@@ -646,6 +647,7 @@ export function SessionView(props: {
   // SendInput pane is collapsed by default to give the terminal more room —
   // a button in the terminal toolbar toggles it.
   const [showInput, setShowInput] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
 
   // WebSocket is the single source of truth for events + raw. The server's
   // initial snapshot on open already covers everything up to "now", so we
@@ -782,7 +784,15 @@ export function SessionView(props: {
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
-            }}>Session {props.id}</h2>
+            }}>{session?.alias || `Session ${props.id}`}</h2>
+            {session && (
+              <button
+                className="secondary"
+                style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }}
+                onClick={() => setConfigOpen(true)}
+                title="Rename this session and pick an accent color"
+              >Config</button>
+            )}
             {session?.status === "active" && (
               <button className="secondary" style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }} onClick={onStop}>
                 Deactivate
@@ -802,6 +812,13 @@ export function SessionView(props: {
               >×</button>
             )}
           </div>
+          {configOpen && session && (
+            <SessionConfigDialog
+              session={session}
+              onClose={() => setConfigOpen(false)}
+              onSaved={(s) => { setSession(s); props.onChange?.(); }}
+            />
+          )}
           {session && (
             <div className="mono muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
               <SessionPill session={session} />{" "}
@@ -1455,6 +1472,105 @@ function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }:
         />
       </div>
     </>
+  );
+}
+
+/**
+ * Modal for setting a session's alias + accent color. Writes to the server
+ * and calls onSaved with the updated Session so the parent can refresh.
+ */
+function SessionConfigDialog({ session, onClose, onSaved }: {
+  session: Session;
+  onClose: () => void;
+  onSaved: (s: Session) => void;
+}) {
+  const [alias, setAliasText] = useState(session.alias ?? "");
+  const [color, setColor] = useState(session.alias_color || "none");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setSaving(true); setErr("");
+    try {
+      const next = await api.updateSessionMeta(session.id, {
+        alias: alias.trim(),
+        alias_color: color === "none" ? "" : color,
+      });
+      onSaved(next);
+      onClose();
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+        zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-elev)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: 20,
+          width: 380,
+        }}
+      >
+        <h2 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--fg)" }}>
+          Session config — {session.id}
+        </h2>
+        <label style={{ marginBottom: 12 }}>
+          <span>Alias</span>
+          <input
+            autoFocus
+            value={alias}
+            placeholder={session.id}
+            onChange={(e) => setAliasText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") onClose();
+            }}
+            style={{ fontSize: 13 }}
+          />
+        </label>
+        <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>Accent color</div>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+          {ALIAS_COLORS.map((c) => {
+            const on = color === c.name;
+            return (
+              <button
+                key={c.name}
+                type="button"
+                onClick={() => setColor(c.name)}
+                title={c.label}
+                style={{
+                  width: 28, height: 28, borderRadius: 6,
+                  background: c.bg === "transparent" ? "var(--bg-card)" : c.bg,
+                  color: c.fg,
+                  border: on ? "2px solid var(--fg)" : "1px solid var(--border)",
+                  padding: 0, cursor: "pointer",
+                  fontSize: 12, fontWeight: 600,
+                }}
+              >
+                {c.name === "none" ? "∅" : "A"}
+              </button>
+            );
+          })}
+        </div>
+        {err && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
+        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+          <button className="secondary" onClick={onClose} disabled={saving}>Cancel</button>
+          <button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
