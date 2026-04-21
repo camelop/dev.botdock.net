@@ -15,6 +15,7 @@ import { ALIAS_COLORS } from "../lib/alias-colors";
 import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
+import { SessionNameChip } from "../components/SessionNameChip";
 
 export type SessionDraft = {
   machine: string;
@@ -117,7 +118,7 @@ export function SessionsPage() {
             <tbody>
               {sessions.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
-                  <td className="mono">{s.id}</td>
+                  <td><SessionNameChip session={s} /></td>
                   <td><SessionPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionCmdLabel(s)}</td>
@@ -784,7 +785,11 @@ export function SessionView(props: {
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
-            }}>{session?.alias || `Session ${props.id}`}</h2>
+            }}>
+              {session
+                ? <SessionNameChip session={session} fallback={`Session ${props.id}`} size={16} />
+                : `Session ${props.id}`}
+            </h2>
             {session && (
               <button
                 className="secondary"

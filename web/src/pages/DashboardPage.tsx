@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
 import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, type SessionDraft } from "./SessionsPage";
+import { SessionNameChip } from "../components/SessionNameChip";
 import { relativeTime, fullTime } from "../lib/time";
 import { isAcked } from "../lib/acks";
 
@@ -71,7 +72,7 @@ export function DashboardPage() {
             <tbody>
               {recent.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
-                  <td className="mono">{s.id}</td>
+                  <td><SessionNameChip session={s} /></td>
                   <td><DashboardPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

@@ -4,6 +4,14 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Aliases + colors apply globally.** Dashboard Recent, Sessions List,
+  Card view (both the pending-strip and the grid cards), Workspace
+  sidebar, and the session modal title now all render the session name
+  through a shared `SessionNameChip` component that honors the alias
+  and paints the chip background with the chosen color. The original
+  session id + cmd + machine/workdir survive as a multi-line hover
+  tooltip wherever the chip is shown.
+
 - **Config dialog replaces double-click rename.** The session detail
   header (modal + workspace) now has a `Config` button next to
   Deactivate. Opens a dialog with an Alias input and a color-swatch

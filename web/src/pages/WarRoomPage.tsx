@@ -5,6 +5,7 @@ import { SessionDetailModal } from "./SessionsPage";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 import { relativeTime, fullTime } from "../lib/time";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
+import { SessionNameChip } from "../components/SessionNameChip";
 
 const AVATAR_PALETTE = ["#6aa4ff", "#6ecf6e", "#f2b94b", "#c47fd6", "#4bd0c7"];
 
@@ -130,7 +131,7 @@ export function WarRoomPage() {
                 }}
               >
                 <AgentAvatar session={s} size={32} />
-                <span className="mono">{shortLabel(s)}</span>
+                <SessionNameChip session={s} fallback={shortLabel(s)} size={12} />
                 <button
                   className="secondary"
                   style={{ padding: "2px 8px", fontSize: 11 }}
@@ -277,7 +278,7 @@ function SessionCard(props: {
         <AgentAvatar session={s} size={56} acked={acked} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {shortLabel(s)}
+            <SessionNameChip session={s} fallback={shortLabel(s)} size={14} />
           </div>
           <div className="muted mono" style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>
             {s.machine} · {s.workdir}

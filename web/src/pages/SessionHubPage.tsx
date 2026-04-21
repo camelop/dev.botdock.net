@@ -5,6 +5,7 @@ import { AgentAvatar } from "./WarRoomPage";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
 import { relativeTime, fullTime } from "../lib/time";
 import { aliasColor } from "../lib/alias-colors";
+import { SessionNameChip } from "../components/SessionNameChip";
 
 /**
  * Three-column workspace:
@@ -241,17 +242,11 @@ function SidebarRow(props: {
   onUnack: () => void;
 }) {
   const { session: s, selected } = props;
-  const alias = s.alias && s.alias.length > 0 ? s.alias : undefined;
   const isPending = s.status === "active" && s.agent_kind === "claude-code" && s.activity === "pending";
   const acked = isPending && isAcked(s.id, s.last_transcript_at);
-  const displayName = alias || shortCmd(s);
   const color = aliasColor(s.alias_color);
-  // Row's left border: the user's chosen accent (or the selection accent).
-  const borderAccent = color?.accent ?? (selected ? "var(--accent)" : "transparent");
-  // Name chip: when a color is picked, render as a small pill filled with
-  // the color and dark/light foreground from alias-colors; otherwise a
-  // plain label that inherits text color.
   const hasColor = !!color && color.name !== "none";
+  const borderAccent = color?.accent ?? (selected ? "var(--accent)" : "transparent");
 
   return (
     <div
@@ -267,24 +262,14 @@ function SidebarRow(props: {
       <AgentAvatar session={s} size={32} acked={acked} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
-          title={s.id}
           style={{
-            fontSize: 13,
             fontWeight: selected ? 600 : 500,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
-            ...(hasColor && color ? {
-              background: color.bg,
-              color: color.fg,
-              padding: "1px 8px",
-              borderRadius: 4,
-              display: "inline-block",
-              maxWidth: "100%",
-            } : {}),
           }}
         >
-          {displayName}
+          <SessionNameChip session={s} fallback={shortCmd(s)} size={13} />
         </div>
         <div
           className="muted mono"
