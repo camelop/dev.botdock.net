@@ -4,6 +4,21 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Action-bar toggle polish.** Notes / Keyboard / FileBrowser active
+  states now share a single `ACTIVE_TOGGLE_STYLE` (accent border, inset
+  ring, subtle tint) so "this is on" reads the same across all three.
+- **FileBrowser as a segmented button group when running.** Idle is
+  still a single "📁 FileBrowser" button. Once running, Open + Stop
+  share a border with zero gap and wear the accent highlight across
+  both — the group itself carries "the filebrowser is on" and the
+  buttons inside pick the action.
+- **Notes drag/resize no longer sticks over the terminal iframe.**
+  While the user is holding a drag or resize, the panel renders a
+  transparent full-viewport guard at `zIndex: 49` (above the iframe,
+  below the panel) that keeps mouse events on the parent window.
+  Without it the ttyd iframe swallowed the moves as soon as the
+  cursor entered it.
+
 - **Notes panel: drag + resize + fix per-session content.** The floating
   scratchpad from earlier today had three issues all patched now:
   1. Switching sessions didn't re-fetch — you'd see the previous

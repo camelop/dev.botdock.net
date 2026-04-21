@@ -83,6 +83,15 @@ function saveNotesRect(r: PersistedNotesRect): void {
   try { localStorage.setItem(NOTES_RECT_KEY, JSON.stringify(r)); } catch {}
 }
 
+// Shared "toggle button is currently active" styling — picked once so the
+// Notes / Keyboard / FileBrowser left-side toggles all look the same when
+// their thing is on. Colored border + inset ring + subtle tint.
+const ACTIVE_TOGGLE_STYLE: React.CSSProperties = {
+  borderColor: "var(--accent)",
+  boxShadow: "inset 0 0 0 1px var(--accent)",
+  background: "rgba(106,164,255,0.12)",
+};
+
 export function freshDraft(machines: Machine[]): SessionDraft {
   return {
     machine: machines[0]?.name ?? "",
@@ -980,20 +989,23 @@ export function SessionView(props: {
                     className="secondary"
                     style={{
                       padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
-                      ...(notesOpen ? { borderColor: "var(--accent)", boxShadow: "inset 0 0 0 1px var(--accent)" } : {}),
+                      ...(notesOpen ? ACTIVE_TOGGLE_STYLE : {}),
                     }}
                     onClick={onToggleNotes}
                     title="Toggle the floating scratchpad (persisted to notes.md)"
-                  >📝 {notesOpen ? "Hide notes" : "Notes"}</button>
+                  >📝 {notesOpen ? "Hide Notes" : "Notes"}</button>
                 )}
                 inputToggle={session.status === "active" ? (
                   <button
                     className="secondary"
-                    style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                    style={{
+                      padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
+                      ...(showInput ? ACTIVE_TOGGLE_STYLE : {}),
+                    }}
                     onClick={() => setShowInput((v) => !v)}
                     title="Toggle the input pane (send text / quick keys to tmux)"
                   >
-                    {showInput ? "▾ Hide keyboard" : "⌨ Keyboard"}
+                    {showInput ? "⌨ Hide Keyboard" : "⌨ Keyboard"}
                   </button>
                 ) : null}
                 fileBrowserControls={session.status === "active" ? (
@@ -1165,9 +1177,17 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
   // Drag: header mousedown captures pointer, mousemove updates top/left,
   // mouseup releases. Resize handle: same pattern, updates width/height.
   // Both clamp against viewport so the user can't lose the panel.
+  //
+  // `dragMode` drives a fullscreen transparent overlay that sits above the
+  // ttyd iframe during drags — without it, once the cursor enters the
+  // iframe the browser delivers mousemove events to ttyd instead of us, so
+  // the panel "sticks" to the mouse until we pass back over our own window.
+  const [dragMode, setDragMode] = useState<"none" | "move" | "resize">("none");
+
   const onHeaderDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;   // don't drag when clicking ×
     e.preventDefault();
+    setDragMode("move");
     const startX = e.clientX, startY = e.clientY;
     const start = rect;
     const move = (ev: MouseEvent) => {
@@ -1180,6 +1200,7 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      setDragMode("none");
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -1187,6 +1208,7 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
   const onResizeDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setDragMode("resize");
     const startX = e.clientX, startY = e.clientY;
     const start = rect;
     const move = (ev: MouseEvent) => {
@@ -1198,12 +1220,29 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      setDragMode("none");
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
 
   return (
+    <>
+      {dragMode !== "none" && (
+        <div
+          // Transparent fullscreen guard to keep mouse events on the parent
+          // window during a drag. Without this the ttyd iframe swallows
+          // the mousemove events as soon as the cursor enters it and the
+          // panel stops tracking the pointer. zIndex 49: below the panel
+          // (50) but above the iframe (auto → 0).
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 49,
+            cursor: dragMode === "move" ? "grabbing" : "nwse-resize",
+          }}
+        />
+      )}
     <div
       style={{
         position: "fixed",
@@ -1278,6 +1317,7 @@ function NotesPanel({ sessionId, alias, text, loading, saving, rect, onRectChang
         }}
       />
     </div>
+    </>
   );
 }
 
@@ -1781,47 +1821,70 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
   onStart: () => void;
   onStop: () => void;
 }) {
-  const iconBtn: React.CSSProperties = {
-    padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
+  const baseBtn: React.CSSProperties = {
+    padding: "4px 10px", fontSize: 12, flexShrink: 0,
   };
   const running = !!session.filebrowser_local_port;
   const url = `/api/sessions/${encodeURIComponent(session.id)}/files/`;
+
   if (!running) {
+    // Idle: single button (no group). Uses the shared active-toggle style
+    // when starting so the visual "I'm doing something" is consistent with
+    // Notes/Keyboard being open.
     return (
       <div className="row" style={{ gap: 4, alignItems: "center" }}>
         <button
           className="secondary"
-          style={iconBtn}
+          style={{
+            ...baseBtn, borderRadius: 6,
+            ...(state === "starting" ? ACTIVE_TOGGLE_STYLE : {}),
+          }}
           onClick={onStart}
           disabled={state !== "idle"}
           title="Spawn filebrowser on the remote scoped to this session's workdir"
-        >📁 {state === "starting" ? "Starting…" : "File Browser"}</button>
+        >📁 {state === "starting" ? "Starting…" : "FileBrowser"}</button>
         {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
       </div>
     );
   }
+
+  // Running: segmented button group. The two halves share a border and the
+  // active-toggle accent is applied across the whole group so it reads as
+  // one "FileBrowser is on" affordance, with the specific action buttons
+  // inside.
+  const groupBtn: React.CSSProperties = {
+    ...baseBtn,
+    borderRadius: 0,
+    ...ACTIVE_TOGGLE_STYLE,
+  };
   return (
-    <div className="row" style={{ gap: 4, alignItems: "center" }}>
+    <div className="row" style={{ gap: 0, alignItems: "center" }}>
       <a
         href={url}
         target="_blank"
         rel="noreferrer"
         className="secondary"
         style={{
-          ...iconBtn, textDecoration: "none",
-          background: "#323844", color: "var(--fg)",
-          border: "1px solid #3f4754",
+          ...groupBtn,
+          textDecoration: "none",
+          borderTopLeftRadius: 6,
+          borderBottomLeftRadius: 6,
+          borderRight: "none",
         }}
         title="Open the filebrowser UI in a new tab"
       >📁 Open FileBrowser ↗</a>
       <button
         className="secondary"
-        style={iconBtn}
+        style={{
+          ...groupBtn,
+          borderTopRightRadius: 6,
+          borderBottomRightRadius: 6,
+        }}
         onClick={onStop}
         disabled={state !== "idle"}
         title="Kill the remote filebrowser and drop its SSH forward"
-      >{state === "stopping" ? "Stopping FileBrowser…" : "⏹ Stop FileBrowser"}</button>
-      {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
+      >{state === "stopping" ? "Stopping…" : "⏹ Stop"}</button>
+      {err && <span className="pill err" style={{ fontSize: 10, marginLeft: 4 }} title={err}>error</span>}
     </div>
   );
 }
