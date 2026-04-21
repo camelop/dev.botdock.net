@@ -712,32 +712,21 @@ export function SessionView(props: {
               <ClaudeTerminal
                 session={session}
                 fillParent
-                extraButtons={
-                  <>
-                    {session.status === "active" && (
-                      <button
-                        className="secondary"
-                        style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
-                        onClick={() => setShowInput((v) => !v)}
-                        title="Toggle the input pane (send text / quick keys to tmux)"
-                      >
-                        {showInput ? "▾ Hide input" : "⌨ Input"}
-                      </button>
-                    )}
-                    {props.inModal && (
-                      <button
-                        className="secondary"
-                        style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
-                        onClick={() => {
-                          try { sessionStorage.setItem("botdock:hub-preselect", session.id); } catch {}
-                          props.onClose?.();
-                          window.location.hash = "hub";
-                        }}
-                        title="Close this modal and open the session in the Workspace view"
-                      >⇲ Workspace</button>
-                    )}
-                  </>
-                }
+                inputToggle={session.status === "active" ? (
+                  <button
+                    className="secondary"
+                    style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                    onClick={() => setShowInput((v) => !v)}
+                    title="Toggle the input pane (send text / quick keys to tmux)"
+                  >
+                    {showInput ? "▾ Hide keyboard" : "⌨ Keyboard"}
+                  </button>
+                ) : null}
+                onOpenInWorkspace={props.inModal ? () => {
+                  try { sessionStorage.setItem("botdock:hub-preselect", session.id); } catch {}
+                  props.onClose?.();
+                  window.location.hash = "hub";
+                } : undefined}
               />
             ) : (
               <>
@@ -749,7 +738,7 @@ export function SessionView(props: {
                       style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
                       onClick={() => setShowInput((v) => !v)}
                       title="Toggle the input pane"
-                    >{showInput ? "▾ Hide input" : "⌨ Input"}</button>
+                    >{showInput ? "▾ Hide keyboard" : "⌨ Keyboard"}</button>
                   )}
                 </div>
                 <div
@@ -881,25 +870,97 @@ function EventsTable({ events }: { events: SessionEventRecord[] }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [sorted.length]);
   return (
-    <div ref={scrollRef} className="scroll-panel" style={{ maxHeight: 140, border: "1px solid var(--border)", borderRadius: 6 }}>
-      <table className="table" style={{ fontSize: 11.5 }}>
-        <tbody>
-          {sorted.map((ev, i) => (
-            <tr key={i}>
-              <td className="muted" style={{ whiteSpace: "nowrap", width: 110 }} title={fullTime(ev.ts)}>
-                {relativeTime(ev.ts)}
-              </td>
-              <td><span className="pill">{ev.kind}</span></td>
-              <td className="mono">{renderEventPayload(ev)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div
+      ref={scrollRef}
+      className="scroll-panel"
+      style={{ maxHeight: 140, border: "1px solid var(--border)", borderRadius: 6, fontSize: 10.5 }}
+    >
+      {sorted.map((ev, i) => (
+        <div
+          key={i}
+          style={{
+            padding: "4px 8px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div className="row" style={{ gap: 6, alignItems: "center" }}>
+            <span className="pill" style={{ fontSize: 9, padding: "1px 6px" }}>{ev.kind}</span>
+            <span className="muted" title={fullTime(ev.ts)} style={{ fontSize: 10 }}>
+              {relativeTime(ev.ts)}
+            </span>
+          </div>
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 10,
+              marginTop: 1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {renderEventPayload(ev)}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
 const TRANSCRIPT_PAGE_SIZE = 20;
+
+/**
+ * The "N/total · turnCount" label is click-to-edit: tap it, type a page,
+ * hit Enter. Out-of-range values are clamped; Escape cancels.
+ */
+function TranscriptPageIndicator({ totalPages, clampedPage, turnCount, onJump }: {
+  totalPages: number;
+  clampedPage: number;
+  turnCount: number;
+  onJump: (oneIndexedPage: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const visiblePage = totalPages - clampedPage;  // 1-indexed
+
+  useEffect(() => {
+    if (editing) setDraft(String(visiblePage));
+  }, [editing, visiblePage]);
+
+  if (!editing) {
+    return (
+      <span
+        className="muted mono"
+        onClick={() => setEditing(true)}
+        style={{
+          fontSize: 11, minWidth: 72, textAlign: "center",
+          cursor: "pointer", padding: "2px 4px", borderRadius: 4,
+        }}
+        title="Click to jump to a specific page"
+      >
+        {visiblePage}/{totalPages} · {turnCount}
+      </span>
+    );
+  }
+  const commit = () => {
+    const n = parseInt(draft, 10);
+    if (!Number.isNaN(n)) onJump(n);
+    setEditing(false);
+  };
+  return (
+    <input
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ""))}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
+      }}
+      style={{ width: 60, fontSize: 11, padding: "2px 4px", textAlign: "center" }}
+    />
+  );
+}
 
 function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
   const turns = useMemo(() => parseTranscript(text), [text]);
@@ -961,9 +1022,15 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
                 onClick={() => setPageFromEnd((p) => Math.min(totalPages - 1, p + 1))}
                 title="Older turns"
               >←</button>
-              <span className="muted mono" style={{ fontSize: 11, minWidth: 72, textAlign: "center" }}>
-                {totalPages - clampedPage}/{totalPages} · {turns.length}
-              </span>
+              <TranscriptPageIndicator
+                totalPages={totalPages}
+                clampedPage={clampedPage}
+                turnCount={turns.length}
+                onJump={(oneIndexed) => {
+                  const fromEnd = Math.max(0, Math.min(totalPages - 1, totalPages - oneIndexed));
+                  setPageFromEnd(fromEnd);
+                }}
+              />
               <button
                 className="secondary"
                 style={{ padding: "4px 8px", fontSize: 12 }}
@@ -1173,10 +1240,16 @@ function roleBadgeStyle(kind: TranscriptTurn["kind"]): { label: string; bg: stri
   }
 }
 
-function ClaudeTerminal({ session, fillParent, extraButtons }: {
+function ClaudeTerminal({ session, fillParent, inputToggle, onOpenInWorkspace }: {
   session: Session;
   fillParent?: boolean;
-  extraButtons?: React.ReactNode;
+  /** Rendered on the LEFT side of the action bar, alongside the Context
+   * button. Used by SessionView to pass the Keyboard/input toggle. */
+  inputToggle?: React.ReactNode;
+  /** When set, a ⇲ Workspace button appears on the RIGHT side of the
+   * action bar between + and New tab. SessionView passes this only when
+   * the view is mounted as a modal. */
+  onOpenInWorkspace?: () => void;
 }) {
   const [zoomed, setZoomed] = useState(false);
   // Changing reloadKey remounts the iframe, which forces ttyd to do a
@@ -1271,53 +1344,67 @@ function ClaudeTerminal({ session, fillParent, extraButtons }: {
   return (
     <>
       {!zoomed && (
-        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
-          <button
-            className="secondary"
-            style={iconBtn}
-            onClick={() => setReloadKey((k) => k + 1)}
-            title="Reload the ttyd iframe (forces tmux to re-measure the pane)"
-          >↻ Reload</button>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="secondary"
-            style={{
-              ...iconBtn, textDecoration: "none",
-              background: "#323844", color: "var(--fg)",
-              border: "1px solid #3f4754",
-            }}
-            title="Open in a new browser tab"
-          >↗ New tab</a>
-          <button
-            className="secondary"
-            style={iconBtn}
-            onClick={() => setZoomed(true)}
-            title="Expand to full screen (Esc to exit)"
-          >⛶ Full screen</button>
-          <button
-            className="secondary"
-            style={iconBtn}
-            onClick={() => setContentZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
-            title="Shrink terminal content (CSS zoom; Chromium/Safari only)"
-          >−</button>
-          <span className="muted mono" style={{ fontSize: 11, minWidth: 32, textAlign: "center" }}>
-            {Math.round(contentZoom * 100)}%
-          </span>
-          <button
-            className="secondary"
-            style={iconBtn}
-            onClick={() => setContentZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
-            title="Enlarge terminal content (CSS zoom; Chromium/Safari only)"
-          >+</button>
-          <button
-            className="secondary"
-            style={iconBtn}
-            disabled
-            title="Attach extra context to this session (coming soon)"
-          >＋ Context</button>
-          {extraButtons}
+        <div className="row" style={{ justifyContent: "space-between", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+          {/* LEFT: session-scoped input/context affordances. */}
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <button
+              className="secondary"
+              style={iconBtn}
+              disabled
+              title="Attach extra context to this session (coming soon)"
+            >＋ Context</button>
+            {inputToggle}
+          </div>
+          {/* RIGHT: viewport controls — zoom, nav, window. */}
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <button
+              className="secondary"
+              style={iconBtn}
+              onClick={() => setContentZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
+              title="Shrink terminal content (CSS zoom; Chromium/Safari only)"
+            >−</button>
+            <span className="muted mono" style={{ fontSize: 11, minWidth: 32, textAlign: "center", alignSelf: "center" }}>
+              {Math.round(contentZoom * 100)}%
+            </span>
+            <button
+              className="secondary"
+              style={iconBtn}
+              onClick={() => setContentZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+              title="Enlarge terminal content (CSS zoom; Chromium/Safari only)"
+            >+</button>
+            {onOpenInWorkspace && (
+              <button
+                className="secondary"
+                style={iconBtn}
+                onClick={onOpenInWorkspace}
+                title="Close this modal and open the session in the Workspace view"
+              >⇲ Workspace</button>
+            )}
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="secondary"
+              style={{
+                ...iconBtn, textDecoration: "none",
+                background: "#323844", color: "var(--fg)",
+                border: "1px solid #3f4754",
+              }}
+              title="Open in a new browser tab"
+            >↗ New tab</a>
+            <button
+              className="secondary"
+              style={iconBtn}
+              onClick={() => setZoomed(true)}
+              title="Expand to full screen (Esc to exit)"
+            >⛶ Full screen</button>
+            <button
+              className="secondary"
+              style={iconBtn}
+              onClick={() => setReloadKey((k) => k + 1)}
+              title="Reload the ttyd iframe (forces tmux to re-measure the pane)"
+            >↻</button>
+          </div>
         </div>
       )}
       <div ref={containerRef} style={containerStyle}>

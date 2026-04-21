@@ -4,6 +4,25 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Server-side aliases + colors for sessions.** Double-click a Workspace
+  sidebar row to open a small editor: rename the session and pick an
+  accent color from a 9-swatch palette. Stored in `meta.toml` (not
+  localStorage), so it's the same across browsers and survives reloads.
+  Color drives the sidebar row's left border and the name text tint.
+- **Workspace sidebar sort** is now purely by newest transcript activity
+  (falling back to start/created time) — the old localStorage
+  last-access heuristic is gone.
+- **Action bar reorganized.** Left side: ＋ Context, ⌨ Keyboard (was
+  "Input"). Right side: zoom −/%/+, ⇲ Workspace (modal only), ↗ New
+  tab, ⛶ Full screen, ↻ reload.
+- **Events panel** keeps its compact height but the rows are two-line
+  now (kind pill + time on the top row, payload underneath) at a
+  smaller font size.
+- **Transcript page counter is click-to-jump.** Tap the `N/total · count`
+  label to type a page number; Enter jumps, Esc cancels.
+
+## 2026-04-21 (earlier)
+
 - **Resume an existing Claude Code conversation.** New session modal
   (claude-code only) has a "Resume a previous conversation" picker that lists
   every `~/.claude/projects/*/*.jsonl` on the selected machine — sorted

@@ -3,8 +3,8 @@ import { api, type Session } from "../api";
 import { SessionView } from "./SessionsPage";
 import { AgentAvatar } from "./WarRoomPage";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
-import { setAlias, getAliases, touchLastAccess, getLastAccess } from "../lib/session-meta";
 import { relativeTime, fullTime } from "../lib/time";
+import { ALIAS_COLORS, aliasColor, DEFAULT_ALIAS_ACCENT } from "../lib/alias-colors";
 
 /**
  * Three-column workspace:
@@ -15,15 +15,12 @@ import { relativeTime, fullTime } from "../lib/time";
 export function SessionHubPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [aliases, setAliases] = useState(getAliases());
-  const [tick, setTick] = useState(0);  // force re-read of localStorage (acks, last-access)
+  const [tick, setTick] = useState(0);  // force re-read of localStorage acks
 
   const refresh = async () => {
     try {
       const list = await api.listSessions();
       setSessions(list);
-      // If current selection is gone (deleted), clear it so the user
-      // doesn't stare at a dead pane.
       setSelected((cur) => (cur && list.find((s) => s.id === cur)) ? cur : (list[0]?.id ?? null));
     } catch { /* tolerate transient errors */ }
   };
@@ -34,12 +31,7 @@ export function SessionHubPage() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    if (selected) touchLastAccess(selected);
-  }, [selected]);
-
   const pickDefault = (list: Session[]) => {
-    // Prefer pending, then running, then most-recently accessed overall.
     const pending = list.find((s) => s.status === "active" && s.agent_kind === "claude-code"
       && s.activity === "pending" && !isAcked(s.id, s.last_transcript_at));
     if (pending) return pending.id;
@@ -50,21 +42,22 @@ export function SessionHubPage() {
 
   // On first mount, honor a preselect hint (set by the detail modal's
   // "Open in workspace" button) if it points at a still-present session.
-  // Otherwise fall back to the pending/running heuristic.
   useEffect(() => {
     if (selected != null) return;
     if (sessions.length === 0) return;
     let preselect: string | null = null;
     try {
       preselect = sessionStorage.getItem("botdock:hub-preselect");
-      sessionStorage.removeItem("botdock:hub-preselect");
     } catch { /* private-browsing / no sessionStorage */ }
     if (preselect && sessions.find((s) => s.id === preselect)) {
       setSelected(preselect);
-    } else {
+      try { sessionStorage.removeItem("botdock:hub-preselect"); } catch {}
+    } else if (!preselect) {
       setSelected(pickDefault(sessions));
     }
-  }, [sessions.length]);  // eslint-disable-line react-hooks/exhaustive-deps
+    // If preselect is set but the session isn't yet in the list, leave it in
+    // sessionStorage — the next refresh will pick it up.
+  }, [sessions]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const grouped = useMemo(() => {
     const pending: Session[] = [];
@@ -82,13 +75,14 @@ export function SessionHubPage() {
         other.push(s);
       }
     }
+    // Sort by newest agent activity first — last_transcript_at is the
+    // strongest signal of "this session just did something". Fall back
+    // to started_at / created_at for sessions that haven't produced any
+    // transcript yet (generic-cmd, or a CC session still booting).
     const cmp = (a: Session, b: Session) => {
-      const la = getLastAccess(a.id);
-      const lb = getLastAccess(b.id);
-      if (la !== lb) return lb - la;
-      // tiebreak: newest transcript activity first
-      return (b.last_transcript_at ?? b.started_at ?? b.created_at)
-        .localeCompare(a.last_transcript_at ?? a.started_at ?? a.created_at);
+      const ta = a.last_transcript_at ?? a.started_at ?? a.created_at;
+      const tb = b.last_transcript_at ?? b.started_at ?? b.created_at;
+      return tb.localeCompare(ta);
     };
     pending.sort(cmp); running.sort(cmp); other.sort(cmp);
     return { pending, running, other };
@@ -97,9 +91,16 @@ export function SessionHubPage() {
   const onAck = (s: Session) => { ackSession(s.id, s.last_transcript_at); setTick((v) => v + 1); };
   const onUnack = (s: Session) => { unackSession(s.id); setTick((v) => v + 1); };
 
-  const onRename = (id: string, alias: string) => {
-    setAlias(id, alias);
-    setAliases(getAliases());
+  // Persist alias/color to the server. Optimistically update local state so
+  // the UI doesn't flicker while the round-trip completes.
+  const onSaveMeta = async (id: string, patch: { alias?: string; alias_color?: string }) => {
+    setSessions((cur) => cur.map((s) => s.id === id ? { ...s, ...patch } : s));
+    try {
+      await api.updateSessionMeta(id, patch);
+    } catch (e) {
+      console.error("[hub] saveMeta failed:", e);
+      refresh();  // re-sync from server on failure
+    }
   };
 
   return (
@@ -117,18 +118,15 @@ export function SessionHubPage() {
     >
       <SessionSidebar
         grouped={grouped}
-        aliases={aliases}
         selectedId={selected}
         onSelect={(id) => setSelected(id)}
         onAck={onAck}
         onUnack={onUnack}
-        onRename={onRename}
+        onSaveMeta={onSaveMeta}
       />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         {selected ? (
           <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-            {/* Full session view (left + right columns), without the modal
-                backdrop. Flex-in-flex so the terminal stretches. */}
             <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
               <HubSessionView id={selected} onChange={refresh} />
             </div>
@@ -146,10 +144,6 @@ export function SessionHubPage() {
   );
 }
 
-/**
- * Thin wrapper — SessionView already uses the .session-modal flex layout so
- * we just need to ensure it fills the hub's middle/right area.
- */
 function HubSessionView({ id, onChange }: { id: string; onChange: () => void | Promise<void> }) {
   return (
     <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
@@ -158,16 +152,18 @@ function HubSessionView({ id, onChange }: { id: string; onChange: () => void | P
   );
 }
 
-function SessionSidebar(props: {
-  grouped: { pending: Session[]; running: Session[]; other: Session[] };
-  aliases: Record<string, string>;
+type SidebarCommonProps = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onAck: (s: Session) => void;
   onUnack: (s: Session) => void;
-  onRename: (id: string, alias: string) => void;
+  onSaveMeta: (id: string, patch: { alias?: string; alias_color?: string }) => void | Promise<void>;
+};
+
+function SessionSidebar(props: SidebarCommonProps & {
+  grouped: { pending: Session[]; running: Session[]; other: Session[] };
 }) {
-  const { grouped } = props;
+  const { grouped, ...rest } = props;
   return (
     <div
       className="scroll-panel"
@@ -180,26 +176,16 @@ function SessionSidebar(props: {
         flexDirection: "column",
       }}
     >
-      <Group title="Needs attention" sessions={grouped.pending}
-             {...props} tone="warn" />
-      <Group title="Active" sessions={grouped.running}
-             {...props} tone="ok" />
-      <Group title="Other" sessions={grouped.other}
-             {...props} tone="muted" collapsedByDefault />
+      <Group title="Needs attention" sessions={grouped.pending} {...rest} />
+      <Group title="Active" sessions={grouped.running} {...rest} />
+      <Group title="Other" sessions={grouped.other} {...rest} collapsedByDefault />
     </div>
   );
 }
 
-function Group(props: {
+function Group(props: SidebarCommonProps & {
   title: string;
-  tone: "warn" | "ok" | "muted";
   sessions: Session[];
-  aliases: Record<string, string>;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onAck: (s: Session) => void;
-  onUnack: (s: Session) => void;
-  onRename: (id: string, alias: string) => void;
   collapsedByDefault?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(!!props.collapsedByDefault);
@@ -233,12 +219,11 @@ function Group(props: {
         <SidebarRow
           key={s.id}
           session={s}
-          alias={props.aliases[s.id]}
           selected={props.selectedId === s.id}
           onClick={() => props.onSelect(s.id)}
           onAck={() => props.onAck(s)}
           onUnack={() => props.onUnack(s)}
-          onRename={(alias) => props.onRename(s.id, alias)}
+          onSaveMeta={(patch) => props.onSaveMeta(s.id, patch)}
         />
       ))}
     </div>
@@ -247,24 +232,19 @@ function Group(props: {
 
 function SidebarRow(props: {
   session: Session;
-  alias: string | undefined;
   selected: boolean;
   onClick: () => void;
   onAck: () => void;
   onUnack: () => void;
-  onRename: (alias: string) => void;
+  onSaveMeta: (patch: { alias?: string; alias_color?: string }) => void;
 }) {
-  const { session: s, alias, selected } = props;
+  const { session: s, selected } = props;
+  const alias = s.alias && s.alias.length > 0 ? s.alias : undefined;
   const isPending = s.status === "active" && s.agent_kind === "claude-code" && s.activity === "pending";
   const acked = isPending && isAcked(s.id, s.last_transcript_at);
   const displayName = alias || shortCmd(s);
+  const accent = aliasColor(s.alias_color)?.accent ?? (selected ? "var(--accent)" : "transparent");
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(alias ?? "");
-
-  const commit = () => {
-    props.onRename(draft);
-    setEditing(false);
-  };
 
   return (
     <div
@@ -274,40 +254,25 @@ function SidebarRow(props: {
         padding: "8px 12px",
         cursor: "pointer",
         background: selected ? "var(--bg-card)" : "transparent",
-        borderLeft: selected ? "3px solid var(--accent)" : "3px solid transparent",
+        borderLeft: `3px solid ${selected || s.alias_color ? accent : "transparent"}`,
       }}
     >
       <AgentAvatar session={s} size={32} acked={acked} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        {editing ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commit();
-              if (e.key === "Escape") { setDraft(alias ?? ""); setEditing(false); }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            placeholder={s.id}
-            style={{ fontSize: 13, padding: "2px 6px" }}
-          />
-        ) : (
-          <div
-            onDoubleClick={(e) => { e.stopPropagation(); setDraft(alias ?? ""); setEditing(true); }}
-            title={alias ? `${s.id} (double-click to rename)` : "Double-click to rename"}
-            style={{
-              fontSize: 13,
-              fontWeight: selected ? 600 : 500,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {displayName}
-          </div>
-        )}
+        <div
+          onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          title={`${s.id} (double-click to rename + set color)`}
+          style={{
+            fontSize: 13,
+            fontWeight: selected ? 600 : 500,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            color: aliasColor(s.alias_color)?.accent ?? undefined,
+          }}
+        >
+          {displayName}
+        </div>
         <div
           className="muted mono"
           style={{ fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
@@ -332,6 +297,92 @@ function SidebarRow(props: {
           title="Un-acknowledge"
         >✓</button>
       )}
+      {editing && (
+        <AliasEditor
+          session={s}
+          onCancel={() => setEditing(false)}
+          onSave={(patch) => { props.onSaveMeta(patch); setEditing(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline popover for editing a session's alias + color. Rendered over the
+ * full viewport with a backdrop so it's visible from inside the sidebar
+ * row (which is narrow). Commits via api.updateSessionMeta upstream.
+ */
+function AliasEditor({ session, onCancel, onSave }: {
+  session: Session;
+  onCancel: () => void;
+  onSave: (patch: { alias: string; alias_color: string }) => void;
+}) {
+  const [alias, setAliasText] = useState(session.alias ?? "");
+  const [color, setColor] = useState(session.alias_color || "none");
+
+  const commit = () => onSave({ alias: alias.trim(), alias_color: color === "none" ? "" : color });
+
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); onCancel(); }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+        zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-elev)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: 20,
+          width: 360,
+        }}
+      >
+        <h2 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--fg)" }}>
+          Rename session
+        </h2>
+        <input
+          autoFocus
+          value={alias}
+          placeholder={session.id}
+          onChange={(e) => setAliasText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") onCancel();
+          }}
+          style={{ fontSize: 13, marginBottom: 12 }}
+        />
+        <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>Color</div>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+          {ALIAS_COLORS.map((c) => {
+            const on = color === c.name;
+            return (
+              <button
+                key={c.name}
+                type="button"
+                onClick={() => setColor(c.name)}
+                title={c.label}
+                style={{
+                  width: 24, height: 24, borderRadius: 6,
+                  background: c.swatch === "transparent" ? "var(--bg-card)" : c.swatch,
+                  border: on ? "2px solid var(--fg)" : "1px solid var(--border)",
+                  padding: 0, cursor: "pointer",
+                  boxShadow: on ? "0 0 0 2px var(--bg-elev) inset" : undefined,
+                }}
+              >
+                {c.swatch === "transparent" && <span style={{ fontSize: 14, color: "var(--fg-dim)" }}>∅</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+          <button className="secondary" onClick={onCancel}>Cancel</button>
+          <button onClick={commit}>Save</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -340,3 +391,5 @@ function shortCmd(s: Session): string {
   const label = s.cmd && s.cmd.length > 0 ? s.cmd : s.id;
   return label.length > 30 ? label.slice(0, 30) + "…" : label;
 }
+// silence lint about unused import when tree-shaking
+void DEFAULT_ALIAS_ACCENT;

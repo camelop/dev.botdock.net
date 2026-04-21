@@ -55,6 +55,12 @@ export type Session = {
    * continue a prior conversation on the remote instead of starting a
    * fresh one. The workdir must match the resumed session's cwd. */
   cc_resume_uuid?: string;
+  /** User-chosen display name for the session. Persisted in meta.toml so
+   * it survives across browsers / reloads. */
+  alias?: string;
+  /** User-chosen accent color name for the session's sidebar row / avatar
+   * frame. One of the keys in ALIAS_COLORS (see lib/alias-colors.ts). */
+  alias_color?: string;
 };
 
 export type SessionEvent = {

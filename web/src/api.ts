@@ -90,6 +90,8 @@ export type Session = {
   activity?: "running" | "pending";
   cc_skip_trust?: boolean;
   cc_resume_uuid?: string;
+  alias?: string;
+  alias_color?: string;
 };
 export type SessionEventRecord = {
   ts: string;
@@ -180,6 +182,11 @@ export const api = {
   }) => request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
+  updateSessionMeta: (id: string, body: { alias?: string | null; alias_color?: string | null }) =>
+    request<Session>(`/api/sessions/${encodeURIComponent(id)}/meta`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   sendSessionInput: (id: string, body: { text?: string; keys?: string[] }) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/input`, {
       method: "POST",

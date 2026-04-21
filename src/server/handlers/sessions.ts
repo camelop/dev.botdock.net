@@ -10,6 +10,7 @@ import {
   readTranscriptRange,
   readSession,
   sessionExists,
+  updateSession,
   type AgentKind,
 } from "../../domain/sessions.ts";
 import {
@@ -73,6 +74,27 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       .then(() => poller.watch(s.id))
       .catch((err) => console.error(`[sessions] launch ${s.id} failed:`, err));
     return json(s, { status: 201 });
+  });
+
+  // Mutate user-facing metadata (alias, alias color). Scoped intentionally
+  // narrow — anything else should go through a dedicated endpoint so we
+  // don't accidentally let the client rewrite status/offsets via PATCH.
+  router.post("/api/sessions/:id/meta", async ({ req, params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const body = await parseJsonBody<{ alias?: string | null; alias_color?: string | null }>(req);
+    const patch: { alias?: string; alias_color?: string } = {};
+    if (body.alias !== undefined) {
+      const trimmed = typeof body.alias === "string" ? body.alias.trim() : "";
+      if (trimmed) patch.alias = trimmed.slice(0, 64);
+      else         patch.alias = "";  // store empty → treated as cleared by reader
+    }
+    if (body.alias_color !== undefined) {
+      const c = typeof body.alias_color === "string" ? body.alias_color.trim() : "";
+      if (c) patch.alias_color = c.slice(0, 32);
+      else   patch.alias_color = "";
+    }
+    const next = updateSession(dir, params.id!, patch);
+    return json(next);
   });
 
   router.post("/api/sessions/:id/stop", async ({ params }) => {
