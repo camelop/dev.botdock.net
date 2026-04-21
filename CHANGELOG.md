@@ -4,6 +4,21 @@ Only user-visible changes. Grouped by day; latest first.
 
 ## 2026-04-21
 
+- **Transcript is server-paginated now.** Previously the UI streamed the
+  entire multi-MB JSONL over the WS and re-parsed it client-side every
+  time you opened a long session — visually you'd see the right pane
+  "fill in" slowly. New endpoint
+  `GET /api/sessions/:id/transcript/page?page=N&size=20` does the line
+  counting + slicing server-side; page -1 is a sentinel for "latest".
+  SessionView now opens directly on the latest page, and other pages
+  are fetched lazily on click. Pages other than the latest are cached
+  per-tab per-session so flipping between them is instant.
+- **WS no longer streams transcript.** The transcript branch was
+  removed from `pushDelta`; events + raw + session meta still flow
+  through the WS as live deltas, and TranscriptView refreshes its
+  latest page whenever `remote_transcript_size` / `last_transcript_at`
+  change. Result: even a 10MB resumed jsonl opens instantly.
+
 - **Collapsible prompt row in the Meta card.** Long Claude Code prompts
   (and long shell commands for generic-cmd) no longer force the right
   column to a second scrollbar. Shown as a one-line snippet by default;

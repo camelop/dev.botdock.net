@@ -14,7 +14,7 @@ import { proxyHttp, tryUpgradeWsProxy, openProxyWs, relayProxyWsMessage, closePr
 import { forwardExists, readForward } from "../domain/forwards.ts";
 import { embeddedFiles } from "./embedded.ts";
 import { SessionPoller } from "../domain/session-poller.ts";
-import { readEvents, readRawRange, readTranscriptRange, sessionExists, readSession } from "../domain/sessions.ts";
+import { readEvents, readRawRange, sessionExists, readSession } from "../domain/sessions.ts";
 import { ForwardManager } from "../domain/forward-manager.ts";
 import { randomBytes } from "node:crypto";
 import { BOTDOCK_VERSION } from "../version.ts";
@@ -134,11 +134,10 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
       ws.send(JSON.stringify({ type: "raw", data: raw.data, nextOffset: raw.nextOffset }));
       ws.data.rawOffset = raw.nextOffset;
     }
-    const tx = readTranscriptRange(dir, sessionId, ws.data.txOffset, 262144);
-    if (tx.data.length > 0) {
-      ws.send(JSON.stringify({ type: "transcript", data: tx.data, nextOffset: tx.nextOffset }));
-      ws.data.txOffset = tx.nextOffset;
-    }
+    // Transcript is NOT pushed through the WS anymore — the client pulls
+    // pages via /api/sessions/:id/transcript/page on demand and only
+    // re-fetches the latest page when session meta reports growth. This
+    // keeps initial session open snappy even for multi-MB CC transcripts.
     // Also push the current session meta so the client can react to
     // activity transitions (running ↔ waiting) without re-polling HTTP.
     try {

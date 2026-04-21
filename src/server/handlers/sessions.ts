@@ -7,6 +7,7 @@ import {
   readEvents,
   readRawRange,
   readRecentTranscriptLines,
+  readTranscriptPage,
   readTranscriptRange,
   readSession,
   sessionExists,
@@ -164,6 +165,19 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     const offset = Number(url.searchParams.get("offset") ?? 0);
     const max = Number(url.searchParams.get("max") ?? 262144);
     return json(readTranscriptRange(dir, params.id!, offset, max));
+  });
+
+  // Paginated transcript view. Pass `page=-1` (or any out-of-range large
+  // number) to get the newest page — the server clamps and returns the
+  // resolved page_index so the client doesn't need to pre-fetch stats.
+  router.get("/api/sessions/:id/transcript/page", ({ params, url }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const pageRaw = Number(url.searchParams.get("page") ?? -1);
+    const pageSize = Number(url.searchParams.get("size") ?? 20);
+    // A negative page means "give me the last page" — treat as Infinity
+    // before clamping inside readTranscriptPage.
+    const page = pageRaw < 0 ? Number.MAX_SAFE_INTEGER : pageRaw;
+    return json(readTranscriptPage(dir, params.id!, { page, pageSize }));
   });
 
   // War-room summary: last N parsed JSONL entries. Cheap per-session

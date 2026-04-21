@@ -643,7 +643,6 @@ export function SessionView(props: {
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEventRecord[]>([]);
   const [rawText, setRawText] = useState("");
-  const [transcriptText, setTranscriptText] = useState("");
   const [err, setErr] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -652,22 +651,19 @@ export function SessionView(props: {
   const [showInput, setShowInput] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
 
-  // WebSocket is the single source of truth for events + raw + transcript.
-  // On mount we seed from the per-tab cache (so re-opening the same session
-  // is instant) and ask the server to start its stream at the offsets we
-  // already have — avoids re-transporting a multi-MB transcript every time.
+  // WebSocket carries events + raw + session-meta deltas. Transcript is
+  // NOT streamed anymore — TranscriptView pulls it a page at a time via
+  // HTTP so opening a session with a multi-MB transcript is instant.
   useEffect(() => {
     const cached = streamCache.getCache(props.id);
     setEvents(cached?.events ?? []);
     setRawText(cached?.rawText ?? "");
-    setTranscriptText(cached?.transcriptText ?? "");
     setErr("");
     api.getSession(props.id).then(setSession).catch((e) => setErr(String(e.message ?? e)));
 
     const ws = new WebSocket(sessionWatchUrl(props.id, cached ? {
       events: cached.eventsOffset,
       raw: cached.rawBytes,
-      transcript: cached.transcriptBytes,
     } : undefined));
     wsRef.current = ws;
     ws.addEventListener("message", (e) => {
@@ -678,12 +674,10 @@ export function SessionView(props: {
       } else if (m.type === "raw") {
         const merged = streamCache.appendRaw(props.id, m.data);
         setRawText(merged);
-      } else if (m.type === "transcript") {
-        const merged = streamCache.appendTranscript(props.id, m.data);
-        setTranscriptText(merged);
       } else if (m.type === "session") {
         // Authoritative session meta from the server — picks up activity
-        // transitions, exit_code, etc. without re-fetching HTTP.
+        // transitions, remote_transcript_size growth (used by TranscriptView
+        // as a refresh trigger), exit_code, etc. without re-polling HTTP.
         setSession(m.session as Session);
       }
     });
@@ -845,7 +839,12 @@ export function SessionView(props: {
           {session && <Meta s={session} />}
 
           {session?.agent_kind === "claude-code" && (
-            <TranscriptView text={transcriptText} hasFile={!!session.cc_session_file} />
+            <TranscriptView
+              sessionId={props.id}
+              hasFile={!!session.cc_session_file}
+              transcriptSize={session.remote_transcript_size}
+              lastTranscriptAt={session.last_transcript_at}
+            />
           )}
 
           <h2>Events</h2>
@@ -945,15 +944,15 @@ const TRANSCRIPT_PAGE_SIZE = 20;
  * The "N/total · turnCount" label is click-to-edit: tap it, type a page,
  * hit Enter. Out-of-range values are clamped; Escape cancels.
  */
-function TranscriptPageIndicator({ totalPages, clampedPage, turnCount, onJump }: {
+function TranscriptPageIndicator({ totalPages, pageIndex, lineCount, onJump }: {
   totalPages: number;
-  clampedPage: number;
-  turnCount: number;
+  pageIndex: number;   // 0-indexed from start
+  lineCount: number;
   onJump: (oneIndexedPage: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const visiblePage = totalPages - clampedPage;  // 1-indexed
+  const visiblePage = pageIndex + 1;  // 1-indexed for display
 
   useEffect(() => {
     if (editing) setDraft(String(visiblePage));
@@ -970,7 +969,7 @@ function TranscriptPageIndicator({ totalPages, clampedPage, turnCount, onJump }:
         }}
         title="Click to jump to a specific page"
       >
-        {visiblePage}/{totalPages} · {turnCount}
+        {visiblePage}/{totalPages} · {lineCount}
       </span>
     );
   }
@@ -994,27 +993,96 @@ function TranscriptPageIndicator({ totalPages, clampedPage, turnCount, onJump }:
   );
 }
 
-function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
-  const turns = useMemo(() => parseTranscript(text), [text]);
+/**
+ * Paginated view over the local transcript.ndjson. Fetches one page (20
+ * lines by default) from the daemon rather than streaming / parsing the
+ * whole multi-MB file up-front. The latest page is loaded on mount and
+ * whenever `transcriptSize` grows; other pages only load when the user
+ * explicitly clicks to them. Older pages are cached per-session per-tab
+ * so flipping back and forth is instant.
+ */
+function TranscriptView({ sessionId, hasFile, transcriptSize, lastTranscriptAt }: {
+  sessionId: string;
+  hasFile: boolean;
+  transcriptSize?: number;
+  lastTranscriptAt?: string;
+}) {
+  type PageCache = Map<number, { turns: TranscriptTurn[]; text: string }>;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const cacheRef = useRef<PageCache>(new Map());
+  const [pageIndex, setPageIndex] = useState(-1);   // -1 = "latest"; server resolves
+  const [lineCount, setLineCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
   const [showRaw, setShowRaw] = useState(false);
-  // 0-indexed, counted from the END (page 0 = newest slice). Lets the view
-  // default to the latest turns without re-computing every time the transcript
-  // grows, and "Jump to latest" is just setPage(0).
-  const [pageFromEnd, setPageFromEnd] = useState(0);
+  const [rawText, setRawText] = useState("");
 
-  const totalPages = Math.max(1, Math.ceil(turns.length / TRANSCRIPT_PAGE_SIZE));
-  // Clamp: if the transcript shrank (unlikely but defensive), drop the page.
-  const clampedPage = Math.min(pageFromEnd, totalPages - 1);
-  const pageEnd = turns.length - clampedPage * TRANSCRIPT_PAGE_SIZE;
-  const pageStart = Math.max(0, pageEnd - TRANSCRIPT_PAGE_SIZE);
-  const pageTurns = turns.slice(pageStart, pageEnd);
-  const onLatest = clampedPage === 0;
+  const resolvedPage = pageIndex < 0
+    ? Math.max(0, totalPages - 1)
+    : Math.min(pageIndex, Math.max(0, totalPages - 1));
+  const onLatest = resolvedPage === Math.max(0, totalPages - 1);
 
-  // Auto-scroll to bottom only when we're on the latest page and new turns land.
+  // Reset cache + pageIndex whenever we switch sessions.
+  useEffect(() => {
+    cacheRef.current = new Map();
+    setPageIndex(-1);
+    setLineCount(0);
+    setTotalPages(0);
+    setRawText("");
+    setShowRaw(false);
+    setErr("");
+  }, [sessionId]);
+
+  // Fetch the current page (re-fetch on growth if we're on the latest page).
+  useEffect(() => {
+    if (!hasFile) return;
+    // Only reuse a cached page if we're NOT on the latest — the latest page's
+    // contents change whenever CC appends, so always ask the server for it.
+    const cacheKey = pageIndex;  // preserve "-1" sentinel for latest
+    const cached = !onLatest ? cacheRef.current.get(resolvedPage) : undefined;
+    if (cached) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setErr("");
+    api.getSessionTranscriptPage(sessionId, cacheKey).then((r) => {
+      if (cancelled) return;
+      setLineCount(r.line_count);
+      setTotalPages(r.total_pages);
+      setPageSize(r.page_size);
+      const turns = parseTranscript(r.text);
+      cacheRef.current.set(r.page_index, { turns, text: r.text });
+      // If we asked for "latest" (-1) the server resolved to a real index;
+      // sync our state so the UI can tell we're truly on the latest page.
+      if (pageIndex < 0) setPageIndex(r.page_index);
+    }).catch((e) => {
+      if (cancelled) return;
+      setErr(String((e as Error)?.message ?? e));
+    }).finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+    // transcriptSize / lastTranscriptAt drive refresh-on-growth for the
+    // latest page. For non-latest pages they're ignored (cached).
+  }, [sessionId, pageIndex, transcriptSize, lastTranscriptAt, hasFile]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-scroll to bottom when we're on latest + new content lands.
   useEffect(() => {
     if (onLatest && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [onLatest, pageTurns.length]);
+  }, [onLatest, lineCount]);
+
+  // "View raw" fetches the whole transcript lazily via the byte-range
+  // endpoint; skipped unless the user toggles it.
+  useEffect(() => {
+    if (!showRaw) return;
+    let cancelled = false;
+    api.getSessionTranscript(sessionId, 0, 10 * 1024 * 1024).then((r) => {
+      if (cancelled) return;
+      setRawText(r.data);
+    }).catch((e) => !cancelled && setErr(String((e as Error)?.message ?? e)));
+    return () => { cancelled = true; };
+  }, [showRaw, sessionId]);
 
   if (!hasFile) {
     return (
@@ -1029,7 +1097,10 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
     );
   }
 
-  if (turns.length === 0) {
+  const currentPage = cacheRef.current.get(resolvedPage);
+  const pageTurns = currentPage?.turns ?? [];
+
+  if (totalPages === 0 && !loading) {
     return (
       <>
         <h2>Transcript</h2>
@@ -1050,31 +1121,28 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
               <button
                 className="secondary"
                 style={{ padding: "4px 8px", fontSize: 12 }}
-                disabled={clampedPage >= totalPages - 1}
-                onClick={() => setPageFromEnd((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={resolvedPage <= 0}
+                onClick={() => setPageIndex(Math.max(0, resolvedPage - 1))}
                 title="Older turns"
               >←</button>
               <TranscriptPageIndicator
                 totalPages={totalPages}
-                clampedPage={clampedPage}
-                turnCount={turns.length}
-                onJump={(oneIndexed) => {
-                  const fromEnd = Math.max(0, Math.min(totalPages - 1, totalPages - oneIndexed));
-                  setPageFromEnd(fromEnd);
-                }}
+                pageIndex={resolvedPage}
+                lineCount={lineCount}
+                onJump={(oneIndexed) => setPageIndex(Math.max(0, Math.min(totalPages - 1, oneIndexed - 1)))}
               />
               <button
                 className="secondary"
                 style={{ padding: "4px 8px", fontSize: 12 }}
-                disabled={clampedPage <= 0}
-                onClick={() => setPageFromEnd((p) => Math.max(0, p - 1))}
+                disabled={resolvedPage >= totalPages - 1}
+                onClick={() => setPageIndex(Math.min(totalPages - 1, resolvedPage + 1))}
                 title="Newer turns"
               >→</button>
               <button
                 className="secondary"
                 style={{ padding: "4px 8px", fontSize: 12 }}
                 disabled={onLatest}
-                onClick={() => setPageFromEnd(0)}
+                onClick={() => setPageIndex(-1)}
                 title="Jump to the most recent turns"
               >⤓</button>
             </>
@@ -1087,6 +1155,7 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
           >{showRaw ? "Hide raw" : "View raw"}</button>
         </div>
       </div>
+      {err && <div className="error-banner" style={{ marginTop: 6 }}>{err}</div>}
       <div
         ref={scrollRef}
         className="scroll-panel"
@@ -1098,11 +1167,12 @@ function TranscriptView({ text, hasFile }: { text: string; hasFile: boolean }) {
           padding: 8,
         }}
       >
-        {showRaw ? (
-          <pre className="code" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{text}</pre>
-        ) : (
-          pageTurns.map((t, i) => <TranscriptTurnRow key={pageStart + i} turn={t} />)
-        )}
+        {showRaw
+          ? <pre className="code" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{rawText}</pre>
+          : (pageTurns.length === 0 && loading
+              ? <div className="muted" style={{ padding: 16, fontSize: 12 }}>Loading page…</div>
+              : pageTurns.map((t, i) => <TranscriptTurnRow key={resolvedPage * pageSize + i} turn={t} />)
+          )}
       </div>
     </>
   );

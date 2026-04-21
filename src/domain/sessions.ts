@@ -257,6 +257,92 @@ export function readRecentTranscriptLines(
   }
 }
 
+/**
+ * Paginated view over the local transcript.ndjson. Scans the file to count
+ * line breaks, then returns the requested page of raw JSONL lines. The UI
+ * uses this instead of shipping the entire transcript over the WS every
+ * time the user opens a session — for resumed CC conversations that
+ * transcript is frequently multi-MB, and parsing it all up front stalls
+ * the right pane of SessionView.
+ */
+export function readTranscriptPage(
+  dir: DataDir,
+  id: string,
+  opts: { page: number; pageSize: number },
+): {
+  line_count: number;
+  total_pages: number;
+  page_index: number;
+  page_size: number;
+  start: number;
+  end: number;
+  text: string;
+} {
+  const p = paths(dir, id).transcript;
+  const pageSize = Math.max(1, Math.min(500, Math.floor(opts.pageSize || 20)));
+
+  let size = 0;
+  try { size = statSync(p).size; } catch {
+    return { line_count: 0, total_pages: 0, page_index: 0, page_size: pageSize, start: 0, end: 0, text: "" };
+  }
+  if (size === 0) {
+    return { line_count: 0, total_pages: 0, page_index: 0, page_size: pageSize, start: 0, end: 0, text: "" };
+  }
+
+  const { openSync, readSync, closeSync } = require("node:fs") as typeof import("node:fs");
+
+  // First pass: count lines (\n bytes; also count a trailing line if the
+  // file doesn't end in \n). Scans in 64 KiB chunks so multi-MB files stay
+  // bounded in memory.
+  let lineCount = 0;
+  let lastByte = 0;
+  {
+    const fd = openSync(p, "r");
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      let remaining = size;
+      while (remaining > 0) {
+        const n = readSync(fd, buf, 0, Math.min(buf.length, remaining), null);
+        if (n <= 0) break;
+        for (let i = 0; i < n; i++) if (buf[i] === 10) lineCount++;
+        lastByte = buf[n - 1]!;
+        remaining -= n;
+      }
+    } finally { closeSync(fd); }
+    if (lastByte !== 10) lineCount++;  // trailing non-terminated line
+  }
+  if (lineCount === 0) {
+    return { line_count: 0, total_pages: 0, page_index: 0, page_size: pageSize, start: 0, end: 0, text: "" };
+  }
+
+  const totalPages = Math.ceil(lineCount / pageSize);
+  // Clamp page — "last page" sentinel: callers can pass a huge number to get
+  // the newest page without doing the math client-side.
+  const pageIndex = Math.max(0, Math.min(totalPages - 1, Math.floor(opts.page ?? 0)));
+  const start = pageIndex * pageSize;
+  const end = Math.min(lineCount, start + pageSize);
+
+  // Second pass: extract the requested line range. For simplicity, read the
+  // whole file once into a buffer. Transcripts up to a few MB are fine here;
+  // if this becomes a hot path we can switch to offset-indexed chunked reads.
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const text = (readFileSync(p, "utf8") as string);
+  // split on \n — for a file ending with \n this yields N+1 entries with
+  // the last being "", which slice() happily skips.
+  const allLines = text.split("\n");
+  const wanted = allLines.slice(start, end).filter((l) => l.length > 0);
+
+  return {
+    line_count: lineCount,
+    total_pages: totalPages,
+    page_index: pageIndex,
+    page_size: pageSize,
+    start,
+    end,
+    text: wanted.join("\n"),
+  };
+}
+
 export function readTranscriptRange(
   dir: DataDir,
   id: string,

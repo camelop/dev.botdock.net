@@ -196,6 +196,16 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getSessionTranscriptPage: (id: string, page: number, size = 20) =>
+    request<{
+      line_count: number;
+      total_pages: number;
+      page_index: number;
+      page_size: number;
+      start: number;
+      end: number;
+      text: string;
+    }>(`/api/sessions/${encodeURIComponent(id)}/transcript/page?page=${page}&size=${size}`),
   getSessionEvents: (id: string, offset = 0) =>
     request<{ records: SessionEventRecord[]; nextOffset: number }>(
       `/api/sessions/${encodeURIComponent(id)}/events?offset=${offset}`,
