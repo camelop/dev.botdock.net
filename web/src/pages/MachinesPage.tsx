@@ -23,6 +23,8 @@ export function MachinesPage() {
   const [testing, setTesting] = useState<string | null>(null);
   const [spawningTerminal, setSpawningTerminal] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ name: string; result: TestResult } | null>(null);
+  const [confirmEnableLocal, setConfirmEnableLocal] = useState(false);
+  const [localBusy, setLocalBusy] = useState(false);
 
   const refresh = async () => {
     try {
@@ -71,6 +73,21 @@ export function MachinesPage() {
     catch (e) { setErr(String((e as Error).message ?? e)); }
   };
 
+  const localMachine = machines.find((m) => m.managed === "local");
+
+  const doEnableLocal = async () => {
+    setLocalBusy(true); setErr("");
+    try { await api.enableLocalMachine(); await refresh(); }
+    catch (e) { setErr(String((e as Error).message ?? e)); }
+    finally { setLocalBusy(false); setConfirmEnableLocal(false); }
+  };
+  const doDisableLocal = async () => {
+    setLocalBusy(true); setErr("");
+    try { await api.disableLocalMachine(); await refresh(); }
+    catch (e) { setErr(String((e as Error).message ?? e)); }
+    finally { setLocalBusy(false); }
+  };
+
   const sessionCounts = useMemo(() => {
     const counts: Record<string, { running: number; total: number }> = {};
     for (const s of sessions) {
@@ -103,8 +120,45 @@ export function MachinesPage() {
     <div>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Machines</h1>
-        <button onClick={() => setEdit({ mode: "new" })}>New machine</button>
+        <div className="row" style={{ gap: 8 }}>
+          {!localMachine && (
+            <button
+              className="secondary"
+              onClick={() => setConfirmEnableLocal(true)}
+              disabled={localBusy}
+              title="Enable the managed `local` loopback machine so you can run agents on the host that's running BotDock"
+            >🖥️ Enable local</button>
+          )}
+          <button onClick={() => setEdit({ mode: "new" })}>New machine</button>
+        </div>
       </div>
+      {confirmEnableLocal && (
+        <Modal title="Enable local machine?" onClose={() => setConfirmEnableLocal(false)}>
+          <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 14 }}>
+            BotDock will create a dedicated SSH key and machine called{" "}
+            <code className="mono">local</code>, pointing at{" "}
+            <code className="mono">127.0.0.1</code>, and append that key's
+            public half to your{" "}
+            <code className="mono">~/.ssh/authorized_keys</code>. From that
+            point on, agents can run on <em>this</em> machine — the same one
+            that's running <code className="mono">botdock serve</code>.
+          </div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>
+            <strong>Heads up:</strong> when an agent runs on the BotDock
+            host, a misbehaving command (e.g. something that kills your
+            shell, takes the machine offline, or holds a lot of memory)
+            can take BotDock itself down, and you'll lose this browser's
+            connection until you bring the daemon back up manually.
+          </div>
+          {err && <div className="error-banner" style={{ fontSize: 12 }}>{err}</div>}
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+            <button className="secondary" onClick={() => setConfirmEnableLocal(false)} disabled={localBusy}>Cancel</button>
+            <button onClick={doEnableLocal} disabled={localBusy}>
+              {localBusy ? "Enabling…" : "Enable local"}
+            </button>
+          </div>
+        </Modal>
+      )}
       {err && <div className="error-banner">{err}</div>}
       <div className="card" style={{ padding: 0 }}>
         {machines.length === 0 ? (
@@ -128,9 +182,20 @@ export function MachinesPage() {
                 const counts = sessionCounts[m.name] ?? { running: 0, total: 0 };
                 const term = terminalByMachine[m.name];
                 const termRunning = term?.status.state === "running";
+                const isLocal = m.managed === "local";
+                const rowStyle: React.CSSProperties = m.disabled
+                  ? { opacity: 0.55 }
+                  : {};
                 return (
-                <tr key={m.name}>
-                  <td>{m.name}</td>
+                <tr key={m.name} style={rowStyle}>
+                  <td>
+                    {m.name}
+                    {isLocal && (
+                      <span className={`pill ${m.disabled ? "" : "ok"}`} style={{ marginLeft: 6, fontSize: 10 }}>
+                        {m.disabled ? "disabled" : "local"}
+                      </span>
+                    )}
+                  </td>
                   <td className="mono">{m.user}@{m.host}:{m.port ?? 22}</td>
                   <td className="mono">{m.key}</td>
                   <td>{m.jump?.length ?? 0}</td>
@@ -172,8 +237,28 @@ export function MachinesPage() {
                       <button className="secondary" disabled={testing === m.name} onClick={() => onTest(m.name)}>
                         {testing === m.name ? "Testing…" : "Test"}
                       </button>
-                      <button className="secondary" onClick={() => setEdit({ mode: "edit", name: m.name })}>Edit</button>
-                      <button className="secondary" onClick={() => onDelete(m.name)}>Remove</button>
+                      {isLocal ? (
+                        m.disabled ? (
+                          <button
+                            className="secondary"
+                            disabled={localBusy}
+                            onClick={() => setConfirmEnableLocal(true)}
+                            title="Re-enable the loopback machine (key + authorized_keys already exist)"
+                          >Enable</button>
+                        ) : (
+                          <button
+                            className="secondary"
+                            disabled={localBusy}
+                            onClick={doDisableLocal}
+                            title="Disable without deleting anything — the key + authorized_keys entry are kept so re-enable is instant"
+                          >Disable</button>
+                        )
+                      ) : (
+                        <>
+                          <button className="secondary" onClick={() => setEdit({ mode: "edit", name: m.name })}>Edit</button>
+                          <button className="secondary" onClick={() => onDelete(m.name)}>Remove</button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -268,6 +353,10 @@ function MachineEditor(props: {
       };
       if (!payload.tags?.length) delete payload.tags;
       if (!payload.jump?.length) delete payload.jump;
+      if (props.target.mode === "new" && payload.name === "local") {
+        // Mirror the server-side check with a friendlier message.
+        throw new Error('"local" is a reserved name. Use the "🖥️ Enable local" button above to create the managed loopback machine.');
+      }
       if (props.target.mode === "new") await api.createMachine(payload);
       else await api.updateMachine(props.target.name, payload);
       await props.onDone();

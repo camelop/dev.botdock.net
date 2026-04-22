@@ -6,8 +6,10 @@ import {
   listMachines,
   readMachine,
   writeMachine,
+  LOCAL_MACHINE_NAME,
 } from "../../domain/machines.ts";
 import type { Machine } from "../../domain/machines.ts";
+import { enableLocalMachine, disableLocalMachine } from "../../domain/local-machine.ts";
 import { buildSshConfig } from "../../lib/sshconfig.ts";
 import { run } from "../../lib/ssh.ts";
 import { sshExec } from "../../lib/remote.ts";
@@ -40,6 +42,9 @@ export function mountMachines(router: Router, dir: DataDir, forwardManager: Forw
   router.post("/api/machines", async ({ req }) => {
     const m = await parseJsonBody<Machine>(req);
     if (!m.name) throw new HttpError(400, "name required");
+    if (m.name === LOCAL_MACHINE_NAME) {
+      throw new HttpError(409, `"${LOCAL_MACHINE_NAME}" is reserved — use POST /api/machines/local/enable instead`);
+    }
     if (existsSync(dir.machineFile(m.name))) throw new HttpError(409, "already exists");
     writeMachine(dir, m);
     return json(m, { status: 201 });
@@ -48,15 +53,40 @@ export function mountMachines(router: Router, dir: DataDir, forwardManager: Forw
   router.put("/api/machines/:name", async ({ req, params }) => {
     const body = await parseJsonBody<Machine>(req);
     body.name = params.name!;
+    if (body.name === LOCAL_MACHINE_NAME) {
+      throw new HttpError(409, `"${LOCAL_MACHINE_NAME}" is managed — use enable/disable endpoints instead of PUT`);
+    }
     if (!existsSync(dir.machineFile(body.name))) throw new HttpError(404, "not found");
     writeMachine(dir, body);
     return json(body);
   });
 
   router.delete("/api/machines/:name", ({ params }) => {
+    if (params.name === LOCAL_MACHINE_NAME) {
+      throw new HttpError(409, `"${LOCAL_MACHINE_NAME}" cannot be removed — use Disable in the Machines page`);
+    }
     if (!existsSync(dir.machineFile(params.name!))) throw new HttpError(404, "not found");
     deleteMachine(dir, params.name!);
     return json({ ok: true });
+  });
+
+  // Enable / disable for the reserved `local` pseudo-machine. Enable is
+  // idempotent — it sets up the key + machine file + authorized_keys
+  // entry only as needed, and also clears any prior `disabled` flag.
+  router.post("/api/machines/local/enable", () => {
+    try {
+      const m = enableLocalMachine(dir);
+      return json(m);
+    } catch (err) {
+      throw new HttpError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+  router.post("/api/machines/local/disable", () => {
+    if (!existsSync(dir.machineFile(LOCAL_MACHINE_NAME))) {
+      throw new HttpError(404, "local machine is not enabled");
+    }
+    const m = disableLocalMachine(dir);
+    return json(m);
   });
 
   router.get("/api/machines/:name/browse", ({ params, url }) => {

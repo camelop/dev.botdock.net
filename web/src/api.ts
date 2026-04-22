@@ -29,6 +29,11 @@ export type Machine = {
   tags?: string[];
   notes?: string;
   jump?: JumpHop[];
+  /** Set to "local" on the reserved loopback machine. */
+  managed?: "local";
+  /** Soft-disabled machines still appear in listings but are filtered
+   * out of session-create pickers. */
+  disabled?: boolean;
 };
 
 export type SecretMeta = {
@@ -178,6 +183,10 @@ export const api = {
     }),
   deleteMachine: (name: string) =>
     request<{ ok: true }>(`/api/machines/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  enableLocalMachine: () =>
+    request<Machine>("/api/machines/local/enable", { method: "POST" }),
+  disableLocalMachine: () =>
+    request<Machine>("/api/machines/local/disable", { method: "POST" }),
   testMachine: (name: string) =>
     request<TestResult>(`/api/machines/${encodeURIComponent(name)}/test`, { method: "POST" }),
   browseMachine: (name: string, path: string) =>

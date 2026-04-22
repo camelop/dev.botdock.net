@@ -107,8 +107,9 @@ const ACTIVE_TOGGLE_STYLE: React.CSSProperties = {
 };
 
 export function freshDraft(machines: Machine[]): SessionDraft {
+  const enabled = machines.filter((m) => !m.disabled);
   return {
-    machine: machines[0]?.name ?? "",
+    machine: enabled[0]?.name ?? machines[0]?.name ?? "",
     workdir: `~/.botdock/projects/${twoWordSlug()}`,
     agent_kind: "claude-code",
     cmd: "",
@@ -299,7 +300,9 @@ export function NewSessionModal(props: {
       <label>
         <span>Machine</span>
         <select value={draft.machine} onChange={(e) => patch({ machine: e.target.value })}>
-          {props.machines.map((m) => <option key={m.name} value={m.name}>{m.name} — {m.user}@{m.host}</option>)}
+          {props.machines.filter((m) => !m.disabled).map((m) =>
+            <option key={m.name} value={m.name}>{m.name} — {m.user}@{m.host}</option>
+          )}
         </select>
       </label>
 

@@ -18,7 +18,19 @@ export type Machine = {
   tags?: string[];
   notes?: string;
   jump?: JumpHop[];
+  /** Managed local machine — set to "local" on the reserved `local`
+   * entry. Used by the UI to render Enable/Disable instead of Remove,
+   * and by the handler to reject regular create/delete on this name. */
+  managed?: "local";
+  /** Soft-deleted / inactive. Still listed in /api/machines so the UI
+   * can render its state; filtered out of session-create pickers. */
+  disabled?: boolean;
 };
+
+/** Name reserved for the BotDock-managed loopback machine. The regular
+ * POST /api/machines and DELETE /api/machines/:name handlers reject this
+ * name so only the dedicated enable/disable endpoints can touch it. */
+export const LOCAL_MACHINE_NAME = "local";
 
 export function listMachines(dir: DataDir): Machine[] {
   const root = dir.machinesDir();
@@ -59,6 +71,8 @@ export function writeMachine(dir: DataDir, machine: Machine): void {
       return hop;
     });
   }
+  if (machine.managed) data.managed = machine.managed;
+  if (machine.disabled) data.disabled = true;
   writeToml(dir.machineFile(machine.name), data);
 }
 
