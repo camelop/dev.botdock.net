@@ -82,6 +82,12 @@ export class DataDir {
     assertSafeName(name, "markdown name");
     return join(this.markdownsDir(), name);
   }
+
+  fileBundlesDir(): string { return join(this.resourcesDir(), "file-bundle"); }
+  fileBundleDir(name: string): string {
+    assertSafeName(name, "file-bundle name");
+    return join(this.fileBundlesDir(), name);
+  }
 }
 
 /** Names are used as path segments; enforce a strict charset. */

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type GitRepoResource, type MarkdownMeta, type Session } from "../api";
+import { api, type FileBundleMeta, type GitRepoResource, type MarkdownMeta, type Session } from "../api";
 
 type RepoPicks = Record<string, { selected: boolean; includeKey: boolean }>;
 type MarkdownPicks = Record<string, boolean>;
+type BundlePicks = Record<string, boolean>;
 
 type PushResult = Awaited<ReturnType<typeof api.pushSessionContext>>;
 
@@ -44,11 +45,13 @@ export function ContextPushPopover(props: {
   const { session, anchorEl, onClose } = props;
   const [repos, setRepos] = useState<GitRepoResource[]>([]);
   const [markdowns, setMarkdowns] = useState<MarkdownMeta[]>([]);
+  const [bundles, setBundles] = useState<FileBundleMeta[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listErr, setListErr] = useState("");
 
   const [picks, setPicks] = useState<RepoPicks>({});
   const [mdPicks, setMdPicks] = useState<MarkdownPicks>({});
+  const [bundlePicks, setBundlePicks] = useState<BundlePicks>({});
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<PushResult | null>(null);
@@ -80,11 +83,12 @@ export function ContextPushPopover(props: {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.listGitRepos(), api.listMarkdowns()])
-      .then(([rs, mds]) => {
+    Promise.all([api.listGitRepos(), api.listMarkdowns(), api.listFileBundles()])
+      .then(([rs, mds, bs]) => {
         if (cancelled) return;
         setRepos(rs);
         setMarkdowns(mds);
+        setBundles(bs);
         setLoadingList(false);
       })
       .catch((e) => {
@@ -120,6 +124,9 @@ export function ContextPushPopover(props: {
   const toggleMarkdown = (name: string) => {
     setMdPicks((cur) => ({ ...cur, [name]: !cur[name] }));
   };
+  const toggleBundle = (name: string) => {
+    setBundlePicks((cur) => ({ ...cur, [name]: !cur[name] }));
+  };
 
   const selectedRepos = useMemo(
     () => repos.filter((r) => picks[r.name]?.selected),
@@ -129,7 +136,11 @@ export function ContextPushPopover(props: {
     () => markdowns.filter((m) => mdPicks[m.name]),
     [markdowns, mdPicks],
   );
-  const totalSelected = selectedRepos.length + selectedMarkdowns.length;
+  const selectedBundles = useMemo(
+    () => bundles.filter((b) => bundlePicks[b.name]),
+    [bundles, bundlePicks],
+  );
+  const totalSelected = selectedRepos.length + selectedMarkdowns.length + selectedBundles.length;
   const privateKeyCount = useMemo(
     () => selectedRepos.filter((r) => r.deploy_key && picks[r.name]?.includeKey).length,
     [selectedRepos, picks],
@@ -144,6 +155,7 @@ export function ContextPushPopover(props: {
           include_deploy_key: !!(r.deploy_key && picks[r.name]?.includeKey),
         })),
         markdowns: selectedMarkdowns.map((m) => ({ name: m.name })),
+        file_bundles: selectedBundles.map((b) => ({ name: b.name })),
       });
       setResult(r);
     } catch (e) {
@@ -194,13 +206,16 @@ export function ContextPushPopover(props: {
         <PickerView
           repos={repos}
           markdowns={markdowns}
+          bundles={bundles}
           loadingList={loadingList}
           listErr={listErr}
           picks={picks}
           mdPicks={mdPicks}
+          bundlePicks={bundlePicks}
           onToggleRepo={toggleSelected}
           onToggleIncludeKey={toggleIncludeKey}
           onToggleMarkdown={toggleMarkdown}
+          onToggleBundle={toggleBundle}
           privateKeyCount={privateKeyCount}
           selectedCount={totalSelected}
           submitting={submitting}
@@ -216,13 +231,16 @@ export function ContextPushPopover(props: {
 function PickerView(props: {
   repos: GitRepoResource[];
   markdowns: MarkdownMeta[];
+  bundles: FileBundleMeta[];
   loadingList: boolean;
   listErr: string;
   picks: RepoPicks;
   mdPicks: MarkdownPicks;
+  bundlePicks: BundlePicks;
   onToggleRepo: (name: string) => void;
   onToggleIncludeKey: (name: string) => void;
   onToggleMarkdown: (name: string) => void;
+  onToggleBundle: (name: string) => void;
   privateKeyCount: number;
   selectedCount: number;
   submitting: boolean;
@@ -263,7 +281,7 @@ function PickerView(props: {
 
         <div className="muted" style={{ ...sectionLabelStyle, marginTop: 14 }}>Markdown</div>
         {props.loadingList ? null : props.markdowns.length === 0 ? (
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
             No markdown chunks yet. Add one under Context → Markdown.
           </div>
         ) : (
@@ -273,6 +291,22 @@ function PickerView(props: {
               md={m}
               selected={!!props.mdPicks[m.name]}
               onToggle={() => props.onToggleMarkdown(m.name)}
+            />
+          ))
+        )}
+
+        <div className="muted" style={{ ...sectionLabelStyle, marginTop: 14 }}>File bundles</div>
+        {props.loadingList ? null : props.bundles.length === 0 ? (
+          <div className="muted" style={{ fontSize: 12 }}>
+            No file bundles yet. Add one under Context → File Bundles.
+          </div>
+        ) : (
+          props.bundles.map((b) => (
+            <BundleRow
+              key={b.name}
+              bundle={b}
+              selected={!!props.bundlePicks[b.name]}
+              onToggle={() => props.onToggleBundle(b.name)}
             />
           ))
         )}
@@ -314,6 +348,59 @@ function PickerView(props: {
         </button>
       </div>
     </>
+  );
+}
+
+function BundleRow(props: {
+  bundle: FileBundleMeta;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const { bundle, selected } = props;
+  return (
+    <div
+      style={{
+        padding: "6px 8px",
+        borderRadius: 6,
+        marginBottom: 4,
+        background: selected ? "rgba(106,164,255,0.08)" : "transparent",
+        border: selected ? "1px solid rgba(106,164,255,0.35)" : "1px solid transparent",
+      }}
+    >
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: "pointer",
+          margin: 0,
+          fontSize: 12,
+          color: "var(--fg)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={props.onToggle}
+          style={CHECKBOX_STYLE}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{bundle.name}</div>
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 10,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {bundle.file_count} file{bundle.file_count === 1 ? "" : "s"} · {formatBytes(bundle.bytes)}
+            {bundle.tags && bundle.tags.length ? ` · ${bundle.tags.join(", ")}` : ""}
+          </div>
+        </div>
+      </label>
+    </div>
   );
 }
 
@@ -494,6 +581,11 @@ function PushResultView(props: { result: PushResult; onClose: () => void }) {
           >
             <span className="pill" style={{ fontSize: 10 }}>{p.kind}</span>
             <span className="mono">{p.name}</span>
+            {p.file_count !== undefined && (
+              <span className="mono muted" style={{ fontSize: 10 }}>
+                {p.file_count} file{p.file_count === 1 ? "" : "s"}
+              </span>
+            )}
             {p.wrote_private_key && (
               <span className="mono" style={{ fontSize: 10, color: "var(--warn)" }}>
                 + private key

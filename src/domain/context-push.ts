@@ -10,11 +10,12 @@
  * never pushed standalone.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DataDir } from "../storage/index.ts";
 import { readMachine } from "./machines.ts";
 import { readGitRepo, readMarkdown, markdownExists } from "./resources.ts";
+import { fileBundleExists } from "./file-bundles.ts";
 import { readSession, appendEvent } from "./sessions.ts";
 import { keyExists } from "./keys.ts";
 import { sshExec, shSingleQuote } from "../lib/remote.ts";
@@ -32,16 +33,23 @@ export type MarkdownPick = {
   name: string;
 };
 
+export type FileBundlePick = {
+  name: string;
+};
+
 export type ContextPushRequest = {
   git_repos: GitRepoPick[];
   markdowns: MarkdownPick[];
+  file_bundles: FileBundlePick[];
 };
 
 export type PushedItem = {
-  kind: "git-repo" | "keys" | "markdown";
+  kind: "git-repo" | "keys" | "markdown" | "file-bundle";
   name: string;
   path: string;           // remote path (under context/)
   wrote_private_key?: boolean;
+  /** For file-bundle: number of files written so the UI can show it. */
+  file_count?: number;
 };
 
 export type ContextPushResult = {
@@ -126,6 +134,49 @@ export async function pushContext(
       kind: "markdown",
       name: mk.meta.name,
       path: `resources/markdown/${mk.meta.name}/`,
+    });
+  }
+
+  for (const pick of req.file_bundles) {
+    if (!fileBundleExists(dir, pick.name)) {
+      throw new Error(`file-bundle "${pick.name}" not found`);
+    }
+    const base = dir.fileBundleDir(pick.name);
+    const metaRel = `resources/file-bundle/${pick.name}/meta.toml`;
+    files.push({
+      rel: metaRel,
+      bytes: readFileSync(join(base, "meta.toml")),
+    });
+    const contentRoot = join(base, "content");
+    let fileCount = 0;
+    if (existsSync(contentRoot)) {
+      // Walk the bundle's content tree. For v1 we reuse the base64-heredoc
+      // path (same as git-repo / markdown) — simple, one sshExec call.
+      // Very large bundles will be slow; streaming tar-over-ssh is the
+      // follow-up if size becomes a bottleneck.
+      const stack: Array<{ abs: string; rel: string }> = [{ abs: contentRoot, rel: "" }];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        for (const entry of readdirSync(cur.abs)) {
+          const abs = join(cur.abs, entry);
+          const rel = cur.rel ? `${cur.rel}/${entry}` : entry;
+          const st = statSync(abs);
+          if (st.isDirectory()) stack.push({ abs, rel });
+          else if (st.isFile()) {
+            files.push({
+              rel: `resources/file-bundle/${pick.name}/content/${rel}`,
+              bytes: readFileSync(abs),
+            });
+            fileCount += 1;
+          }
+        }
+      }
+    }
+    pushed.push({
+      kind: "file-bundle",
+      name: pick.name,
+      path: `resources/file-bundle/${pick.name}/`,
+      file_count: fileCount,
     });
   }
 

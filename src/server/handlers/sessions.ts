@@ -29,7 +29,7 @@ import {
 } from "../../domain/session-launcher.ts";
 import type { SessionPoller } from "../../domain/session-poller.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
-import { pushContext, type GitRepoPick, type MarkdownPick } from "../../domain/context-push.ts";
+import { pushContext, type GitRepoPick, type MarkdownPick, type FileBundlePick } from "../../domain/context-push.ts";
 
 export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller, forwardManager: ForwardManager): void {
   router.get("/api/sessions", () => json(listSessions(dir)));
@@ -233,11 +233,13 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     const body = await parseJsonBody<{
       git_repos?: GitRepoPick[];
       markdowns?: MarkdownPick[];
+      file_bundles?: FileBundlePick[];
     }>(req);
     const repoPicks = Array.isArray(body.git_repos) ? body.git_repos : [];
     const mdPicks = Array.isArray(body.markdowns) ? body.markdowns : [];
-    if (repoPicks.length + mdPicks.length === 0) {
-      throw new HttpError(400, "at least one git_repos[] or markdowns[] item required");
+    const bundlePicks = Array.isArray(body.file_bundles) ? body.file_bundles : [];
+    if (repoPicks.length + mdPicks.length + bundlePicks.length === 0) {
+      throw new HttpError(400, "at least one git_repos[] / markdowns[] / file_bundles[] item required");
     }
     for (const p of repoPicks) {
       if (!p.name || typeof p.name !== "string") {
@@ -249,6 +251,11 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
         throw new HttpError(400, "each markdowns[] item needs a name");
       }
     }
+    for (const p of bundlePicks) {
+      if (!p.name || typeof p.name !== "string") {
+        throw new HttpError(400, "each file_bundles[] item needs a name");
+      }
+    }
     try {
       const result = await pushContext(dir, params.id!, {
         git_repos: repoPicks.map((p) => ({
@@ -256,6 +263,7 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
           include_deploy_key: !!p.include_deploy_key,
         })),
         markdowns: mdPicks.map((p) => ({ name: p.name })),
+        file_bundles: bundlePicks.map((p) => ({ name: p.name })),
       });
       return json(result);
     } catch (e) {

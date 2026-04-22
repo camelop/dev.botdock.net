@@ -58,6 +58,18 @@ export type MarkdownResource = { meta: MarkdownMeta; content: string };
 
 export const MARKDOWN_CONTENT_LIMIT = 256 * 1024;
 
+export type FileBundleMeta = {
+  name: string;
+  tags?: string[];
+  file_count: number;
+  bytes: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FileBundleEntry = { rel_path: string; bytes: number };
+export type FileBundleDetail = { meta: FileBundleMeta; entries: FileBundleEntry[] };
+
 export type SecretMeta = {
   name: string;
   created_at: string;
@@ -214,6 +226,56 @@ export const api = {
     }),
   deleteMarkdown: (name: string) =>
     request<{ ok: true }>(`/api/resources/markdown/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  // --- resources / file-bundle ---
+  listFileBundles: () => request<FileBundleMeta[]>("/api/resources/file-bundle"),
+  getFileBundle: (name: string) =>
+    request<FileBundleDetail>(`/api/resources/file-bundle/${encodeURIComponent(name)}`),
+  /** Mode (a): multipart upload of many files + a paths JSON array. */
+  createFileBundleFromFiles: async (body: {
+    name: string;
+    tags?: string;
+    files: Array<{ file: File; rel_path: string }>;
+  }) => {
+    const fd = new FormData();
+    fd.append("name", body.name);
+    if (body.tags) fd.append("tags", body.tags);
+    const paths: string[] = [];
+    for (const f of body.files) {
+      paths.push(f.rel_path);
+      fd.append("files", f.file);
+    }
+    fd.append("paths", JSON.stringify(paths));
+    const res = await fetch("/api/resources/file-bundle/files", { method: "POST", body: fd });
+    if (!res.ok) {
+      let msg: string;
+      try { msg = ((await res.json()) as { error?: string }).error ?? `${res.status} ${res.statusText}`; }
+      catch { msg = `${res.status} ${res.statusText}`; }
+      throw new Error(msg);
+    }
+    return (await res.json()) as FileBundleMeta;
+  },
+  /** Mode (c): multipart upload of a single archive file. */
+  createFileBundleFromArchive: async (body: {
+    name: string;
+    tags?: string;
+    archive: File;
+  }) => {
+    const fd = new FormData();
+    fd.append("name", body.name);
+    if (body.tags) fd.append("tags", body.tags);
+    fd.append("archive", body.archive);
+    const res = await fetch("/api/resources/file-bundle/archive", { method: "POST", body: fd });
+    if (!res.ok) {
+      let msg: string;
+      try { msg = ((await res.json()) as { error?: string }).error ?? `${res.status} ${res.statusText}`; }
+      catch { msg = `${res.status} ${res.statusText}`; }
+      throw new Error(msg);
+    }
+    return (await res.json()) as FileBundleMeta;
+  },
+  deleteFileBundle: (name: string) =>
+    request<{ ok: true }>(`/api/resources/file-bundle/${encodeURIComponent(name)}`, { method: "DELETE" }),
   updateStatus: () => request<UpdateStatus>("/api/update/status"),
   installUpdate: () =>
     request<{ accepted: true; target: string }>("/api/update/install", { method: "POST" }),
@@ -349,12 +411,14 @@ export const api = {
   pushSessionContext: (id: string, body: {
     git_repos: Array<{ name: string; include_deploy_key: boolean }>;
     markdowns: Array<{ name: string }>;
+    file_bundles: Array<{ name: string }>;
   }) => request<{
     pushed: Array<{
-      kind: "git-repo" | "keys" | "markdown";
+      kind: "git-repo" | "keys" | "markdown" | "file-bundle";
       name: string;
       path: string;
       wrote_private_key?: boolean;
+      file_count?: number;
     }>;
     remote_base: string;
   }>(`/api/sessions/${encodeURIComponent(id)}/context/push`, {
