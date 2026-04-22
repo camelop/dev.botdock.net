@@ -2,6 +2,10 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.10 — 2026-04-22
+
+- VS Code now actually opens at the session's workdir: the start endpoint returns the resolved path, frontend puts it on session state immediately, so `Open VS Code ↗` gets `?folder=<abs>` instead of the welcome page.
+
 ## v0.4.9 — 2026-04-22
 
 - Transcript follow-latest: on a long session, `pageIndex=-1` now stays -1 after first fetch so new turns auto-advance the view instead of pinning you to the page number that was "latest" when you opened the session.

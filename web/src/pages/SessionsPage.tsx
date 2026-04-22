@@ -984,7 +984,15 @@ export function SessionView(props: {
     setCsErr(""); setCsState("starting");
     try {
       const r = await api.startSessionCodeServer(props.id);
-      setSession((cur) => cur ? { ...cur, codeserver_local_port: r.local_port, codeserver_remote_port: r.remote_port } : cur);
+      setSession((cur) => cur ? {
+        ...cur,
+        codeserver_local_port: r.local_port,
+        codeserver_remote_port: r.remote_port,
+        // Tilde-expanded absolute path from the remote — used as ?folder=
+        // on the Open URL so VS Code lands in the session's workdir
+        // instead of the welcome page.
+        codeserver_workdir: r.workdir,
+      } : cur);
       await props.onChange?.();
     } catch (e) {
       setCsErr(String((e as Error)?.message ?? e));
@@ -996,7 +1004,12 @@ export function SessionView(props: {
     setCsErr(""); setCsState("stopping");
     try {
       await api.stopSessionCodeServer(props.id);
-      setSession((cur) => cur ? { ...cur, codeserver_local_port: undefined, codeserver_remote_port: undefined } : cur);
+      setSession((cur) => cur ? {
+        ...cur,
+        codeserver_local_port: undefined,
+        codeserver_remote_port: undefined,
+        codeserver_workdir: undefined,
+      } : cur);
       await props.onChange?.();
     } catch (e) {
       setCsErr(String((e as Error)?.message ?? e));

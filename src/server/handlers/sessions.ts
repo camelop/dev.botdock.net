@@ -193,6 +193,7 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
         url: `${res.base_path}/`,
         local_port: res.local_port,
         remote_port: res.remote_port,
+        workdir: res.resolved_workdir,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

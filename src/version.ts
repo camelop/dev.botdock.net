@@ -1,2 +1,2 @@
 // Updated by the release workflow before compilation. Keep in sync with package.json.
-export const BOTDOCK_VERSION = "0.4.9";
+export const BOTDOCK_VERSION = "0.4.10";

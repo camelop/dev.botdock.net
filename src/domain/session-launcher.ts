@@ -253,7 +253,7 @@ export async function setupSessionCodeServer(
   dir: DataDir,
   manager: ForwardManager,
   id: string,
-): Promise<{ local_port: number; remote_port: number; base_path: string }> {
+): Promise<{ local_port: number; remote_port: number; resolved_workdir: string; base_path: string }> {
   const s = readSession(dir, id);
   const machine = readMachine(dir, s.machine);
   const basePath = sessionCodeServerBasePath(id);
@@ -291,7 +291,12 @@ export async function setupSessionCodeServer(
     kind: "error",
     message: `code-server ready at ${basePath}/`,
   });
-  return { local_port: localPort, remote_port: res.remote_port, base_path: basePath };
+  return {
+    local_port: localPort,
+    remote_port: res.remote_port,
+    resolved_workdir: res.resolved_workdir,
+    base_path: basePath,
+  };
 }
 
 export async function teardownSessionCodeServer(

@@ -251,7 +251,7 @@ export const api = {
       `/api/sessions/${encodeURIComponent(id)}/filebrowser/stop`, { method: "POST" },
     ),
   startSessionCodeServer: (id: string) =>
-    request<{ ok: true; url: string; local_port: number; remote_port: number }>(
+    request<{ ok: true; url: string; local_port: number; remote_port: number; workdir: string }>(
       `/api/sessions/${encodeURIComponent(id)}/code-server/start`, { method: "POST" },
     ),
   stopSessionCodeServer: (id: string) =>
