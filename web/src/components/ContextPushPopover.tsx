@@ -5,6 +5,26 @@ type Picks = Record<string, { selected: boolean; includeKey: boolean }>;
 
 type PushResult = Awaited<ReturnType<typeof api.pushSessionContext>>;
 
+// The global CSS (`input { width: 100% }`) would stretch native checkboxes
+// across the whole flex row, pushing their label text to the far right
+// with a big empty gap in the middle. Every <input type="checkbox"> in
+// this popover uses this style to opt out. Matches the pattern in
+// ForwardsPage.
+const CHECKBOX_STYLE: React.CSSProperties = {
+  width: "auto",
+  margin: 0,
+  padding: 0,
+  flex: "none",
+};
+
+// label span { display: block; margin-bottom: 4px } is a site-wide rule
+// that would force our direct span children of label to stack vertically.
+// Override to inline so our flex layout sticks.
+const LABEL_SPAN_STYLE: React.CSSProperties = {
+  display: "inline",
+  marginBottom: 0,
+};
+
 /**
  * Popover for pushing curated context resources from the root-folder
  * registry into a running session's remote workdir. Anchored to the
@@ -284,11 +304,18 @@ function RepoRow(props: {
           gap: 8,
           cursor: "pointer",
           margin: 0,
+          fontSize: 12,
+          color: "var(--fg)",
         }}
       >
-        <input type="checkbox" checked={selected} onChange={props.onToggle} />
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={props.onToggle}
+          style={CHECKBOX_STYLE}
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>{repo.name}</div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{repo.name}</div>
           <div
             className="mono muted"
             style={{
@@ -307,22 +334,25 @@ function RepoRow(props: {
         <label
           style={{
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 8,
             marginLeft: 24,
             marginTop: 4,
+            marginBottom: 0,
             cursor: "pointer",
             fontSize: 11,
+            color: "var(--fg)",
           }}
         >
           <input
             type="checkbox"
             checked={includeKey}
             onChange={props.onToggleIncludeKey}
+            style={{ ...CHECKBOX_STYLE, marginTop: 2 }}
           />
-          <span>
-            Also push deploy key (<span className="mono">{repo.deploy_key}</span>)
-            <span className="muted">
+          <span style={{ ...LABEL_SPAN_STYLE, flex: 1, lineHeight: 1.35 }}>
+            Also push deploy key (<span className="mono" style={LABEL_SPAN_STYLE}>{repo.deploy_key}</span>)
+            <span className="muted" style={LABEL_SPAN_STYLE}>
               {" "}— without this, the agent will need its own credentials to clone
             </span>
           </span>
