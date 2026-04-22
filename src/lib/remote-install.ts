@@ -36,6 +36,7 @@ export function detectPlatform(dir: DataDir, machine: Machine): RemotePlatform {
 export type InstalledState = {
   ttyd?: { path: string; version?: string; installed_at: string };
   filebrowser?: { path: string; version?: string; installed_at: string };
+  codeserver?: { path: string; version?: string; installed_at: string };
   tmux_available: boolean;
   claude_available: boolean;
 };
@@ -57,6 +58,9 @@ if [ -f "$MARKER" ]; then
   FB_PATH=$(awk -F ' = ' '/^filebrowser_path/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
   FB_VERSION=$(awk -F ' = ' '/^filebrowser_version/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
   FB_INSTALLED_AT=$(awk -F ' = ' '/^filebrowser_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  CS_PATH=$(awk -F ' = ' '/^codeserver_path/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  CS_VERSION=$(awk -F ' = ' '/^codeserver_version/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
+  CS_INSTALLED_AT=$(awk -F ' = ' '/^codeserver_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
 fi
 
 # Look up each tool. which searches PATH; whereis looks in standard system
@@ -69,6 +73,7 @@ TTYD_BIN=$(find_bin ttyd)
 TMUX_BIN=$(find_bin tmux)
 CLAUDE_BIN=$(find_bin claude)
 FB_BIN=$(find_bin filebrowser)
+CS_BIN=$(find_bin code-server)
 
 printf 'TTYD_PATH=%s\n'          "\${TTYD_PATH:-$TTYD_BIN}"
 printf 'TTYD_VERSION=%s\n'       "$TTYD_VERSION"
@@ -76,6 +81,9 @@ printf 'TTYD_INSTALLED_AT=%s\n'  "$TTYD_INSTALLED_AT"
 printf 'FB_PATH=%s\n'            "\${FB_PATH:-$FB_BIN}"
 printf 'FB_VERSION=%s\n'         "$FB_VERSION"
 printf 'FB_INSTALLED_AT=%s\n'    "$FB_INSTALLED_AT"
+printf 'CS_PATH=%s\n'            "\${CS_PATH:-$CS_BIN}"
+printf 'CS_VERSION=%s\n'         "$CS_VERSION"
+printf 'CS_INSTALLED_AT=%s\n'    "$CS_INSTALLED_AT"
 printf 'TMUX_BIN=%s\n'           "$TMUX_BIN"
 printf 'TMUX_AVAILABLE=%s\n'     "$([ -n "$TMUX_BIN" ] && echo 1 || echo 0)"
 printf 'CLAUDE_BIN=%s\n'         "$CLAUDE_BIN"
@@ -111,8 +119,63 @@ printf 'CLAUDE_AVAILABLE=%s\n'   "$([ -n "$CLAUDE_BIN" ] && echo 1 || echo 0)"
       installed_at: lines.FB_INSTALLED_AT?.trim() || "",
     };
   }
+  const csPath = (lines.CS_PATH ?? "").trim();
+  if (csPath) {
+    state.codeserver = {
+      path: csPath,
+      version: lines.CS_VERSION?.trim() || undefined,
+      installed_at: lines.CS_INSTALLED_AT?.trim() || "",
+    };
+  }
   return state;
 }
+
+/**
+ * Shell snippet that regenerates ~/.botdock/installed.toml preserving
+ * every known tool block. Callers set `NEW_<TOOL>_PATH` / `NEW_<TOOL>_VERSION`
+ * / `NEW_<TOOL>_INSTALLED_AT` before sourcing this, and any tool whose
+ * NEW_* vars are empty gets its EXISTING_* values re-written as-is.
+ *
+ * This avoids the old gotcha where installing ttyd would silently wipe a
+ * previously-installed filebrowser's marker (and vice versa).
+ */
+const MARKER_REWRITE_SNIPPET = `
+MARKER_FILE="\$HOME/.botdock/installed.toml"
+EX_TTYD_PATH="" EX_TTYD_VERSION="" EX_TTYD_INSTALLED_AT=""
+EX_FB_PATH=""   EX_FB_VERSION=""   EX_FB_INSTALLED_AT=""
+EX_CS_PATH=""   EX_CS_VERSION=""   EX_CS_INSTALLED_AT=""
+if [ -f "\$MARKER_FILE" ]; then
+  EX_TTYD_PATH=\$(awk -F ' = ' '/^ttyd_path/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_TTYD_VERSION=\$(awk -F ' = ' '/^ttyd_version/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_TTYD_INSTALLED_AT=\$(awk -F ' = ' '/^ttyd_installed_at/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_FB_PATH=\$(awk -F ' = ' '/^filebrowser_path/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_FB_VERSION=\$(awk -F ' = ' '/^filebrowser_version/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_FB_INSTALLED_AT=\$(awk -F ' = ' '/^filebrowser_installed_at/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_CS_PATH=\$(awk -F ' = ' '/^codeserver_path/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_CS_VERSION=\$(awk -F ' = ' '/^codeserver_version/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+  EX_CS_INSTALLED_AT=\$(awk -F ' = ' '/^codeserver_installed_at/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
+fi
+[ -z "\$NEW_TTYD_PATH" ] && NEW_TTYD_PATH="\$EX_TTYD_PATH"
+[ -z "\$NEW_TTYD_VERSION" ] && NEW_TTYD_VERSION="\$EX_TTYD_VERSION"
+[ -z "\$NEW_TTYD_INSTALLED_AT" ] && NEW_TTYD_INSTALLED_AT="\$EX_TTYD_INSTALLED_AT"
+[ -z "\$NEW_FB_PATH" ] && NEW_FB_PATH="\$EX_FB_PATH"
+[ -z "\$NEW_FB_VERSION" ] && NEW_FB_VERSION="\$EX_FB_VERSION"
+[ -z "\$NEW_FB_INSTALLED_AT" ] && NEW_FB_INSTALLED_AT="\$EX_FB_INSTALLED_AT"
+[ -z "\$NEW_CS_PATH" ] && NEW_CS_PATH="\$EX_CS_PATH"
+[ -z "\$NEW_CS_VERSION" ] && NEW_CS_VERSION="\$EX_CS_VERSION"
+[ -z "\$NEW_CS_INSTALLED_AT" ] && NEW_CS_INSTALLED_AT="\$EX_CS_INSTALLED_AT"
+cat > "\$MARKER_FILE" <<MARKER
+ttyd_path = "\$NEW_TTYD_PATH"
+ttyd_version = "\$NEW_TTYD_VERSION"
+ttyd_installed_at = "\$NEW_TTYD_INSTALLED_AT"
+filebrowser_path = "\$NEW_FB_PATH"
+filebrowser_version = "\$NEW_FB_VERSION"
+filebrowser_installed_at = "\$NEW_FB_INSTALLED_AT"
+codeserver_path = "\$NEW_CS_PATH"
+codeserver_version = "\$NEW_CS_VERSION"
+codeserver_installed_at = "\$NEW_CS_INSTALLED_AT"
+MARKER
+`;
 
 const TTYD_VERSION = "1.7.7";
 function ttydAssetFor(platform: RemotePlatform): string | null {
@@ -152,12 +215,10 @@ fi
 chmod +x "$TMP"
 mv "$TMP" "$HOME/.botdock/bin/ttyd"
 
-# Marker file. Keep it minimal; future fields can accumulate here.
-cat > "$HOME/.botdock/installed.toml" <<MARKER
-ttyd_path = "$HOME/.botdock/bin/ttyd"
-ttyd_version = "${TTYD_VERSION}"
-ttyd_installed_at = "${nowIso}"
-MARKER
+NEW_TTYD_PATH="$HOME/.botdock/bin/ttyd"
+NEW_TTYD_VERSION="${TTYD_VERSION}"
+NEW_TTYD_INSTALLED_AT="${nowIso}"
+${MARKER_REWRITE_SNIPPET}
 echo "BOTDOCK_TTYD_INSTALLED"
 `;
   const r = sshExec(dir, machine, "bash -s", script, 60_000, { noControlMaster: true });
@@ -512,24 +573,10 @@ tar -C "$TMPDIR_FB" -xzf "$TMPDIR_FB/fb.tgz"
 chmod +x "$TMPDIR_FB/filebrowser"
 mv -f "$TMPDIR_FB/filebrowser" "$HOME/.botdock/bin/filebrowser"
 
-# Preserve any existing ttyd marker fields while writing filebrowser fields.
-MARKER="$HOME/.botdock/installed.toml"
-EXISTING_TTYD_PATH=""
-EXISTING_TTYD_VERSION=""
-EXISTING_TTYD_INSTALLED_AT=""
-if [ -f "$MARKER" ]; then
-  EXISTING_TTYD_PATH=$(awk -F ' = ' '/^ttyd_path/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
-  EXISTING_TTYD_VERSION=$(awk -F ' = ' '/^ttyd_version/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
-  EXISTING_TTYD_INSTALLED_AT=$(awk -F ' = ' '/^ttyd_installed_at/ {gsub(/"/,"",$2); print $2; exit}' "$MARKER")
-fi
-cat > "$MARKER" <<MARKER
-ttyd_path = "$EXISTING_TTYD_PATH"
-ttyd_version = "$EXISTING_TTYD_VERSION"
-ttyd_installed_at = "$EXISTING_TTYD_INSTALLED_AT"
-filebrowser_path = "$HOME/.botdock/bin/filebrowser"
-filebrowser_version = "${FILEBROWSER_VERSION}"
-filebrowser_installed_at = "${nowIso}"
-MARKER
+NEW_FB_PATH="$HOME/.botdock/bin/filebrowser"
+NEW_FB_VERSION="${FILEBROWSER_VERSION}"
+NEW_FB_INSTALLED_AT="${nowIso}"
+${MARKER_REWRITE_SNIPPET}
 echo "BOTDOCK_FB_INSTALLED"
 `;
   const r = sshExec(dir, machine, "bash -s", script, 120_000, { noControlMaster: true });
@@ -661,6 +708,191 @@ export function stopSessionFilebrowser(
 
 export function sessionFilebrowserBasePath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/files`;
+}
+
+// --- code-server ----------------------------------------------------------
+//
+// Coder's code-server is a full VS Code bundled with an embedded Node runtime,
+// ~200MB uncompressed. We extract it into ~/.botdock/code-server/<version>/
+// (version-pinned so upgrades can coexist) and add a /latest symlink for the
+// install marker path. Subpath hosting isn't a first-class feature of
+// code-server — the recommended deployment is nginx-style "location /code/
+// proxy_pass /", which is exactly what our proxy route does (strips the
+// /api/sessions/:id/code prefix before forwarding).
+
+const CODE_SERVER_VERSION = "4.104.1";
+
+function codeServerAssetFor(platform: RemotePlatform): string | null {
+  // Naming: `code-server-<ver>-<os>-<arch>.tar.gz` where os/arch are
+  // {linux,macos} × {amd64,arm64}. Their "macos" label is what Darwin
+  // builds ship as; our detectPlatform normalizes to "darwin".
+  const os = platform.os === "linux" ? "linux" : platform.os === "darwin" ? "macos" : null;
+  const arch = platform.arch === "x86_64"  ? "amd64"
+             : platform.arch === "aarch64" ? "arm64"
+             : null;
+  if (!os || !arch) return null;
+  return `code-server-${CODE_SERVER_VERSION}-${os}-${arch}.tar.gz`;
+}
+
+export function installCodeServer(dir: DataDir, machine: Machine): InstalledState {
+  const platform = detectPlatform(dir, machine);
+  const asset = codeServerAssetFor(platform);
+  if (!asset) {
+    throw new Error(
+      `no prebuilt code-server for ${platform.raw_os}/${platform.raw_arch}`,
+    );
+  }
+  const url = `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${asset}`;
+  const nowIso = new Date().toISOString();
+  const dirName = `code-server-${CODE_SERVER_VERSION}`;
+  const script = `
+set -euo pipefail
+mkdir -p "$HOME/.botdock/code-server"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "$TMP/cs.tgz" ${shQ(url)}
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$TMP/cs.tgz" ${shQ(url)}
+else
+  echo "neither curl nor wget available on remote" >&2; exit 127
+fi
+
+DEST="$HOME/.botdock/code-server/${dirName}"
+rm -rf "$DEST"
+mkdir -p "$DEST"
+# The tarball has a single top-level dir. Strip it so our $DEST owns the tree.
+tar -C "$DEST" --strip-components=1 -xzf "$TMP/cs.tgz"
+
+CS_BIN="$DEST/bin/code-server"
+[ -x "$CS_BIN" ] || { echo "code-server binary missing at $CS_BIN" >&2; exit 1; }
+
+NEW_CS_PATH="$CS_BIN"
+NEW_CS_VERSION="${CODE_SERVER_VERSION}"
+NEW_CS_INSTALLED_AT="${nowIso}"
+${MARKER_REWRITE_SNIPPET}
+echo "BOTDOCK_CS_INSTALLED"
+`;
+  // Large download + extraction — give it 8 minutes. Slow 3G would still
+  // beat this but our target is dev boxes with decent connections.
+  const r = sshExec(dir, machine, "bash -s", script, 480_000, { noControlMaster: true });
+  if (r.code !== 0 || !r.stdout.includes("BOTDOCK_CS_INSTALLED")) {
+    throw new Error(`code-server install failed: ${r.stderr.trim() || r.stdout.trim()}`);
+  }
+  return readInstalledState(dir, machine);
+}
+
+export function ensureCodeServer(dir: DataDir, machine: Machine): InstalledState {
+  const state = readInstalledState(dir, machine);
+  if (state.codeserver?.path) return state;
+  return installCodeServer(dir, machine);
+}
+
+/**
+ * Spawn a code-server bound to the session's workdir on a free remote port,
+ * with no auth (the ssh tunnel is the access control). Marks session_*
+ * user-data/extensions NOT per-session: code-server's user-data is hefty
+ * (~100MB settings + extensions) and the expected UX is "my extensions
+ * are always here" — so we let it land in ~/.local/share/code-server and
+ * accept that two concurrent sessions on the same machine share settings.
+ */
+export function startSessionCodeServer(
+  dir: DataDir,
+  machine: Machine,
+  opts: { sessionId: string; workdir: string },
+): { remote_port: number; installed: InstalledState } {
+  let installed = ensureTmux(dir, machine);
+  installed = ensureCodeServer(dir, machine);
+  if (!installed.tmux_available) {
+    throw new Error("tmux still not available after install attempt.");
+  }
+  const supervisorSession = `botdock-cs-${opts.sessionId}`;
+  const script = `
+set -euo pipefail
+SUPER=${shQ(supervisorSession)}
+CS=${shQ(installed.codeserver!.path)}
+WORKDIR=${shQ(opts.workdir)}
+
+case "$WORKDIR" in
+  "~")   WORKDIR="$HOME" ;;
+  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+mkdir -p "$WORKDIR"
+
+if tmux has-session -t "$SUPER" 2>/dev/null; then
+  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$CS" | grep -F "$WORKDIR" | grep -v grep \\
+         | grep -oE 'bind-addr[[:space:]]+127\\.0\\.0\\.1:[0-9]+' | awk -F: '{print $2}' | head -1)
+  if [ -n "$PORT" ]; then
+    echo "BOTDOCK_SESSION_CS_ALREADY_RUNNING port=$PORT"
+    exit 0
+  fi
+  tmux kill-session -t "$SUPER" 2>/dev/null || true
+fi
+
+PORT=""
+for p in $(seq 62000 62999); do
+  if command -v ss >/dev/null 2>&1; then
+    if ! ss -ltn 2>/dev/null | grep -q ":$p "; then PORT=$p; break; fi
+  else
+    if ! (bash -c "exec 3<>/dev/tcp/127.0.0.1/$p" 2>/dev/null); then PORT=$p; break; fi
+  fi
+done
+if [ -z "$PORT" ]; then echo "no free port on remote" >&2; exit 1; fi
+
+# --disable-workspace-trust: we trust our own workdirs by policy; the dialog
+#   would block the editor from loading behind our reverse proxy.
+# --disable-telemetry / --disable-update-check: no background phone-home and
+#   no self-update fighting our package manager.
+tmux new-session -d -s "$SUPER" \\
+  "$CS --bind-addr 127.0.0.1:$PORT --auth none --disable-telemetry --disable-update-check --disable-workspace-trust $WORKDIR"
+
+# code-server is slow to boot (spins up Node + loads extensions). Poll up
+# to ~15 seconds before declaring a failure.
+ALIVE=0
+for i in \$(seq 1 30); do
+  sleep 0.5
+  if command -v ss >/dev/null 2>&1; then
+    if ss -ltn 2>/dev/null | grep -q ":$PORT "; then ALIVE=1; break; fi
+  else
+    if (bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT" 2>/dev/null); then ALIVE=1; break; fi
+  fi
+done
+if [ "$ALIVE" != "1" ]; then
+  PANE_OUT=$(tmux capture-pane -p -t "$SUPER" 2>/dev/null || true)
+  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  echo "BOTDOCK_SESSION_CS_FAILED port=$PORT" >&2
+  echo "--- pane output ---" >&2
+  printf '%s\\n' "$PANE_OUT" >&2
+  exit 2
+fi
+
+echo "BOTDOCK_SESSION_CS_STARTED port=$PORT"
+`;
+  const r = sshExec(dir, machine, "bash -s", script, 30_000, { noControlMaster: true });
+  if (r.code !== 0 || !/BOTDOCK_SESSION_CS_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
+    throw new Error(
+      `session-code-server start failed: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`,
+    );
+  }
+  const m = /port=(\d+)/.exec(r.stdout);
+  if (!m) throw new Error("could not parse session-code-server port from remote output");
+  return { remote_port: Number(m[1]), installed };
+}
+
+export function stopSessionCodeServer(
+  dir: DataDir,
+  machine: Machine,
+  sessionId: string,
+): void {
+  const supervisor = `botdock-cs-${sessionId}`;
+  sshExec(dir, machine, "bash -s",
+    `tmux kill-session -t ${shQ(supervisor)} 2>/dev/null; echo ok`,
+    10_000);
+}
+
+export function sessionCodeServerBasePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/code`;
 }
 
 function shQ(s: string): string {

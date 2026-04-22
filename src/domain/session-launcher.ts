@@ -11,6 +11,7 @@ import { provisioningScript, buildCmdB64 } from "../lib/shim.ts";
 import {
   startSessionTerminal, sessionTerminalBasePath, stopSessionTerminal,
   startSessionFilebrowser, sessionFilebrowserBasePath, stopSessionFilebrowser,
+  startSessionCodeServer, sessionCodeServerBasePath, stopSessionCodeServer,
 } from "../lib/remote-install.ts";
 import { findFreeLocalPort } from "../lib/free-port.ts";
 import {
@@ -244,6 +245,78 @@ export async function teardownSessionFilebrowser(
     ts: new Date().toISOString(),
     kind: "error",
     message: `filebrowser stopped`,
+  });
+}
+
+/** Same shape as setupSessionFilebrowser — opt-in, surfaces errors. */
+export async function setupSessionCodeServer(
+  dir: DataDir,
+  manager: ForwardManager,
+  id: string,
+): Promise<{ local_port: number; remote_port: number; base_path: string }> {
+  const s = readSession(dir, id);
+  const machine = readMachine(dir, s.machine);
+  const basePath = sessionCodeServerBasePath(id);
+  const res = startSessionCodeServer(dir, machine, {
+    sessionId: id,
+    workdir: s.workdir,
+  });
+  const fname = `session-${id}-codeserver`;
+  if (forwardExists(dir, fname)) {
+    manager.stop(fname);
+    manager.forget(fname);
+    deleteForward(dir, fname);
+  }
+  const localPort = await findFreeLocalPort(49000, 49999);
+  const forward: Forward = {
+    name: fname,
+    machine: s.machine,
+    direction: "local",
+    local_port: localPort,
+    remote_host: "127.0.0.1",
+    remote_port: res.remote_port,
+    auto_start: false,
+    managed_by: "system:session-codeserver",
+    description: `Managed code-server for session ${id}`,
+  };
+  writeForward(dir, forward);
+  await manager.start(fname);
+  updateSession(dir, id, {
+    codeserver_local_port: localPort,
+    codeserver_remote_port: res.remote_port,
+  });
+  appendEvent(dir, id, {
+    ts: new Date().toISOString(),
+    kind: "error",
+    message: `code-server ready at ${basePath}/`,
+  });
+  return { local_port: localPort, remote_port: res.remote_port, base_path: basePath };
+}
+
+export async function teardownSessionCodeServer(
+  dir: DataDir,
+  manager: ForwardManager,
+  id: string,
+): Promise<void> {
+  const s = readSession(dir, id);
+  const fname = `session-${id}-codeserver`;
+  if (forwardExists(dir, fname)) {
+    manager.stop(fname);
+    manager.forget(fname);
+    deleteForward(dir, fname);
+  }
+  try {
+    const machine = readMachine(dir, s.machine);
+    stopSessionCodeServer(dir, machine, id);
+  } catch { /* best effort */ }
+  updateSession(dir, id, {
+    codeserver_local_port: undefined,
+    codeserver_remote_port: undefined,
+  });
+  appendEvent(dir, id, {
+    ts: new Date().toISOString(),
+    kind: "error",
+    message: `code-server stopped`,
   });
 }
 

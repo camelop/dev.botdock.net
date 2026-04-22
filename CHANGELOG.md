@@ -2,6 +2,11 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.4 — 2026-04-22
+
+- Per-session VS Code button (`coder/code-server`), mirrors the FileBrowser flow — one click to spawn, segmented Open/Stop group when running; proxy strips the `/api/sessions/:id/code` prefix since code-server has no native base-path.
+- Daemon boot now resets `filebrowser_*` and `codeserver_*` ports on every session so stale "Open" links after a `botdock serve` restart don't point at dead tunnels.
+
 ## v0.4.3 — 2026-04-22
 
 - In-process self-upgrade: click the topbar status to check GitHub for a newer release and install it in-place (download → SHA256 verify → preflight → `.bak` + hot-swap → `execv` same PID; frontend auto-reloads when the new daemon is up).

@@ -111,6 +111,8 @@ export type Session = {
   terminal_remote_port?: number;
   filebrowser_local_port?: number;
   filebrowser_remote_port?: number;
+  codeserver_local_port?: number;
+  codeserver_remote_port?: number;
   remote_transcript_offset?: number;
   remote_transcript_size?: number;
   last_raw_at?: string;
@@ -245,6 +247,14 @@ export const api = {
   stopSessionFilebrowser: (id: string) =>
     request<{ ok: true }>(
       `/api/sessions/${encodeURIComponent(id)}/filebrowser/stop`, { method: "POST" },
+    ),
+  startSessionCodeServer: (id: string) =>
+    request<{ ok: true; url: string; local_port: number; remote_port: number }>(
+      `/api/sessions/${encodeURIComponent(id)}/code-server/start`, { method: "POST" },
+    ),
+  stopSessionCodeServer: (id: string) =>
+    request<{ ok: true }>(
+      `/api/sessions/${encodeURIComponent(id)}/code-server/stop`, { method: "POST" },
     ),
   getSessionTranscriptPage: (id: string, page: number, size = 20) =>
     request<{

@@ -827,6 +827,9 @@ export function SessionView(props: {
   type FbState = "idle" | "starting" | "stopping";
   const [fbState, setFbState] = useState<FbState>("idle");
   const [fbErr, setFbErr] = useState<string>("");
+  // Same pattern for code-server.
+  const [csState, setCsState] = useState<FbState>("idle");
+  const [csErr, setCsErr] = useState<string>("");
 
   // WebSocket carries events + raw + session-meta deltas. Transcript is
   // NOT streamed anymore — TranscriptView pulls it a page at a time via
@@ -976,6 +979,31 @@ export function SessionView(props: {
       setFbState("idle");
     }
   };
+
+  const onStartCodeServer = async () => {
+    setCsErr(""); setCsState("starting");
+    try {
+      const r = await api.startSessionCodeServer(props.id);
+      setSession((cur) => cur ? { ...cur, codeserver_local_port: r.local_port, codeserver_remote_port: r.remote_port } : cur);
+      await props.onChange?.();
+    } catch (e) {
+      setCsErr(String((e as Error)?.message ?? e));
+    } finally {
+      setCsState("idle");
+    }
+  };
+  const onStopCodeServer = async () => {
+    setCsErr(""); setCsState("stopping");
+    try {
+      await api.stopSessionCodeServer(props.id);
+      setSession((cur) => cur ? { ...cur, codeserver_local_port: undefined, codeserver_remote_port: undefined } : cur);
+      await props.onChange?.();
+    } catch (e) {
+      setCsErr(String((e as Error)?.message ?? e));
+    } finally {
+      setCsState("idle");
+    }
+  };
   const onDelete = async () => {
     if (!confirm("Delete this session (files and all)?")) return;
     try {
@@ -1029,6 +1057,15 @@ export function SessionView(props: {
                     err={fbErr}
                     onStart={onStartFilebrowser}
                     onStop={onStopFilebrowser}
+                  />
+                ) : null}
+                codeServerControls={session.status === "active" ? (
+                  <VsCodeControls
+                    session={session}
+                    state={csState}
+                    err={csErr}
+                    onStart={onStartCodeServer}
+                    onStop={onStopCodeServer}
                   />
                 ) : null}
                 onOpenInWorkspace={props.inModal ? () => {
@@ -1934,7 +1971,77 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
   );
 }
 
-function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBrowserControls, onOpenInWorkspace }: {
+/**
+ * Copy of FileBrowserControls structure pointed at the code-server
+ * endpoints. Segmented button group when running (Open + Stop), single
+ * button when idle.
+ */
+function VsCodeControls({ session, state, err, onStart, onStop }: {
+  session: Session;
+  state: "idle" | "starting" | "stopping";
+  err: string;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  const baseBtn: React.CSSProperties = {
+    padding: "4px 10px", fontSize: 12, flexShrink: 0,
+  };
+  const running = !!session.codeserver_local_port;
+  const url = `/api/sessions/${encodeURIComponent(session.id)}/code/`;
+
+  if (!running) {
+    return (
+      <div className="row" style={{ gap: 4, alignItems: "center" }}>
+        <button
+          className="secondary"
+          style={{
+            ...baseBtn, borderRadius: 6,
+            ...(state === "starting" ? ACTIVE_TOGGLE_STYLE : {}),
+          }}
+          onClick={onStart}
+          disabled={state !== "idle"}
+          title="Spawn code-server (browser VS Code) scoped to this session's workdir — first launch downloads ~200MB"
+        >🧑‍💻 {state === "starting" ? "Starting…" : "VS Code"}</button>
+        {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
+      </div>
+    );
+  }
+
+  const groupBtn: React.CSSProperties = {
+    ...baseBtn,
+    borderRadius: 0,
+    ...ACTIVE_TOGGLE_STYLE,
+  };
+  return (
+    <div className="row" style={{ gap: 0, alignItems: "center" }}>
+      <button
+        className="secondary"
+        style={{
+          ...groupBtn,
+          borderTopLeftRadius: 6,
+          borderBottomLeftRadius: 6,
+          borderRight: "none",
+        }}
+        onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+        title="Open VS Code in a new tab"
+      >🧑‍💻 Open VS Code ↗</button>
+      <button
+        className="secondary"
+        style={{
+          ...groupBtn,
+          borderTopRightRadius: 6,
+          borderBottomRightRadius: 6,
+        }}
+        onClick={onStop}
+        disabled={state !== "idle"}
+        title="Kill the remote code-server and drop its SSH forward"
+      >{state === "stopping" ? "Stopping…" : "⏹ Stop"}</button>
+      {err && <span className="pill err" style={{ fontSize: 10, marginLeft: 4 }} title={err}>error</span>}
+    </div>
+  );
+}
+
+function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBrowserControls, codeServerControls, onOpenInWorkspace }: {
   session: Session;
   fillParent?: boolean;
   /** LEFT side, between Context and the Keyboard toggle. The 📝 Notes
@@ -1947,6 +2054,9 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
    * button group. Separated from inputToggle so SessionView can own the
    * filebrowser lifecycle state without touching the terminal. */
   fileBrowserControls?: React.ReactNode;
+  /** LEFT side, right after FileBrowser. The VS Code (code-server)
+   * start/open/stop button group — same pattern, separate lifecycle. */
+  codeServerControls?: React.ReactNode;
   /** When set, a ⇲ Workspace button appears on the RIGHT side of the
    * action bar between + and New tab. SessionView passes this only when
    * the view is mounted as a modal. */
@@ -2066,6 +2176,7 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
             {notesToggle}
             {inputToggle}
             {fileBrowserControls}
+            {codeServerControls}
           </div>
           {/* RIGHT: viewport controls — zoom, nav, window. */}
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>

@@ -12,10 +12,11 @@ import { mountForwards } from "./handlers/forwards.ts";
 import { mountCredits } from "./handlers/credits.ts";
 import { mountUpdate } from "./handlers/update.ts";
 import { proxyHttp, tryUpgradeWsProxy, openProxyWs, relayProxyWsMessage, closeProxyWs, type WsProxyData } from "./proxy.ts";
-import { forwardExists, readForward } from "../domain/forwards.ts";
+import { forwardExists, readForward, listForwards } from "../domain/forwards.ts";
 import { embeddedFiles } from "./embedded.ts";
 import { SessionPoller } from "../domain/session-poller.ts";
-import { readEvents, readRawRange, sessionExists, readSession } from "../domain/sessions.ts";
+import { readEvents, readRawRange, sessionExists, readSession, listSessions, updateSession } from "../domain/sessions.ts";
+import { deleteForward } from "../domain/forwards.ts";
 import { ForwardManager } from "../domain/forward-manager.ts";
 import { randomBytes } from "node:crypto";
 import { BOTDOCK_VERSION } from "../version.ts";
@@ -50,6 +51,40 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
 
   const forwardManager = new ForwardManager(dir);
   forwardManager.startAutoForwards();
+
+  // Daemon restart: filebrowser / code-server state from a previous process
+  // is stale — the remote supervisor tmux *might* still be alive on the
+  // target machine, but our local SSH -L is gone so the UI's "Open" link
+  // would point at a dead tunnel. Easier + clearer to default both off on
+  // boot; the user clicks Start again and we either reattach to the existing
+  // supervisor (startSession{Filebrowser,CodeServer} is idempotent) or spin
+  // up a fresh one.
+  try {
+    for (const s of listSessions(dir)) {
+      const clear: Record<string, undefined> = {};
+      if (s.filebrowser_local_port !== undefined || s.filebrowser_remote_port !== undefined) {
+        clear.filebrowser_local_port = undefined;
+        clear.filebrowser_remote_port = undefined;
+      }
+      if (s.codeserver_local_port !== undefined || s.codeserver_remote_port !== undefined) {
+        clear.codeserver_local_port = undefined;
+        clear.codeserver_remote_port = undefined;
+      }
+      if (Object.keys(clear).length > 0) updateSession(dir, s.id, clear);
+    }
+    // Also prune stale per-session embedded-tool forwards — they never had
+    // auto_start=true, so they're just disk clutter accumulating ports that
+    // the next Start would have overwritten anyway.
+    for (const f of listForwards(dir)) {
+      if (f.managed_by === "system:session-filebrowser" ||
+          f.managed_by === "system:session-codeserver") {
+        forwardManager.forget(f.name);
+        deleteForward(dir, f.name);
+      }
+    }
+  } catch (err) {
+    console.error("[boot] session tool cleanup failed:", err);
+  }
 
   // Unique per-process ID. Surfaced in /api/status so the frontend can detect
   // daemon restarts (instance changes → page forces a full reload instead of
@@ -97,6 +132,12 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
 
   function sessionFilebrowserForwardPort(sessionId: string): number | null {
     const fname = `session-${sessionId}-filebrowser`;
+    if (!forwardExists(dir, fname)) return null;
+    return readForward(dir, fname).local_port;
+  }
+
+  function sessionCodeServerForwardPort(sessionId: string): number | null {
+    const fname = `session-${sessionId}-codeserver`;
     if (!forwardExists(dir, fname)) return null;
     return readForward(dir, fname).local_port;
   }
@@ -303,6 +344,29 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
           );
         }
         const upstreamPath = `/api/sessions/${encodeURIComponent(sessionId)}/files${remainingPath === "/" ? "" : remainingPath}`;
+        const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
+        if (wsResp) return wsResp;
+        return proxyHttp(req, port, upstreamPath);
+      }
+
+      // Reverse proxy for per-session code-server. Unlike filebrowser/ttyd,
+      // code-server has no --base-path flag — the recommended deployment is
+      // nginx "location /code/ proxy_pass /". So we STRIP the prefix and
+      // forward the remainder to root. WS upgrades are critical (terminals,
+      // LSP, live extensions).
+      const sessCodeMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/code(\/.*)?$/);
+      if (sessCodeMatch) {
+        const sessionId = decodeURIComponent(sessCodeMatch[1]!);
+        const remainingPath = sessCodeMatch[2] ?? "/";
+        const port = sessionCodeServerForwardPort(sessionId);
+        if (port === null) {
+          return new Response(
+            `VS Code isn't running for session "${sessionId}". Start it from the session's action bar.`,
+            { status: 503, headers: { "content-type": "text/plain" } },
+          );
+        }
+        // STRIP the /api/sessions/<id>/code prefix — code-server expects /.
+        const upstreamPath = remainingPath;
         const wsResp = tryUpgradeWsProxy(srv, req, port, upstreamPath);
         if (wsResp) return wsResp;
         return proxyHttp(req, port, upstreamPath);

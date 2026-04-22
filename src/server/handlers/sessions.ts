@@ -24,6 +24,8 @@ import {
   teardownSessionTerminal,
   setupSessionFilebrowser,
   teardownSessionFilebrowser,
+  setupSessionCodeServer,
+  teardownSessionCodeServer,
 } from "../../domain/session-launcher.ts";
 import type { SessionPoller } from "../../domain/session-poller.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
@@ -151,6 +153,7 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     poller.unwatch(params.id!);
     await teardownSessionTerminal(dir, forwardManager, params.id!).catch(() => {});
     await teardownSessionFilebrowser(dir, forwardManager, params.id!).catch(() => {});
+    await teardownSessionCodeServer(dir, forwardManager, params.id!).catch(() => {});
     deleteSession(dir, params.id!);
     return json({ ok: true });
   });
@@ -175,6 +178,29 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
   router.post("/api/sessions/:id/filebrowser/stop", async ({ params }) => {
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
     await teardownSessionFilebrowser(dir, forwardManager, params.id!);
+    return json({ ok: true });
+  });
+
+  // code-server lifecycle (browser-hosted VS Code), mirrors the
+  // filebrowser pattern.
+  router.post("/api/sessions/:id/code-server/start", async ({ params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    try {
+      const res = await setupSessionCodeServer(dir, forwardManager, params.id!);
+      return json({
+        ok: true,
+        url: `${res.base_path}/`,
+        local_port: res.local_port,
+        remote_port: res.remote_port,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new HttpError(500, msg);
+    }
+  });
+  router.post("/api/sessions/:id/code-server/stop", async ({ params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    await teardownSessionCodeServer(dir, forwardManager, params.id!);
     return json({ ok: true });
   });
 

@@ -42,6 +42,11 @@ export type Session = {
   filebrowser_local_port?: number;
   /** The port filebrowser is listening on, on the remote machine. */
   filebrowser_remote_port?: number;
+  /** Local port the daemon forwards to this session's code-server.
+   * Populated only while code-server is running for this session. */
+  codeserver_local_port?: number;
+  /** Port code-server is listening on, on the remote machine. */
+  codeserver_remote_port?: number;
   /** Byte offset into the remote CC jsonl we've already mirrored locally. */
   remote_transcript_offset?: number;
   /** Last observed size of the remote CC jsonl. When offset < size, the
