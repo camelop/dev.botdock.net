@@ -370,8 +370,10 @@ chmod +x "$LAUNCHER"
 
 # If our ttyd tmux session is already alive, discover its port from ps.
 if tmux has-session -t "$TMUX_NAME" 2>/dev/null; then
+  # "|| true" because grep -F returning 1 when the supervisor's ttyd has
+  # died trips pipefail; we want an empty PORT + fall-through to respawn.
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -v grep \\
-         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
+         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1 || true)
   if [ -n "$PORT" ]; then
     echo "BOTDOCK_TTYD_ALREADY_RUNNING port=$PORT"
     exit 0
@@ -471,8 +473,9 @@ sed -i.bak "s|__TTYD_PATH__|$TTYD|" "$LAUNCHER" && rm -f "$LAUNCHER.bak"
 chmod +x "$LAUNCHER"
 
 if tmux has-session -t "$SUPER" 2>/dev/null; then
+  # "|| true" so a dead ttyd inside a live supervisor doesn't trip pipefail.
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -F "$BASE_PATH" | grep -v grep \\
-         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
+         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1 || true)
   if [ -n "$PORT" ]; then
     echo "BOTDOCK_SESSION_TTYD_ALREADY_RUNNING port=$PORT"
     exit 0
@@ -642,8 +645,9 @@ DB="$WORKDIR/.botdock/session/filebrowser.db"
 # Reuse an already-running supervisor if it's still up for this session —
 # idempotent Start call from the UI should be cheap.
 if tmux has-session -t "$SUPER" 2>/dev/null; then
+  # "|| true" so a dead filebrowser inside a live supervisor doesn't trip pipefail.
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$FB" | grep -F "$DB" | grep -v grep \\
-         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
+         | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1 || true)
   if [ -n "$PORT" ]; then
     echo "BOTDOCK_SESSION_FB_ALREADY_RUNNING port=$PORT"
     exit 0
@@ -843,8 +847,14 @@ esac
 mkdir -p "$WORKDIR"
 
 if tmux has-session -t "$SUPER" 2>/dev/null; then
+  # Trailing "|| true" is load-bearing under set -euo pipefail: if the
+  # supervisor tmux is still alive but its code-server process already
+  # died, grep -F returns 1 (no match), pipefail propagates that as the
+  # $(...) exit status, and the ERR trap fires. We want "no match" to
+  # just leave PORT empty so we fall through to the kill-session + fresh
+  # spawn path below.
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$CS" | grep -F "$WORKDIR" | grep -v grep \\
-         | grep -oE 'bind-addr[[:space:]]+127\\.0\\.0\\.1:[0-9]+' | awk -F: '{print $2}' | head -1)
+         | grep -oE 'bind-addr[[:space:]]+127\\.0\\.0\\.1:[0-9]+' | awk -F: '{print $2}' | head -1 || true)
   if [ -n "$PORT" ]; then
     echo "BOTDOCK_SESSION_CS_ALREADY_RUNNING port=$PORT workdir=$WORKDIR"
     exit 0
