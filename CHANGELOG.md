@@ -6,14 +6,14 @@ commit log between the two adjacent tags.
 
 ## v0.5.0 — 2026-04-22
 
-- In-process self-upgrade: clickable topbar status runs a GitHub check, downloads + SHA256-verifies the new binary, keeps the old one as `.bak`, and `execv`s the same PID so the user's `serve` terminal rolls over cleanly. Popover shows the real release notes and a `vA → vB` header.
-- Per-session VS Code (coder/code-server), mirrors the FileBrowser flow — one-click spawn, "Open VS Code ↗" lands in the session's workdir, clean Stop.
-- Real BotDock logo replaces the placeholder SVG in the topbar, browser favicon, and README header; Notes panel gains `A- / A+` font-size control persisted across reloads.
-- Keyboard: Send only delivers text now — Enter is its own quick key, so typing into a Claude prompt no longer auto-submits.
-- Workspace remembers the last-selected session across reloads (including update-triggered restarts); transcript view auto-follows the latest page so new turns advance the view instead of pinning it.
-- Release workflow builds the release body from CHANGELOG.md + full commit messages since the previous tag, so both the GitHub release page and the in-app update popover get the "why", not just subjects.
-- Daemon restart now resets filebrowser + code-server state so stale "Open" links don't point at dead tunnels.
-- Fixes: `installed.toml` rewrite preserves every tool's block (installing ttyd no longer wipes filebrowser and vice versa); supervisor port-discovery no longer trips `pipefail` when the embedded process died inside a live tmux; tool-lifecycle breadcrumbs use `info` instead of `error` in the events panel.
+- One-click self-upgrade from the topbar — checks GitHub, installs in place, rolls over without dropping your `serve` terminal. Popover shows the real release notes and the `vA → vB` pair.
+- Per-session VS Code (coder/code-server), same flow as the file browser — one click to spawn, "Open VS Code ↗" lands in the session's workdir.
+- Real BotDock logo in the topbar, browser favicon, and README header; Notes panel gains an `A- / A+` font-size control.
+- Keyboard Send no longer auto-presses Enter — Enter is its own quick key, so typing into a Claude prompt doesn't submit by accident.
+- Workspace remembers the last-selected session across reloads; transcript view auto-follows the latest page as new turns land.
+- Release notes shown in the update popover (and on the GitHub release page) now come from CHANGELOG + full commit messages, not just subjects.
+- `botdock serve` restart resets filebrowser + code-server state so stale "Open" links don't point at dead tunnels.
+- Fixes: installing one embedded tool no longer wipes another's marker; supervisor port-detection no longer trips when the inner process died inside a live tmux; Events panel stops labeling lifecycle breadcrumbs as `error`.
 
 ## v0.4.0 — 2026-04-21
 
