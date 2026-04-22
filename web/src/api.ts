@@ -114,6 +114,7 @@ export type Session = {
   filebrowser_remote_port?: number;
   codeserver_local_port?: number;
   codeserver_remote_port?: number;
+  codeserver_workdir?: string;
   remote_transcript_offset?: number;
   remote_transcript_size?: number;
   last_raw_at?: string;

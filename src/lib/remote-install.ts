@@ -813,7 +813,7 @@ export function startSessionCodeServer(
   dir: DataDir,
   machine: Machine,
   opts: { sessionId: string; workdir: string },
-): { remote_port: number; installed: InstalledState } {
+): { remote_port: number; resolved_workdir: string; installed: InstalledState } {
   let installed = ensureTmux(dir, machine);
   installed = ensureCodeServer(dir, machine);
   if (!installed.tmux_available) {
@@ -836,7 +836,7 @@ if tmux has-session -t "$SUPER" 2>/dev/null; then
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$CS" | grep -F "$WORKDIR" | grep -v grep \\
          | grep -oE 'bind-addr[[:space:]]+127\\.0\\.0\\.1:[0-9]+' | awk -F: '{print $2}' | head -1)
   if [ -n "$PORT" ]; then
-    echo "BOTDOCK_SESSION_CS_ALREADY_RUNNING port=$PORT"
+    echo "BOTDOCK_SESSION_CS_ALREADY_RUNNING port=$PORT workdir=$WORKDIR"
     exit 0
   fi
   tmux kill-session -t "$SUPER" 2>/dev/null || true
@@ -879,7 +879,7 @@ if [ "$ALIVE" != "1" ]; then
   exit 2
 fi
 
-echo "BOTDOCK_SESSION_CS_STARTED port=$PORT"
+echo "BOTDOCK_SESSION_CS_STARTED port=$PORT workdir=$WORKDIR"
 `;
   const r = sshExec(dir, machine, "bash -s", script, 30_000, { noControlMaster: true });
   if (r.code !== 0 || !/BOTDOCK_SESSION_CS_(STARTED|ALREADY_RUNNING)/.test(r.stdout)) {
@@ -889,7 +889,11 @@ echo "BOTDOCK_SESSION_CS_STARTED port=$PORT"
   }
   const m = /port=(\d+)/.exec(r.stdout);
   if (!m) throw new Error("could not parse session-code-server port from remote output");
-  return { remote_port: Number(m[1]), installed };
+  // Resolved workdir — the remote has expanded "~" to $HOME. Client side needs
+  // the absolute path to hand to code-server's ?folder= query param.
+  const wdMatch = /workdir=([^\n]+)/.exec(r.stdout);
+  const resolvedWorkdir = (wdMatch?.[1] ?? opts.workdir).trim();
+  return { remote_port: Number(m[1]), resolved_workdir: resolvedWorkdir, installed };
 }
 
 export function stopSessionCodeServer(

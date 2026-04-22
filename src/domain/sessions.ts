@@ -47,6 +47,10 @@ export type Session = {
   codeserver_local_port?: number;
   /** Port code-server is listening on, on the remote machine. */
   codeserver_remote_port?: number;
+  /** Remote-resolved absolute workdir (tilde expanded). The UI uses this
+   * for code-server's ?folder= query so "Open VS Code" lands in the
+   * session's directory instead of the welcome page. */
+  codeserver_workdir?: string;
   /** Byte offset into the remote CC jsonl we've already mirrored locally. */
   remote_transcript_offset?: number;
   /** Last observed size of the remote CC jsonl. When offset < size, the

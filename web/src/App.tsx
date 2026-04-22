@@ -375,7 +375,9 @@ function UpdatePopover({ onClose, currentVersion }: { onClose: () => void; curre
     >
       <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 600 }}>BotDock updates</div>
       <div className="mono muted" style={{ fontSize: 11, marginBottom: 8 }}>
-        current: v{currentVersion}
+        {check && check.newer_available
+          ? `v${currentVersion} → ${check.tag}`
+          : `current: v${currentVersion}`}
       </div>
 
       {checking && <div className="muted" style={{ fontSize: 12 }}>Checking GitHub…</div>}

@@ -66,9 +66,10 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
         clear.filebrowser_local_port = undefined;
         clear.filebrowser_remote_port = undefined;
       }
-      if (s.codeserver_local_port !== undefined || s.codeserver_remote_port !== undefined) {
+      if (s.codeserver_local_port !== undefined || s.codeserver_remote_port !== undefined || s.codeserver_workdir !== undefined) {
         clear.codeserver_local_port = undefined;
         clear.codeserver_remote_port = undefined;
+        clear.codeserver_workdir = undefined;
       }
       if (Object.keys(clear).length > 0) updateSession(dir, s.id, clear);
     }

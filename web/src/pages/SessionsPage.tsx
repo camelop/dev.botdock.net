@@ -1987,7 +1987,12 @@ function VsCodeControls({ session, state, err, onStart, onStop }: {
     padding: "4px 10px", fontSize: 12, flexShrink: 0,
   };
   const running = !!session.codeserver_local_port;
-  const url = `/api/sessions/${encodeURIComponent(session.id)}/code/`;
+  // Default-open the session's workdir in the browser VS Code instead of
+  // the welcome page. code-server reads ?folder=<abs> to auto-open.
+  const baseUrl = `/api/sessions/${encodeURIComponent(session.id)}/code/`;
+  const url = session.codeserver_workdir
+    ? `${baseUrl}?folder=${encodeURIComponent(session.codeserver_workdir)}`
+    : baseUrl;
 
   if (!running) {
     return (

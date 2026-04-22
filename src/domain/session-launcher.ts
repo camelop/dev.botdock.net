@@ -284,6 +284,7 @@ export async function setupSessionCodeServer(
   updateSession(dir, id, {
     codeserver_local_port: localPort,
     codeserver_remote_port: res.remote_port,
+    codeserver_workdir: res.resolved_workdir,
   });
   appendEvent(dir, id, {
     ts: new Date().toISOString(),
@@ -312,6 +313,7 @@ export async function teardownSessionCodeServer(
   updateSession(dir, id, {
     codeserver_local_port: undefined,
     codeserver_remote_port: undefined,
+    codeserver_workdir: undefined,
   });
   appendEvent(dir, id, {
     ts: new Date().toISOString(),

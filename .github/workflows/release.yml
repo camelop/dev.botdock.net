@@ -19,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need full history + tags so the release-body step can compute
+          # $PREV_TAG and git log between tags.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -75,12 +79,53 @@ jobs:
         working-directory: dist-bin
         run: sha256sum botdock-* > SHA256SUMS
 
+      - name: Build release body
+        id: release_body
+        run: |
+          # Release body = curated CHANGELOG.md section + full commit
+          # messages (subject + body) for every non-merge commit since the
+          # previous tag. The in-app update popover (that calls
+          # /releases/latest) shows whichever the user reads first — the
+          # CHANGELOG line is the elevator pitch, the commit list has the
+          # actual "why" and implementation notes for power users.
+          TAG="${{ steps.version.outputs.tag }}"
+          git fetch --tags --force || true
+
+          # CHANGELOG section.
+          awk -v tag="$TAG" '
+            BEGIN { printing = 0 }
+            $0 ~ "^## +" tag "( |$)" { printing = 1; next }
+            printing && $0 ~ /^## +v?[0-9]/ { exit }
+            printing { print }
+          ' CHANGELOG.md > release-body.md || true
+
+          # Commit messages since previous tag.
+          PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..$TAG"
+          else
+            RANGE="$TAG"
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Commits"
+            echo ""
+            # %s = subject, %b = body. Prefix each subject with "### " so
+            # the body flows as markdown underneath.
+            git log --no-merges --format="### %s%n%n%b" "$RANGE"
+          } >> release-body.md
+
+          echo "--- release body preview ---"
+          head -60 release-body.md || true
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
+          body_path: release-body.md
           files: |
             dist-bin/botdock-linux-x64
             dist-bin/botdock-linux-arm64

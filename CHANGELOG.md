@@ -2,6 +2,13 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.8 — 2026-04-22
+
+- Workspace remembers the last-selected session across reloads (via `localStorage`), so update-triggered restarts drop you back where you were.
+- VS Code open now lands in the session's workdir — start script echoes the tilde-expanded path, daemon stores it on the session, `Open VS Code ↗` appends `?folder=<abs>`.
+- Update popover header shows `vA → vB` when an update is available (was just `current: vA`).
+- Release workflow now builds the release body from CHANGELOG.md + full commit messages since the previous tag (so `/releases/latest.body` and the in-app popover get the "why", not just titles).
+
 ## v0.4.7 — 2026-04-22
 
 - Fix: code-server (and ttyd/filebrowser) install scripts crashed with "NEW_TTYD_PATH: unbound variable" because the shared marker-rewrite snippet read NEW_* vars the caller didn't set under `set -euo pipefail`. Now defaults each to empty via `${VAR:-}`.

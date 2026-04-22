@@ -7,6 +7,11 @@ import { relativeTime, fullTime } from "../lib/time";
 import { aliasColor } from "../lib/alias-colors";
 import { SessionNameChip } from "../components/SessionNameChip";
 
+// Persist-across-reloads key for the currently-selected session. Kept
+// global (not per-tab) so a full page reload — update-triggered or not —
+// drops the user back on the same session.
+const HUB_LAST_SELECTED_KEY = "botdock:hub-last-selected";
+
 /**
  * Three-column workspace:
  *   left   = grouped session list (pending / running / other) with aliases
@@ -53,24 +58,44 @@ export function SessionHubPage() {
     return list[0]?.id ?? null;
   };
 
-  // On first mount, honor a preselect hint (set by the detail modal's
-  // "Open in workspace" button) if it points at a still-present session.
+  // Pick an initial selection on first mount, with three sources, checked
+  // in decreasing priority:
+  //   1. sessionStorage hint from the detail modal's "Open in workspace"
+  //      button (one-shot — consumed and cleared on use).
+  //   2. localStorage "last selected" — the session the user was on before
+  //      the previous page unload, so an update-triggered reload drops
+  //      them back where they were instead of the generic pickDefault.
+  //   3. pickDefault (pending > running > list[0]).
+  // Any of (1) / (2) that references a now-deleted session falls through.
   useEffect(() => {
     if (selected != null) return;
     if (sessions.length === 0) return;
     let preselect: string | null = null;
+    let remembered: string | null = null;
     try {
       preselect = sessionStorage.getItem("botdock:hub-preselect");
-    } catch { /* private-browsing / no sessionStorage */ }
+      remembered = localStorage.getItem(HUB_LAST_SELECTED_KEY);
+    } catch { /* private-browsing / no storage */ }
     if (preselect && sessions.find((s) => s.id === preselect)) {
       setSelected(preselect);
       try { sessionStorage.removeItem("botdock:hub-preselect"); } catch {}
-    } else if (!preselect) {
-      setSelected(pickDefault(sessions));
+      return;
     }
-    // If preselect is set but the session isn't yet in the list, leave it in
-    // sessionStorage — the next refresh will pick it up.
+    if (!preselect && remembered && sessions.find((s) => s.id === remembered)) {
+      setSelected(remembered);
+      return;
+    }
+    if (!preselect) setSelected(pickDefault(sessions));
+    // If preselect is set but the session isn't yet in the list, leave it
+    // in sessionStorage — the next refresh will pick it up.
   }, [sessions]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist the current selection so a daemon-restart / update reload
+  // lands us back on the same session.
+  useEffect(() => {
+    if (!selected) return;
+    try { localStorage.setItem(HUB_LAST_SELECTED_KEY, selected); } catch {}
+  }, [selected]);
 
   const grouped = useMemo(() => {
     const cmp = (a: Session, b: Session) => {
