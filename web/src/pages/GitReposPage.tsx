@@ -126,6 +126,11 @@ function GitRepoEditor(props: {
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeErr, setProbeErr] = useState("");
+  // Bumped by the manual "↻" button next to Ref. Participates in the probe
+  // effect's dep list so incrementing it re-runs the probe even when URL
+  // and deploy_key haven't changed (e.g. the user just added a deploy key
+  // on the git host's side and wants to retry without re-typing anything).
+  const [probeNonce, setProbeNonce] = useState(0);
   // Has the user typed in the Name field? Flips on first edit and locks
   // out URL-driven auto-fill so we never clobber the user's typing.
   const nameEdited = useRef(props.target.mode === "edit");
@@ -186,7 +191,7 @@ function GitRepoEditor(props: {
       }
     }, 500);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [r.url, r.deploy_key, props.target.mode]);
+  }, [r.url, r.deploy_key, props.target.mode, probeNonce]);
 
   // Load / clear the selected deploy key's public key so the "show pub" panel
   // can render it inline without forcing another round-trip per reveal click.
@@ -353,12 +358,20 @@ function GitRepoEditor(props: {
       </label>
 
       <label>
-        <span>
-          Ref <span className="muted">(branch / tag / SHA — optional)</span>
-          {probing && <span className="muted" style={{ marginLeft: 8, fontSize: 11 }}>probing…</span>}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>Ref <span className="muted">(branch / tag / SHA — optional)</span></span>
+          <button
+            type="button"
+            className="secondary"
+            title="Re-probe the remote for branches (useful after adding a deploy key on the git host)"
+            disabled={probing || !r.url || !r.url.trim()}
+            onClick={() => setProbeNonce((n) => n + 1)}
+            style={{ fontSize: 11, padding: "1px 6px", lineHeight: 1.2 }}
+          >↻</button>
+          {probing && <span className="muted" style={{ fontSize: 11 }}>probing…</span>}
           {!probing && probeErr && (
-            <span className="muted" style={{ marginLeft: 8, fontSize: 11, color: "var(--warn)" }}>
-              probe failed — enter a ref manually
+            <span className="muted" style={{ fontSize: 11, color: "var(--warn)" }}>
+              probe failed — {r.deploy_key ? "if you just added this deploy key to the git host, click ↻ to retry. Otherwise " : ""}enter a ref manually
             </span>
           )}
         </span>
