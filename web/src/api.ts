@@ -321,6 +321,20 @@ export const api = {
     request<{ turns: Array<Record<string, unknown>> }>(
       `/api/sessions/${encodeURIComponent(id)}/recent-turns?limit=${limit}`,
     ),
+  pushSessionContext: (id: string, body: {
+    git_repos: Array<{ name: string; include_deploy_key: boolean }>;
+  }) => request<{
+    pushed: Array<{
+      kind: "git-repo" | "keys";
+      name: string;
+      path: string;
+      wrote_private_key?: boolean;
+    }>;
+    remote_base: string;
+  }>(`/api/sessions/${encodeURIComponent(id)}/context/push`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
 };
 
 export function sessionWatchUrl(id: string, offsets?: {

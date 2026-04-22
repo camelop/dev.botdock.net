@@ -113,6 +113,7 @@ export type SessionEvent = {
     | "shim_boot"    // the shim script reached its first line
     | "pre_claude"   // about to exec claude (carries resolved binary path)
     | "info"         // informational breadcrumb — tool lifecycle, not an error
+    | "context_push" // user pushed context resources into the session workdir
     | "error";
   [k: string]: unknown;
 };

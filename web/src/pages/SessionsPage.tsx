@@ -17,6 +17,7 @@ import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 import { SessionNameChip } from "../components/SessionNameChip";
+import { ContextPushPopover } from "../components/ContextPushPopover";
 
 export type SessionDraft = {
   machine: string;
@@ -2185,18 +2186,31 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
     padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
   };
 
+  const contextBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
+
   return (
     <>
       {!zoomed && (
         <div className="row" style={{ justifyContent: "space-between", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
           {/* LEFT: session-scoped input/context affordances. */}
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-            <button
-              className="secondary"
-              style={iconBtn}
-              disabled
-              title="Attach extra context to this session (coming soon)"
-            >＋ Context</button>
+            <div style={{ position: "relative" }}>
+              <button
+                ref={contextBtnRef}
+                className="secondary"
+                style={iconBtn}
+                onClick={() => setContextOpen((v) => !v)}
+                title="Push resources (git-repos, optionally their deploy keys) into this session's remote workdir"
+              >＋ Context</button>
+              {contextOpen && (
+                <ContextPushPopover
+                  session={session}
+                  anchorEl={contextBtnRef.current}
+                  onClose={() => setContextOpen(false)}
+                />
+              )}
+            </div>
             {notesToggle}
             {inputToggle}
             {fileBrowserControls}

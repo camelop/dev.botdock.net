@@ -13,8 +13,9 @@ web/dist/
 # Compiled binaries
 dist-bin/
 
-# Claude Code per-machine permission overrides
+# Claude Code per-machine permission overrides + scheduling runtime state
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # BotDock runtime state written by the shim when a session runs in this repo
 .botdock/

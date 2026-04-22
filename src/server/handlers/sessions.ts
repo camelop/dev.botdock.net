@@ -29,6 +29,7 @@ import {
 } from "../../domain/session-launcher.ts";
 import type { SessionPoller } from "../../domain/session-poller.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
+import { pushContext, type GitRepoPick } from "../../domain/context-push.ts";
 
 export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller, forwardManager: ForwardManager): void {
   router.get("/api/sessions", () => json(listSessions(dir)));
@@ -220,6 +221,34 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     const text = typeof body.text === "string" ? body.text.slice(0, 1024 * 1024) : "";
     writeSessionNotes(dir, params.id!, text);
     return json({ ok: true, bytes: Buffer.byteLength(text, "utf8") });
+  });
+
+  // Push curated context (currently: git-repos, with opt-in deploy key
+  // attached) from the root-folder registry into the session's remote
+  // workdir. The remote tree mirrors the root-folder layout 1:1 under
+  // `<workdir>/.botdock/context/` so the agent-side skill doesn't need
+  // any mapping logic. Writes a context_push audit event.
+  router.post("/api/sessions/:id/context/push", async ({ req, params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const body = await parseJsonBody<{ git_repos?: GitRepoPick[] }>(req);
+    const picks = Array.isArray(body.git_repos) ? body.git_repos : [];
+    if (picks.length === 0) throw new HttpError(400, "git_repos required (at least one)");
+    for (const p of picks) {
+      if (!p.name || typeof p.name !== "string") {
+        throw new HttpError(400, "each git_repos[] item needs a name");
+      }
+    }
+    try {
+      const result = await pushContext(dir, params.id!, {
+        git_repos: picks.map((p) => ({
+          name: p.name,
+          include_deploy_key: !!p.include_deploy_key,
+        })),
+      });
+      return json(result);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
   });
 
   router.get("/api/sessions/:id/events", ({ params, url }) => {
