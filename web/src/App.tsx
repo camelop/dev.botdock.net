@@ -394,15 +394,28 @@ function UpdatePopover({ onClose, currentVersion }: { onClose: () => void; curre
 
       {!checking && check && check.newer_available && !installing && (
         <>
-          <div style={{ fontSize: 12, marginBottom: 4 }}>
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
             <span className="pill warn" style={{ fontSize: 10 }}>update available</span>
             {" "}
             <span className="mono">{check.tag}</span>
           </div>
-          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
-            BotDock will download, verify (SHA256), keep your old binary as
-            <span className="mono">{" "}botdock.bak</span>, and hot-swap into the
-            new version — the page will auto-reload when the new daemon is up.
+          <div
+            className="mono scroll-panel"
+            style={{
+              fontSize: 11,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              padding: 8,
+              maxHeight: 220,
+              marginBottom: 10,
+            }}
+          >
+            {check.notes
+              ? check.notes
+              : <span className="muted">(release notes empty)</span>}
           </div>
           <button onClick={install}>Install {check.tag}</button>
         </>

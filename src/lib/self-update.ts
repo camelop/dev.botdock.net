@@ -46,6 +46,11 @@ export type LatestInfo = {
   newer_available: boolean;
   asset_url: string | null;
   checksums_url: string | null;
+  /** Raw release body — markdown, capped at 8 KiB. When the release was
+   * published with `generate_release_notes: true` this is an auto-summary
+   * of the commits / PRs since the previous tag, which is what the user
+   * actually wants to read before clicking Install. */
+  notes: string;
 };
 
 /**
@@ -60,6 +65,7 @@ export async function checkLatest(): Promise<LatestInfo> {
   const body = await r.json() as {
     tag_name?: string;
     published_at?: string;
+    body?: string;
     assets?: Array<{ name: string; browser_download_url: string }>;
   };
   const tag = String(body.tag_name ?? "");
@@ -76,6 +82,7 @@ export async function checkLatest(): Promise<LatestInfo> {
     newer_available: isNewer(latest, BOTDOCK_VERSION),
     asset_url: assetUrl,
     checksums_url: sumsUrl,
+    notes: typeof body.body === "string" ? body.body.slice(0, 8 * 1024) : "",
   };
 }
 

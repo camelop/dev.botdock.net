@@ -2,6 +2,10 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.5 — 2026-04-22
+
+- Update popover now shows the actual release notes (GitHub-generated from commit titles) instead of a generic description of what upgrading does.
+
 ## v0.4.4 — 2026-04-22
 
 - Per-session VS Code button (`coder/code-server`), mirrors the FileBrowser flow — one click to spawn, segmented Open/Stop group when running; proxy strips the `/api/sessions/:id/code` prefix since code-server has no native base-path.

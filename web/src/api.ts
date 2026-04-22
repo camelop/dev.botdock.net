@@ -63,6 +63,7 @@ export type UpdateCheckResult = {
   newer_available: boolean;
   asset_url: string | null;
   checksums_url: string | null;
+  notes: string;
 };
 
 export type UpdatePhase =
