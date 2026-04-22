@@ -74,6 +74,13 @@ export function MachinesPage() {
   };
 
   const localMachine = machines.find((m) => m.managed === "local");
+  // Pin the `local` pseudo-machine to the top of the table when it exists,
+  // so the user doesn't have to hunt for it among remotes sorted by name.
+  const orderedMachines = useMemo(() => {
+    const local = machines.filter((m) => m.managed === "local");
+    const others = machines.filter((m) => m.managed !== "local");
+    return [...local, ...others];
+  }, [machines]);
 
   const doEnableLocal = async () => {
     setLocalBusy(true); setErr("");
@@ -129,26 +136,26 @@ export function MachinesPage() {
               title="Enable the managed `local` loopback machine so you can run agents on the host that's running BotDock"
             >🖥️ Enable local</button>
           )}
-          <button onClick={() => setEdit({ mode: "new" })}>New machine</button>
+          <button onClick={() => setEdit({ mode: "new" })}>➕ New machine</button>
         </div>
       </div>
       {confirmEnableLocal && (
         <Modal title="Enable local machine?" onClose={() => setConfirmEnableLocal(false)}>
           <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 14 }}>
+            <strong>Heads up:</strong> when an agent runs on the BotDock
+            host, a misbehaving command (e.g. something that kills your
+            shell, takes the machine offline, or holds a lot of memory)
+            can take BotDock itself down — you'll lose this browser's
+            connection until you bring the daemon back up manually.
+          </div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>
             BotDock will create a dedicated SSH key and machine called{" "}
             <code className="mono">local</code>, pointing at{" "}
             <code className="mono">127.0.0.1</code>, and append that key's
             public half to your{" "}
-            <code className="mono">~/.ssh/authorized_keys</code>. From that
-            point on, agents can run on <em>this</em> machine — the same one
+            <code className="mono">~/.ssh/authorized_keys</code>. From then
+            on, agents can run on <em>this</em> machine — the same one
             that's running <code className="mono">botdock serve</code>.
-          </div>
-          <div className="muted" style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>
-            <strong>Heads up:</strong> when an agent runs on the BotDock
-            host, a misbehaving command (e.g. something that kills your
-            shell, takes the machine offline, or holds a lot of memory)
-            can take BotDock itself down, and you'll lose this browser's
-            connection until you bring the daemon back up manually.
           </div>
           {err && <div className="error-banner" style={{ fontSize: 12 }}>{err}</div>}
           <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
@@ -178,14 +185,20 @@ export function MachinesPage() {
               </tr>
             </thead>
             <tbody>
-              {machines.map((m) => {
+              {orderedMachines.map((m, i) => {
                 const counts = sessionCounts[m.name] ?? { running: 0, total: 0 };
                 const term = terminalByMachine[m.name];
                 const termRunning = term?.status.state === "running";
                 const isLocal = m.managed === "local";
-                const rowStyle: React.CSSProperties = m.disabled
-                  ? { opacity: 0.55 }
-                  : {};
+                // When we transition from the local block to the first
+                // remote, drop a thicker divider so the two sections read
+                // as "this host" vs "everything else".
+                const prev = i > 0 ? orderedMachines[i - 1] : null;
+                const boundary = prev && prev.managed === "local" && !isLocal;
+                const rowStyle: React.CSSProperties = {
+                  ...(m.disabled ? { opacity: 0.55 } : {}),
+                  ...(boundary ? { borderTop: "3px solid var(--border)" } : {}),
+                };
                 return (
                 <tr key={m.name} style={rowStyle}>
                   <td>
