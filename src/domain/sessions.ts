@@ -112,6 +112,7 @@ export type SessionEvent = {
     | "cc_session"   // claude-code transcript jsonl discovered
     | "shim_boot"    // the shim script reached its first line
     | "pre_claude"   // about to exec claude (carries resolved binary path)
+    | "info"         // informational breadcrumb — tool lifecycle, not an error
     | "error";
   [k: string]: unknown;
 };

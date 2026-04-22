@@ -136,7 +136,7 @@ export async function setupSessionTerminal(
     });
     appendEvent(dir, id, {
       ts: new Date().toISOString(),
-      kind: "error",   // reusing "error" slot for informational; fine for now
+      kind: "info",
       message: `terminal ready at ${basePath}/`,
     });
   } catch (err) {
@@ -215,7 +215,7 @@ export async function setupSessionFilebrowser(
   });
   appendEvent(dir, id, {
     ts: new Date().toISOString(),
-    kind: "error",
+    kind: "info",
     message: `filebrowser ready at ${basePath}/`,
   });
   return { local_port: localPort, remote_port: res.remote_port, base_path: basePath };
@@ -243,7 +243,7 @@ export async function teardownSessionFilebrowser(
   });
   appendEvent(dir, id, {
     ts: new Date().toISOString(),
-    kind: "error",
+    kind: "info",
     message: `filebrowser stopped`,
   });
 }
@@ -288,7 +288,7 @@ export async function setupSessionCodeServer(
   });
   appendEvent(dir, id, {
     ts: new Date().toISOString(),
-    kind: "error",
+    kind: "info",
     message: `code-server ready at ${basePath}/`,
   });
   return {
@@ -322,7 +322,7 @@ export async function teardownSessionCodeServer(
   });
   appendEvent(dir, id, {
     ts: new Date().toISOString(),
-    kind: "error",
+    kind: "info",
     message: `code-server stopped`,
   });
 }

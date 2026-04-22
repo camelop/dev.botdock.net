@@ -2,6 +2,10 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.12 — 2026-04-22
+
+- Events panel stops labelling benign tool-lifecycle breadcrumbs ("terminal ready", "filebrowser stopped", "code-server ready / stopped") as `error`. New `info` kind, used for all five sites.
+
 ## v0.4.11 — 2026-04-22
 
 - Fix: the "is supervisor already up?" port-discovery pipeline in ttyd/filebrowser/code-server start scripts tripped `pipefail` when the supervisor tmux was alive but the process inside had died — `grep` returning "no match" killed the script before it could fall through to a clean respawn. Added `|| true` so an empty pipeline just leaves `PORT` empty.
