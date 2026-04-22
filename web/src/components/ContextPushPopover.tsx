@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type GitRepoResource, type Session } from "../api";
+import { api, type GitRepoResource, type MarkdownMeta, type Session } from "../api";
 
-type Picks = Record<string, { selected: boolean; includeKey: boolean }>;
+type RepoPicks = Record<string, { selected: boolean; includeKey: boolean }>;
+type MarkdownPicks = Record<string, boolean>;
 
 type PushResult = Awaited<ReturnType<typeof api.pushSessionContext>>;
 
@@ -42,10 +43,12 @@ export function ContextPushPopover(props: {
 }) {
   const { session, anchorEl, onClose } = props;
   const [repos, setRepos] = useState<GitRepoResource[]>([]);
+  const [markdowns, setMarkdowns] = useState<MarkdownMeta[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listErr, setListErr] = useState("");
 
-  const [picks, setPicks] = useState<Picks>({});
+  const [picks, setPicks] = useState<RepoPicks>({});
+  const [mdPicks, setMdPicks] = useState<MarkdownPicks>({});
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<PushResult | null>(null);
@@ -77,8 +80,13 @@ export function ContextPushPopover(props: {
 
   useEffect(() => {
     let cancelled = false;
-    api.listGitRepos()
-      .then((rs) => { if (!cancelled) { setRepos(rs); setLoadingList(false); } })
+    Promise.all([api.listGitRepos(), api.listMarkdowns()])
+      .then(([rs, mds]) => {
+        if (cancelled) return;
+        setRepos(rs);
+        setMarkdowns(mds);
+        setLoadingList(false);
+      })
       .catch((e) => {
         if (!cancelled) {
           setListErr(String((e as Error).message ?? e));
@@ -109,10 +117,19 @@ export function ContextPushPopover(props: {
     });
   };
 
+  const toggleMarkdown = (name: string) => {
+    setMdPicks((cur) => ({ ...cur, [name]: !cur[name] }));
+  };
+
   const selectedRepos = useMemo(
     () => repos.filter((r) => picks[r.name]?.selected),
     [repos, picks],
   );
+  const selectedMarkdowns = useMemo(
+    () => markdowns.filter((m) => mdPicks[m.name]),
+    [markdowns, mdPicks],
+  );
+  const totalSelected = selectedRepos.length + selectedMarkdowns.length;
   const privateKeyCount = useMemo(
     () => selectedRepos.filter((r) => r.deploy_key && picks[r.name]?.includeKey).length,
     [selectedRepos, picks],
@@ -126,6 +143,7 @@ export function ContextPushPopover(props: {
           name: r.name,
           include_deploy_key: !!(r.deploy_key && picks[r.name]?.includeKey),
         })),
+        markdowns: selectedMarkdowns.map((m) => ({ name: m.name })),
       });
       setResult(r);
     } catch (e) {
@@ -175,13 +193,16 @@ export function ContextPushPopover(props: {
       ) : (
         <PickerView
           repos={repos}
+          markdowns={markdowns}
           loadingList={loadingList}
           listErr={listErr}
           picks={picks}
+          mdPicks={mdPicks}
           onToggleRepo={toggleSelected}
           onToggleIncludeKey={toggleIncludeKey}
+          onToggleMarkdown={toggleMarkdown}
           privateKeyCount={privateKeyCount}
-          selectedCount={selectedRepos.length}
+          selectedCount={totalSelected}
           submitting={submitting}
           err={err}
           onCancel={onClose}
@@ -194,11 +215,14 @@ export function ContextPushPopover(props: {
 
 function PickerView(props: {
   repos: GitRepoResource[];
+  markdowns: MarkdownMeta[];
   loadingList: boolean;
   listErr: string;
-  picks: Picks;
+  picks: RepoPicks;
+  mdPicks: MarkdownPicks;
   onToggleRepo: (name: string) => void;
   onToggleIncludeKey: (name: string) => void;
+  onToggleMarkdown: (name: string) => void;
   privateKeyCount: number;
   selectedCount: number;
   submitting: boolean;
@@ -206,24 +230,22 @@ function PickerView(props: {
   onCancel: () => void;
   onSubmit: () => void;
 }) {
+  const sectionLabelStyle: React.CSSProperties = {
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  };
   return (
     <>
       <div className="scroll-panel" style={{ overflowY: "auto", minHeight: 0, flex: 1 }}>
-        <div
-          className="muted"
-          style={{
-            fontSize: 11,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            marginBottom: 6,
-          }}
-        >Git repos</div>
+        <div className="muted" style={sectionLabelStyle}>Git repos</div>
         {props.loadingList ? (
           <div className="muted" style={{ fontSize: 12 }}>Loading…</div>
         ) : props.listErr ? (
           <div className="error-banner" style={{ fontSize: 11 }}>{props.listErr}</div>
         ) : props.repos.length === 0 ? (
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
             No git-repos registered yet. Add one under Context → Git Repos.
           </div>
         ) : (
@@ -235,6 +257,22 @@ function PickerView(props: {
               includeKey={!!props.picks[r.name]?.includeKey}
               onToggle={() => props.onToggleRepo(r.name)}
               onToggleIncludeKey={() => props.onToggleIncludeKey(r.name)}
+            />
+          ))
+        )}
+
+        <div className="muted" style={{ ...sectionLabelStyle, marginTop: 14 }}>Markdown</div>
+        {props.loadingList ? null : props.markdowns.length === 0 ? (
+          <div className="muted" style={{ fontSize: 12 }}>
+            No markdown chunks yet. Add one under Context → Markdown.
+          </div>
+        ) : (
+          props.markdowns.map((m) => (
+            <MarkdownRow
+              key={m.name}
+              md={m}
+              selected={!!props.mdPicks[m.name]}
+              onToggle={() => props.onToggleMarkdown(m.name)}
             />
           ))
         )}
@@ -277,6 +315,65 @@ function PickerView(props: {
       </div>
     </>
   );
+}
+
+function MarkdownRow(props: {
+  md: MarkdownMeta;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const { md, selected } = props;
+  return (
+    <div
+      style={{
+        padding: "6px 8px",
+        borderRadius: 6,
+        marginBottom: 4,
+        background: selected ? "rgba(106,164,255,0.08)" : "transparent",
+        border: selected ? "1px solid rgba(106,164,255,0.35)" : "1px solid transparent",
+      }}
+    >
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: "pointer",
+          margin: 0,
+          fontSize: 12,
+          color: "var(--fg)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={props.onToggle}
+          style={CHECKBOX_STYLE}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{md.name}</div>
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 10,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {formatBytes(md.bytes)}
+            {md.tags && md.tags.length ? ` · ${md.tags.join(", ")}` : ""}
+          </div>
+        </div>
+      </label>
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 function RepoRow(props: {

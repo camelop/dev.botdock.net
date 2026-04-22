@@ -176,13 +176,11 @@ function parseLsRemote(out: string): GitRepoProbe {
 
 /**
  * A chunk of markdown the user maintains in the root-folder and can push
- * into a session's context. `title` is a human-readable label; `bytes` is
- * the content.md size and is derived at write time so listings can show
- * size without reading every file.
+ * into a session's context. `bytes` is the content.md size, derived at
+ * write time so listings can show size without reading every file.
  */
 export type MarkdownMeta = {
   name: string;
-  title?: string;
   tags?: string[];
   bytes: number;
   created_at: string;
@@ -231,14 +229,13 @@ export function readMarkdown(dir: DataDir, name: string): MarkdownResource {
 }
 
 type MarkdownWritePatch = {
-  title?: string;
   tags?: string[];
   content?: string;
 };
 
 /**
- * Create a new markdown resource. `title` / `tags` / `content` all
- * optional — the record is valid with just a name. Bytes is derived.
+ * Create a new markdown resource. `tags` / `content` both optional — the
+ * record is valid with just a name. Bytes is derived.
  */
 export function createMarkdown(
   dir: DataDir,
@@ -258,7 +255,6 @@ export function createMarkdown(
   const now = new Date().toISOString();
   const meta: MarkdownMeta = {
     name,
-    title: patch.title?.trim() || undefined,
     tags: patch.tags?.length ? patch.tags : undefined,
     bytes: Buffer.byteLength(content, "utf8"),
     created_at: now,
@@ -269,8 +265,8 @@ export function createMarkdown(
 }
 
 /**
- * Partial update: any of title / tags / content can be left undefined to
- * keep the prior value. `content: ""` is a deliberate wipe and IS written.
+ * Partial update: any of tags / content can be left undefined to keep
+ * the prior value. `content: ""` is a deliberate wipe and IS written.
  */
 export function updateMarkdown(
   dir: DataDir,
@@ -288,7 +284,6 @@ export function updateMarkdown(
   }
   const meta: MarkdownMeta = {
     name,
-    title: patch.title !== undefined ? (patch.title.trim() || undefined) : prev.meta.title,
     tags: patch.tags !== undefined ? (patch.tags.length ? patch.tags : undefined) : prev.meta.tags,
     bytes: Buffer.byteLength(nextContent, "utf8"),
     created_at: prev.meta.created_at,
@@ -311,7 +306,6 @@ function toTomlable(meta: MarkdownMeta): Record<string, unknown> {
     created_at: meta.created_at,
     updated_at: meta.updated_at,
   };
-  if (meta.title) data.title = meta.title;
   if (meta.tags && meta.tags.length) data.tags = meta.tags;
   return data;
 }

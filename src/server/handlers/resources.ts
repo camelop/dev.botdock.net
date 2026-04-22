@@ -99,7 +99,6 @@ export function mountResources(router: Router, dir: DataDir): void {
   router.post("/api/resources/markdown", async ({ req }) => {
     const body = await parseJsonBody<{
       name?: string;
-      title?: string;
       tags?: string[];
       content?: string;
     }>(req);
@@ -114,7 +113,6 @@ export function mountResources(router: Router, dir: DataDir): void {
     }
     try {
       const meta = createMarkdown(dir, body.name, {
-        title: body.title,
         tags: body.tags,
         content: body.content,
       });
@@ -127,7 +125,6 @@ export function mountResources(router: Router, dir: DataDir): void {
   router.put("/api/resources/markdown/:name", async ({ req, params }) => {
     if (!markdownExists(dir, params.name!)) throw new HttpError(404, "not found");
     const body = await parseJsonBody<{
-      title?: string;
       tags?: string[];
       content?: string;
     }>(req);
@@ -137,7 +134,6 @@ export function mountResources(router: Router, dir: DataDir): void {
     }
     try {
       const meta = updateMarkdown(dir, params.name!, {
-        title: body.title,
         tags: body.tags,
         content: body.content,
       });

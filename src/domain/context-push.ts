@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DataDir } from "../storage/index.ts";
 import { readMachine } from "./machines.ts";
-import { readGitRepo } from "./resources.ts";
+import { readGitRepo, readMarkdown, markdownExists } from "./resources.ts";
 import { readSession, appendEvent } from "./sessions.ts";
 import { keyExists } from "./keys.ts";
 import { sshExec, shSingleQuote } from "../lib/remote.ts";
@@ -28,12 +28,17 @@ export type GitRepoPick = {
   include_deploy_key: boolean;
 };
 
+export type MarkdownPick = {
+  name: string;
+};
+
 export type ContextPushRequest = {
   git_repos: GitRepoPick[];
+  markdowns: MarkdownPick[];
 };
 
 export type PushedItem = {
-  kind: "git-repo" | "keys";
+  kind: "git-repo" | "keys" | "markdown";
   name: string;
   path: string;           // remote path (under context/)
   wrote_private_key?: boolean;
@@ -101,6 +106,27 @@ export async function pushContext(
       keysIncluded.set(repo.deploy_key, item);
       pushed.push(item);
     }
+  }
+
+  for (const pick of req.markdowns) {
+    if (!markdownExists(dir, pick.name)) {
+      throw new Error(`markdown "${pick.name}" not found`);
+    }
+    const mk = readMarkdown(dir, pick.name);
+    const base = dir.markdownDir(pick.name);
+    files.push({
+      rel: `resources/markdown/${mk.meta.name}/meta.toml`,
+      bytes: readFileSync(join(base, "meta.toml")),
+    });
+    files.push({
+      rel: `resources/markdown/${mk.meta.name}/content.md`,
+      bytes: Buffer.from(mk.content, "utf8"),
+    });
+    pushed.push({
+      kind: "markdown",
+      name: mk.meta.name,
+      path: `resources/markdown/${mk.meta.name}/`,
+    });
   }
 
   if (files.length === 0) {

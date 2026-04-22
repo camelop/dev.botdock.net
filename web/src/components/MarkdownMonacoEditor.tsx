@@ -57,8 +57,9 @@ export function MarkdownMonacoEditor(props: {
         fontSize: props.fontSize ?? 13,
         minimap: { enabled: false },
         wordWrap: "on",
-        lineNumbers: "off",
-        // Markdown is pure prose — hide the noisy gutter affordances.
+        lineNumbers: "on",
+        // Markdown is pure prose — keep the gutter minimal but keep
+        // line numbers since the user asked for them.
         folding: false,
         glyphMargin: false,
         scrollBeyondLastLine: false,

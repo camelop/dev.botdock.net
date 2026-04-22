@@ -48,7 +48,6 @@ export type GitRepoResource = {
 
 export type MarkdownMeta = {
   name: string;
-  title?: string;
   tags?: string[];
   bytes: number;
   created_at: string;
@@ -207,9 +206,9 @@ export const api = {
   listMarkdowns: () => request<MarkdownMeta[]>("/api/resources/markdown"),
   getMarkdown: (name: string) =>
     request<MarkdownResource>(`/api/resources/markdown/${encodeURIComponent(name)}`),
-  createMarkdown: (body: { name: string; title?: string; tags?: string[]; content?: string }) =>
+  createMarkdown: (body: { name: string; tags?: string[]; content?: string }) =>
     request<MarkdownMeta>("/api/resources/markdown", { method: "POST", body: JSON.stringify(body) }),
-  updateMarkdown: (name: string, body: { title?: string; tags?: string[]; content?: string }) =>
+  updateMarkdown: (name: string, body: { tags?: string[]; content?: string }) =>
     request<MarkdownMeta>(`/api/resources/markdown/${encodeURIComponent(name)}`, {
       method: "PUT", body: JSON.stringify(body),
     }),
@@ -349,9 +348,10 @@ export const api = {
     ),
   pushSessionContext: (id: string, body: {
     git_repos: Array<{ name: string; include_deploy_key: boolean }>;
+    markdowns: Array<{ name: string }>;
   }) => request<{
     pushed: Array<{
-      kind: "git-repo" | "keys";
+      kind: "git-repo" | "keys" | "markdown";
       name: string;
       path: string;
       wrote_private_key?: boolean;

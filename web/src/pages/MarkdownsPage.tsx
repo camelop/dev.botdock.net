@@ -1,9 +1,8 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import {
   api,
   MARKDOWN_CONTENT_LIMIT,
   type MarkdownMeta,
-  type MarkdownResource,
 } from "../api";
 import { relativeTime, fullTime } from "../lib/time";
 
@@ -13,20 +12,19 @@ const MarkdownMonacoEditor = lazy(() =>
   import("../components/MarkdownMonacoEditor").then((m) => ({ default: m.MarkdownMonacoEditor })),
 );
 
-// Draft mode: an in-memory-only record that hasn't been POSTed yet.
-// Once the user types a name AND saves, we flip to an edit record with
-// `saved: true`. Changes thereafter go through PUT.
+// Draft mode: an in-memory-only record whose name hasn't yet passed the
+// safe-name regex (or whose first POST is pending). Once name is valid
+// and the autosave's POST returns successfully, we flip to edit mode and
+// subsequent saves go through PUT.
 type Draft = {
   kind: "draft";
   name: string;
-  title: string;
   tagsText: string;
   content: string;
 };
 type Edit = {
   kind: "edit";
   name: string;          // immutable once saved
-  title: string;
   tagsText: string;
   content: string;
   lastSavedMeta: MarkdownMeta;
@@ -35,8 +33,10 @@ type Selection = Draft | Edit | null;
 
 // Autosave debounce — matches Notes' 600ms. Short enough that the user
 // sees "saved" feedback almost immediately, long enough to coalesce
-// typing bursts into a single PUT.
+// typing bursts into a single write.
 const AUTOSAVE_DEBOUNCE_MS = 600;
+
+const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
 export function MarkdownsPage() {
   const [list, setList] = useState<MarkdownMeta[]>([]);
@@ -48,6 +48,9 @@ export function MarkdownsPage() {
   const [saveState, setSaveState] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
   const [saveErr, setSaveErr] = useState<string>("");
   const saveTimer = useRef<number | null>(null);
+  // Monotonic counter so an in-flight save whose result lands AFTER the
+  // user has moved on (switched records, typed more) can be ignored.
+  const saveSeq = useRef(0);
 
   const refreshList = async () => {
     try {
@@ -60,6 +63,14 @@ export function MarkdownsPage() {
   };
   useEffect(() => { refreshList(); }, []);
 
+  const cancelPendingSave = () => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    saveSeq.current += 1;  // in-flight saves should treat themselves as stale
+  };
+
   const openMarkdown = async (name: string) => {
     cancelPendingSave();
     try {
@@ -67,7 +78,6 @@ export function MarkdownsPage() {
       setSelected({
         kind: "edit",
         name: r.meta.name,
-        title: r.meta.title ?? "",
         tagsText: (r.meta.tags ?? []).join(", "),
         content: r.content,
         lastSavedMeta: r.meta,
@@ -84,7 +94,6 @@ export function MarkdownsPage() {
     setSelected({
       kind: "draft",
       name: "",
-      title: "",
       tagsText: "",
       content: "",
     });
@@ -94,6 +103,7 @@ export function MarkdownsPage() {
 
   const deleteMarkdown = async (name: string) => {
     if (!confirm(`Delete markdown "${name}"? This cannot be undone.`)) return;
+    cancelPendingSave();
     try {
       await api.deleteMarkdown(name);
       if (selected?.kind === "edit" && selected.name === name) {
@@ -105,37 +115,61 @@ export function MarkdownsPage() {
     }
   };
 
-  const cancelPendingSave = () => {
-    if (saveTimer.current !== null) {
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-  };
-
-  // Queue (or re-queue) an autosave. Only runs in `edit` mode — drafts
-  // require a manual Create since we don't auto-POST half-typed names.
-  const queueAutosave = (next: Edit) => {
+  /**
+   * Queue an autosave for the given selection. Dispatches POST (draft →
+   * first save) or PUT (edit → subsequent saves) depending on kind.
+   * Cancels any pending save first. Skipped if a draft's name hasn't
+   * yet passed the safe-name regex — we don't POST until it's valid.
+   */
+  const queueAutosave = (next: Draft | Edit) => {
     cancelPendingSave();
+    if (next.kind === "draft") {
+      if (!next.name || !NAME_PATTERN.test(next.name)) {
+        // Can't save yet — leave state as "dirty" so the user sees the
+        // pending indicator. A later name edit will re-schedule.
+        setSaveState("dirty");
+        return;
+      }
+    }
     setSaveState("dirty");
+    const seq = ++saveSeq.current;
     saveTimer.current = window.setTimeout(async () => {
       saveTimer.current = null;
       setSaveState("saving");
       try {
         const tags = parseTags(next.tagsText);
-        const meta = await api.updateMarkdown(next.name, {
-          title: next.title,
-          tags,
-          content: next.content,
-        });
-        // Merge the new meta so the list's bytes / updated_at reflect.
-        setList((cur) => cur.map((m) => (m.name === meta.name ? meta : m)));
-        setSelected((cur) => {
-          if (!cur || cur.kind !== "edit" || cur.name !== next.name) return cur;
-          return { ...cur, lastSavedMeta: meta };
-        });
+        if (next.kind === "draft") {
+          const meta = await api.createMarkdown({
+            name: next.name,
+            tags,
+            content: next.content,
+          });
+          if (seq !== saveSeq.current) return;  // superseded mid-flight
+          setList((cur) => [...cur.filter((m) => m.name !== meta.name), meta]
+            .sort((a, b) => a.name.localeCompare(b.name)));
+          setSelected({
+            kind: "edit",
+            name: meta.name,
+            tagsText: next.tagsText,
+            content: next.content,
+            lastSavedMeta: meta,
+          });
+        } else {
+          const meta = await api.updateMarkdown(next.name, {
+            tags,
+            content: next.content,
+          });
+          if (seq !== saveSeq.current) return;
+          setList((cur) => cur.map((m) => (m.name === meta.name ? meta : m)));
+          setSelected((cur) => {
+            if (!cur || cur.kind !== "edit" || cur.name !== next.name) return cur;
+            return { ...cur, lastSavedMeta: meta };
+          });
+        }
         setSaveState("saved");
         setSaveErr("");
       } catch (e) {
+        if (seq !== saveSeq.current) return;
         setSaveState("error");
         setSaveErr(String((e as Error).message ?? e));
       }
@@ -154,58 +188,41 @@ export function MarkdownsPage() {
   const patchDraft = (patch: Partial<Omit<Draft, "kind">>) => {
     setSelected((cur) => {
       if (!cur || cur.kind !== "draft") return cur;
-      return { ...cur, ...patch };
+      const next: Draft = { ...cur, ...patch };
+      queueAutosave(next);
+      return next;
     });
   };
 
-  const createFromDraft = async () => {
-    if (selected?.kind !== "draft") return;
-    const name = selected.name.trim();
-    if (!name) return;
+  const discardDraft = () => {
     cancelPendingSave();
-    setSaveState("saving");
-    try {
-      const tags = parseTags(selected.tagsText);
-      const meta = await api.createMarkdown({
-        name,
-        title: selected.title,
-        tags,
-        content: selected.content,
-      });
-      setList((cur) => [...cur, meta].sort((a, b) => a.name.localeCompare(b.name)));
-      setSelected({
-        kind: "edit",
-        name: meta.name,
-        title: selected.title,
-        tagsText: selected.tagsText,
-        content: selected.content,
-        lastSavedMeta: meta,
-      });
-      setSaveState("saved");
-      setSaveErr("");
-    } catch (e) {
-      setSaveState("error");
-      setSaveErr(String((e as Error).message ?? e));
-    }
+    setSelected(null);
+    setSaveState("idle");
+    setSaveErr("");
   };
 
-  // Flush pending autosave on unmount / page switch so the user doesn't
-  // lose the last few characters they typed.
+  // Flush pending autosave on navigate-away so the user doesn't lose the
+  // last few characters they typed. keepalive lets the request outlive
+  // the page.
   useEffect(() => {
     const onHide = () => {
-      if (saveTimer.current !== null && selected?.kind === "edit") {
-        // Fire the autosave immediately rather than waiting for debounce.
-        window.clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-        const cur = selected;
-        const tags = parseTags(cur.tagsText);
-        // Use keepalive via fetch directly — the request lib doesn't expose it,
-        // so fire-and-forget a best-effort save. Silent failure is OK; the
-        // autosave state will show "dirty" if the user comes back.
-        fetch(`/api/resources/markdown/${encodeURIComponent(cur.name)}`, {
+      if (saveTimer.current === null) return;
+      if (!selected) return;
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      const tags = parseTags(selected.tagsText);
+      if (selected.kind === "edit") {
+        fetch(`/api/resources/markdown/${encodeURIComponent(selected.name)}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title: cur.title, tags, content: cur.content }),
+          body: JSON.stringify({ tags, content: selected.content }),
+          keepalive: true,
+        }).catch(() => {});
+      } else if (selected.kind === "draft" && NAME_PATTERN.test(selected.name)) {
+        fetch("/api/resources/markdown", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: selected.name, tags, content: selected.content }),
           keepalive: true,
         }).catch(() => {});
       }
@@ -225,8 +242,8 @@ export function MarkdownsPage() {
       <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
         Reusable chunks of prose — coding style, house rules, docs — pushed
         into a session's context dir on demand. Each file caps at
-        <code className="mono">{" "}256 KiB</code>; Monaco below gives you
-        markdown highlighting.
+        <code className="mono">{" "}256 KiB</code>; the editor below gives
+        you markdown highlighting.
       </div>
       {listErr && <div className="error-banner">{listErr}</div>}
 
@@ -245,7 +262,6 @@ export function MarkdownsPage() {
           list={list}
           selected={selected}
           onOpen={openMarkdown}
-          onDelete={deleteMarkdown}
         />
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           {selected ? (
@@ -255,9 +271,8 @@ export function MarkdownsPage() {
               saveErr={saveErr}
               onPatchDraft={patchDraft}
               onPatchEdit={patchEdit}
-              onCreate={createFromDraft}
               onDelete={() =>
-                selected.kind === "edit" ? deleteMarkdown(selected.name) : setSelected(null)
+                selected.kind === "edit" ? deleteMarkdown(selected.name) : discardDraft()
               }
             />
           ) : (
@@ -275,7 +290,6 @@ function MarkdownSidebar(props: {
   list: MarkdownMeta[];
   selected: Selection;
   onOpen: (name: string) => void;
-  onDelete: (name: string) => void;
 }) {
   return (
     <div
@@ -331,11 +345,6 @@ function MarkdownSidebar(props: {
               <div style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: "var(--fg)" }}>
                 {m.name}
               </div>
-              {m.title && (
-                <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-                  {m.title}
-                </div>
-              )}
               <div className="mono muted" style={{ fontSize: 10, marginTop: 2 }}>
                 {formatBytes(m.bytes)} · {relativeTime(m.updated_at)}
               </div>
@@ -353,13 +362,12 @@ function EditorPane(props: {
   saveErr: string;
   onPatchDraft: (patch: Partial<Omit<Draft, "kind">>) => void;
   onPatchEdit: (patch: Partial<Omit<Edit, "kind" | "name" | "lastSavedMeta">>) => void;
-  onCreate: () => void;
   onDelete: () => void;
 }) {
   const { selection } = props;
   const isDraft = selection.kind === "draft";
-  const nameOk = !isDraft || /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(selection.name);
-  const bytes = Buffer_byteLength(selection.content);
+  const nameOk = !isDraft || NAME_PATTERN.test(selection.name);
+  const bytes = utf8ByteLength(selection.content);
   const overLimit = bytes > MARKDOWN_CONTENT_LIMIT;
 
   const onPatch = (patch: Partial<Omit<Draft, "kind">>) => {
@@ -400,16 +408,6 @@ function EditorPane(props: {
               letters/digits/<code>._-</code> only, max 64 chars
             </div>
           )}
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div className="muted" style={{ fontSize: 11, marginBottom: 2 }}>
-            Title <span className="muted">(optional)</span>
-          </div>
-          <input
-            value={selection.title}
-            placeholder="House coding style"
-            onChange={(e) => onPatch({ title: e.target.value })}
-          />
         </div>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div className="muted" style={{ fontSize: 11, marginBottom: 2 }}>
@@ -461,6 +459,7 @@ function EditorPane(props: {
         </div>
         <SaveIndicator
           isDraft={isDraft}
+          nameValid={nameOk && (!isDraft || !!selection.name)}
           saveState={props.saveState}
           saveErr={props.saveErr}
           lastSavedMeta={selection.kind === "edit" ? selection.lastSavedMeta : null}
@@ -471,9 +470,9 @@ function EditorPane(props: {
         {isDraft ? (
           <>
             <button className="secondary" onClick={props.onDelete}>Discard</button>
-            <button onClick={props.onCreate} disabled={!nameOk || !selection.name || overLimit}>
-              Create
-            </button>
+            <div className="muted" style={{ fontSize: 11 }}>
+              Autosaves once the name is valid.
+            </div>
           </>
         ) : (
           <>
@@ -490,12 +489,13 @@ function EditorPane(props: {
 
 function SaveIndicator(props: {
   isDraft: boolean;
+  nameValid: boolean;
   saveState: "idle" | "dirty" | "saving" | "saved" | "error";
   saveErr: string;
   lastSavedMeta: MarkdownMeta | null;
 }) {
-  if (props.isDraft) {
-    return <span className="muted" style={{ fontSize: 11 }}>Draft — not yet saved</span>;
+  if (props.isDraft && !props.nameValid) {
+    return <span className="muted" style={{ fontSize: 11 }}>Draft — name required</span>;
   }
   if (props.saveState === "error") {
     return (
@@ -531,9 +531,6 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-// Browser-safe byte length in UTF-8 without pulling in Buffer. TextEncoder
-// is widely supported and the encode-then-read-length roundtrip is fast
-// enough for interactive use up to the 256 KiB cap.
-function Buffer_byteLength(s: string): number {
+function utf8ByteLength(s: string): number {
   return new TextEncoder().encode(s).length;
 }

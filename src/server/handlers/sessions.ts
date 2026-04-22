@@ -29,7 +29,7 @@ import {
 } from "../../domain/session-launcher.ts";
 import type { SessionPoller } from "../../domain/session-poller.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
-import { pushContext, type GitRepoPick } from "../../domain/context-push.ts";
+import { pushContext, type GitRepoPick, type MarkdownPick } from "../../domain/context-push.ts";
 
 export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller, forwardManager: ForwardManager): void {
   router.get("/api/sessions", () => json(listSessions(dir)));
@@ -230,20 +230,32 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
   // any mapping logic. Writes a context_push audit event.
   router.post("/api/sessions/:id/context/push", async ({ req, params }) => {
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
-    const body = await parseJsonBody<{ git_repos?: GitRepoPick[] }>(req);
-    const picks = Array.isArray(body.git_repos) ? body.git_repos : [];
-    if (picks.length === 0) throw new HttpError(400, "git_repos required (at least one)");
-    for (const p of picks) {
+    const body = await parseJsonBody<{
+      git_repos?: GitRepoPick[];
+      markdowns?: MarkdownPick[];
+    }>(req);
+    const repoPicks = Array.isArray(body.git_repos) ? body.git_repos : [];
+    const mdPicks = Array.isArray(body.markdowns) ? body.markdowns : [];
+    if (repoPicks.length + mdPicks.length === 0) {
+      throw new HttpError(400, "at least one git_repos[] or markdowns[] item required");
+    }
+    for (const p of repoPicks) {
       if (!p.name || typeof p.name !== "string") {
         throw new HttpError(400, "each git_repos[] item needs a name");
       }
     }
+    for (const p of mdPicks) {
+      if (!p.name || typeof p.name !== "string") {
+        throw new HttpError(400, "each markdowns[] item needs a name");
+      }
+    }
     try {
       const result = await pushContext(dir, params.id!, {
-        git_repos: picks.map((p) => ({
+        git_repos: repoPicks.map((p) => ({
           name: p.name,
           include_deploy_key: !!p.include_deploy_key,
         })),
+        markdowns: mdPicks.map((p) => ({ name: p.name })),
       });
       return json(result);
     } catch (e) {
