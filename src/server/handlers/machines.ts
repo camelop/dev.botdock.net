@@ -85,6 +85,16 @@ export function mountMachines(router: Router, dir: DataDir, forwardManager: Forw
     if (!existsSync(dir.machineFile(LOCAL_MACHINE_NAME))) {
       throw new HttpError(404, "local machine is not enabled");
     }
+    // Tear down anything that's still running against `local` so
+    // disable-then-reopen-the-page doesn't leave a live ttyd + forward
+    // that the UI can't easily get back to. Best effort — if any step
+    // fails we still flip the disabled flag and surface the machine.
+    const machine = readMachine(dir, LOCAL_MACHINE_NAME);
+    const termForward = TERMINAL_FORWARD_NAME(LOCAL_MACHINE_NAME);
+    if (forwardExists(dir, termForward)) {
+      try { forwardManager.stop(termForward); } catch {}
+    }
+    try { stopTerminal(dir, machine); } catch { /* best effort */ }
     const m = disableLocalMachine(dir);
     return json(m);
   });
@@ -279,6 +289,9 @@ PY
   router.post("/api/machines/:name/terminal/start", async ({ params }) => {
     if (!existsSync(dir.machineFile(params.name!))) throw new HttpError(404, "not found");
     const machine = readMachine(dir, params.name!);
+    if (machine.disabled) {
+      throw new HttpError(409, `machine "${machine.name}" is disabled — re-enable it in the Machines page first`);
+    }
     const fname = TERMINAL_FORWARD_NAME(machine.name);
 
     // Idempotent: if a forward exists and is already running, just return

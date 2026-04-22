@@ -219,7 +219,9 @@ export function MachinesPage() {
                     <span className="muted">/ {counts.total}</span>
                   </td>
                   <td>
-                    {termRunning ? (
+                    {m.disabled ? (
+                      <span className="muted" style={{ fontSize: 11 }}>disabled</span>
+                    ) : termRunning ? (
                       <div className="row" style={{ gap: 4 }}>
                         <a
                           href={`/api/machines/${encodeURIComponent(m.name)}/terminal/`}
