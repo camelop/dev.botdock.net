@@ -36,6 +36,16 @@ export type Machine = {
   disabled?: boolean;
 };
 
+export type GitRepoResource = {
+  name: string;
+  url: string;
+  ref?: string;
+  deploy_key?: string;
+  tags?: string[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type SecretMeta = {
   name: string;
   created_at: string;
@@ -161,6 +171,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => request<Status>("/api/status"),
   checkUpdate: () => request<UpdateCheckResult>("/api/update/check"),
+
+  // --- resources / git-repo ---
+  listGitRepos: () => request<GitRepoResource[]>("/api/resources/git-repo"),
+  getGitRepo: (name: string) =>
+    request<GitRepoResource>(`/api/resources/git-repo/${encodeURIComponent(name)}`),
+  createGitRepo: (body: Pick<GitRepoResource, "name" | "url"> & Partial<GitRepoResource>) =>
+    request<GitRepoResource>("/api/resources/git-repo", { method: "POST", body: JSON.stringify(body) }),
+  updateGitRepo: (name: string, body: Partial<GitRepoResource>) =>
+    request<GitRepoResource>(`/api/resources/git-repo/${encodeURIComponent(name)}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  deleteGitRepo: (name: string) =>
+    request<{ ok: true }>(`/api/resources/git-repo/${encodeURIComponent(name)}`, { method: "DELETE" }),
   updateStatus: () => request<UpdateStatus>("/api/update/status"),
   installUpdate: () =>
     request<{ accepted: true; target: string }>("/api/update/install", { method: "POST" }),

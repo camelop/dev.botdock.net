@@ -64,6 +64,18 @@ export class DataDir {
     assertSafeName(name, "machine name");
     return join(this.machinesDir(), `${name}.toml`);
   }
+
+  // Resource kinds — each lives in its own subdir so kinds don't collide.
+  // A resource named "foo" under git-repo is independent of "foo" under
+  // markdown, and both get the same safe-name check.
+  gitReposDir(): string { return join(this.resourcesDir(), "git-repo"); }
+  gitRepoDir(name: string): string {
+    assertSafeName(name, "git-repo name");
+    return join(this.gitReposDir(), name);
+  }
+  gitRepoFile(name: string): string {
+    return join(this.gitRepoDir(name), "meta.toml");
+  }
 }
 
 /** Names are used as path segments; enforce a strict charset. */
