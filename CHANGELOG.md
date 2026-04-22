@@ -2,6 +2,10 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.7 — 2026-04-22
+
+- Fix: code-server (and ttyd/filebrowser) install scripts crashed with "NEW_TTYD_PATH: unbound variable" because the shared marker-rewrite snippet read NEW_* vars the caller didn't set under `set -euo pipefail`. Now defaults each to empty via `${VAR:-}`.
+
 ## v0.4.6 — 2026-04-22
 
 - Self-update fix: reexec stopped the new daemon with "unknown command: /$bunfs/..." because `process.argv.slice(1)` in a compiled Bun binary leaks the virtual /$bunfs entry. Now uses slice(2) and strips any /$bunfs/ paths defensively.

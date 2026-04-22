@@ -155,6 +155,18 @@ if [ -f "\$MARKER_FILE" ]; then
   EX_CS_VERSION=\$(awk -F ' = ' '/^codeserver_version/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
   EX_CS_INSTALLED_AT=\$(awk -F ' = ' '/^codeserver_installed_at/ {gsub(/"/,"",\$2); print \$2; exit}' "\$MARKER_FILE")
 fi
+# \${VAR:-} guards against set -u: the caller only sets the NEW_* vars for
+# the tool being installed, the rest are unset (not empty) and reading them
+# raw would trip "unbound variable" under the caller's set -euo pipefail.
+NEW_TTYD_PATH="\${NEW_TTYD_PATH:-}"
+NEW_TTYD_VERSION="\${NEW_TTYD_VERSION:-}"
+NEW_TTYD_INSTALLED_AT="\${NEW_TTYD_INSTALLED_AT:-}"
+NEW_FB_PATH="\${NEW_FB_PATH:-}"
+NEW_FB_VERSION="\${NEW_FB_VERSION:-}"
+NEW_FB_INSTALLED_AT="\${NEW_FB_INSTALLED_AT:-}"
+NEW_CS_PATH="\${NEW_CS_PATH:-}"
+NEW_CS_VERSION="\${NEW_CS_VERSION:-}"
+NEW_CS_INSTALLED_AT="\${NEW_CS_INSTALLED_AT:-}"
 [ -z "\$NEW_TTYD_PATH" ] && NEW_TTYD_PATH="\$EX_TTYD_PATH"
 [ -z "\$NEW_TTYD_VERSION" ] && NEW_TTYD_VERSION="\$EX_TTYD_VERSION"
 [ -z "\$NEW_TTYD_INSTALLED_AT" ] && NEW_TTYD_INSTALLED_AT="\$EX_TTYD_INSTALLED_AT"
