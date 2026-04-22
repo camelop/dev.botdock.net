@@ -336,7 +336,7 @@ export async function teardownSessionCodeServer(
 export async function sendInputToSession(
   dir: DataDir,
   id: string,
-  payload: { text?: string; keys?: string[] },
+  payload: { text?: string; keys?: string[]; press_enter?: boolean },
 ): Promise<void> {
   const s = readSession(dir, id);
   if (s.status !== "active") throw new Error(`session ${id} is not active (state=${s.status})`);
@@ -358,7 +358,12 @@ export async function sendInputToSession(
     if (text.length > 0) {
       lines.push(`tmux send-keys -l -t ${shQ(s.tmux_session)} ${shQ(text)}`);
     }
-    lines.push(`tmux send-keys -t ${shQ(s.tmux_session)} Enter`);
+    // Explicit opt-in — prior default-on behavior was surprising (Send
+    // typing "ls" into a Claude Code prompt would auto-submit). Enter now
+    // has its own quick-key in the UI.
+    if (payload.press_enter) {
+      lines.push(`tmux send-keys -t ${shQ(s.tmux_session)} Enter`);
+    }
   }
   lines.push(`echo BOTDOCK_SENT`);
 

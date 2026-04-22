@@ -135,7 +135,7 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
 
   router.post("/api/sessions/:id/input", async ({ req, params }) => {
     if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
-    const body = await parseJsonBody<{ text?: string; keys?: string[] }>(req);
+    const body = await parseJsonBody<{ text?: string; keys?: string[]; press_enter?: boolean }>(req);
     const hasText = typeof body.text === "string";
     const hasKeys = Array.isArray(body.keys) && body.keys.length > 0;
     if (!hasText && !hasKeys) {
@@ -144,6 +144,7 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     await sendInputToSession(dir, params.id!, {
       text: hasText ? body.text : undefined,
       keys: hasKeys ? body.keys : undefined,
+      press_enter: !!body.press_enter,
     });
     return json({ ok: true });
   });

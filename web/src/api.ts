@@ -227,7 +227,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  sendSessionInput: (id: string, body: { text?: string; keys?: string[] }) =>
+  sendSessionInput: (id: string, body: { text?: string; keys?: string[]; press_enter?: boolean }) =>
     request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/input`, {
       method: "POST",
       body: JSON.stringify(body),

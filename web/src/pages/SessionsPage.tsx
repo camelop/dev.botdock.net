@@ -2522,6 +2522,7 @@ function SendInput({ id }: { id: string }) {
   const [err, setErr] = useState("");
 
   const sendText = async () => {
+    if (!text) return;
     setSending(true); setErr("");
     try {
       await api.sendSessionInput(id, { text });
@@ -2555,8 +2556,9 @@ function SendInput({ id }: { id: string }) {
   return (
     <div style={{ marginTop: 12 }}>
       <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-        Send input to the running pane. <span className="mono">⌘/Ctrl+Enter</span> sends the text box + Enter;
-        Send with empty text sends just Enter.
+        Send input to the running pane. <span className="mono">Send</span> delivers the text box
+        only — use the <span className="mono">↩ Enter</span> quick key to press Enter separately.
+        <span className="mono">{" ⌘/Ctrl+Enter"}</span> in the textarea also sends.
       </div>
       <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
         <textarea
@@ -2567,12 +2569,15 @@ function SendInput({ id }: { id: string }) {
           onKeyDown={onKeyDown}
           placeholder="message to the running agent…"
         />
-        <button disabled={sending} onClick={sendText} title="send-keys: text (if any) then Enter">
-          {text ? "Send ↩" : "Enter ↩"}
-        </button>
+        <button
+          disabled={sending || !text}
+          onClick={sendText}
+          title="send-keys -l <text> (no trailing Enter)"
+        >Send</button>
       </div>
       <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
         <span className="muted" style={{ fontSize: 11, marginRight: 4 }}>Quick keys:</span>
+        <Key k="Enter" label="↩ Enter" title="send Enter" />
         <Key k="Escape" label="Esc" />
         <Key k="Up" label="↑" />
         <Key k="Down" label="↓" />

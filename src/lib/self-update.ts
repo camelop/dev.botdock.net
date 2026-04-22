@@ -218,7 +218,14 @@ export async function applyUpdate(
     await new Promise((r) => setTimeout(r, 250));
 
     // Last act: execv. Same PID, same stdio, same TTY.
-    reexec(execPath, process.argv.slice(1));
+    //
+    // argv slicing: in a Bun-compiled binary process.argv is
+    //   ["bun", "/$bunfs/root/<name>", ...userArgs]
+    // so the user's real CLI args start at index 2. slice(1) would leak
+    // the virtual /$bunfs entry in as a bogus positional — our own CLI
+    // then rejects it with "unknown command".
+    const cliArgs = process.argv.slice(2).filter((a) => !a.startsWith("/$bunfs/"));
+    reexec(execPath, cliArgs);
     // Never reached on success.
   } catch (err) {
     setStatus({

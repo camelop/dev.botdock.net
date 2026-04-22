@@ -2,6 +2,11 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.6 — 2026-04-22
+
+- Self-update fix: reexec stopped the new daemon with "unknown command: /$bunfs/..." because `process.argv.slice(1)` in a compiled Bun binary leaks the virtual /$bunfs entry. Now uses slice(2) and strips any /$bunfs/ paths defensively.
+- Keyboard: Send button only sends the text box contents now (no auto-Enter). Enter is its own `↩ Enter` quick key.
+
 ## v0.4.5 — 2026-04-22
 
 - Update popover now shows the actual release notes (GitHub-generated from commit titles) instead of a generic description of what upgrading does.
