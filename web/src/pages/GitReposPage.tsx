@@ -167,7 +167,12 @@ function GitRepoEditor(props: {
         // Edit mode: don't override an existing ref — user chose it on
         // purpose and may prefer it sticks through a re-probe.
         setR((cur) => {
-          if (props.target.mode === "new" && (!cur.ref || !cur.ref.trim()) && out.default_branch) {
+          if (
+            props.target.mode === "new"
+            && !customRefFlag.current
+            && (!cur.ref || !cur.ref.trim())
+            && out.default_branch
+          ) {
             return { ...cur, ref: out.default_branch };
           }
           return cur;
@@ -198,6 +203,7 @@ function GitRepoEditor(props: {
     setR((cur) => ({ ...cur, [k]: v }));
 
   const onUrlChange = (next: string) => {
+    setCustomRef(false);  // fresh URL → let the probe's auto-fill re-arm
     setR((cur) => {
       const copy = { ...cur, url: next };
       if (props.target.mode === "new" && !nameEdited.current) {
@@ -217,6 +223,19 @@ function GitRepoEditor(props: {
     () => branches.includes((r.ref ?? "").trim()),
     [branches, r.ref],
   );
+  // Sticky "user explicitly chose Custom" flag — independent of ref's
+  // current value. Without this, picking Custom while ref still held a
+  // valid branch name would flip `refInBranches` back to true and the
+  // select would snap back to the branch instead of dropping to the
+  // free-text input.
+  const [customRef, setCustomRef] = useState(false);
+  const refCustomInputRef = useRef<HTMLInputElement>(null);
+  // Mirror `customRef` into a ref so the probe's setTimeout (which closes
+  // over its creation-time state) can read the live value without needing
+  // to be in the effect's dep list. If the user flips to Custom while a
+  // probe is in flight we don't want the auto-fill to snap ref back.
+  const customRefFlag = useRef(customRef);
+  customRefFlag.current = customRef;
 
   const submit = async () => {
     setErr(""); setSubmitting(true);
@@ -345,11 +364,20 @@ function GitRepoEditor(props: {
         </span>
         {branches.length > 0 ? (
           <select
-            value={refInBranches ? (r.ref ?? "") : "__custom__"}
+            value={customRef || !refInBranches ? "__custom__" : (r.ref ?? "")}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === "__custom__") set("ref", r.ref ?? "");
-              else set("ref", v);
+              if (v === "__custom__") {
+                setCustomRef(true);
+                // Drop the branch name so the input starts blank — the user
+                // is about to type a tag/SHA and shouldn't have to erase
+                // "main" first. Focus the input on the next tick.
+                set("ref", "");
+                window.setTimeout(() => refCustomInputRef.current?.focus(), 0);
+              } else {
+                setCustomRef(false);
+                set("ref", v);
+              }
             }}
           >
             {branches.map((b) => (
@@ -360,8 +388,9 @@ function GitRepoEditor(props: {
             <option value="__custom__">Custom (tag / SHA / other)…</option>
           </select>
         ) : null}
-        {(branches.length === 0 || !refInBranches) && (
+        {(branches.length === 0 || customRef || !refInBranches) && (
           <input
+            ref={refCustomInputRef}
             value={r.ref ?? ""}
             placeholder={defaultBranch ? `default: ${defaultBranch}` : "main"}
             onChange={(e) => set("ref", e.target.value)}
@@ -388,6 +417,7 @@ function GitRepoEditor(props: {
       {newKeyModal && (
         <NewKeyMiniModal
           existing={props.keys}
+          suggestedNickname={r.name ? `${r.name}-deploy-key` : ""}
           onClose={() => setNewKeyModal(false)}
           onCreated={async (nickname) => {
             setNewKeyModal(false);
@@ -409,10 +439,21 @@ function GitRepoEditor(props: {
  */
 function NewKeyMiniModal(props: {
   existing: KeyMeta[];
+  /** Pre-filled nickname when the modal opens — usually `<repo>-deploy-key`
+   *  so the user can accept-and-go. If it collides with an existing key
+   *  we don't try to de-dupe; the clash banner below points that out. */
+  suggestedNickname?: string;
   onClose: () => void;
   onCreated: (nickname: string) => void | Promise<void>;
 }) {
-  const [nickname, setNickname] = useState("");
+  const suggested = (() => {
+    const raw = (props.suggestedNickname ?? "").trim();
+    // Must still pass the server-side safe-name regex or the Generate
+    // button would be disabled on open. For anything invalid (empty,
+    // bad chars) we fall back to empty so the field reads as placeholder.
+    return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(raw) ? raw : "";
+  })();
+  const [nickname, setNickname] = useState(suggested);
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
