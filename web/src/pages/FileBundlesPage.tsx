@@ -105,7 +105,7 @@ export function FileBundlesPage() {
   );
 }
 
-type Mode = "folder" | "archive";
+type Mode = "folder" | "files" | "archive";
 
 function NewBundlePanel(props: {
   onCancel: () => void;
@@ -115,38 +115,55 @@ function NewBundlePanel(props: {
   const [tags, setTags] = useState("");
   const [mode, setMode] = useState<Mode>("folder");
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
+  const [looseFiles, setLooseFiles] = useState<File[]>([]);
   const [archiveFile, setArchiveFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
+
+  // Native <input type="file"> renders the browser's default button,
+  // which never matches the surrounding dark-theme aesthetic. We hide
+  // the input visually and trigger it from a properly-styled button via
+  // ref — same approach used in most design systems.
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const filesInputRef = useRef<HTMLInputElement>(null);
   const archiveInputRef = useRef<HTMLInputElement>(null);
 
   const nameOk = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name);
 
-  const onPickFolder = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const pickedAny = (e: React.ChangeEvent<HTMLInputElement>): File[] => {
     const list = e.target.files;
-    if (!list) return;
+    if (!list) return [];
     const arr: File[] = [];
     for (let i = 0; i < list.length; i++) {
       const f = list.item(i);
       if (f) arr.push(f);
     }
-    setFolderFiles(arr);
+    return arr;
   };
 
+  const onPickFolder = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFolderFiles(pickedAny(e));
+  };
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLooseFiles(pickedAny(e));
+  };
   const onPickArchive = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.item(0) ?? null;
-    setArchiveFile(f);
+    setArchiveFile(e.target.files?.item(0) ?? null);
   };
 
-  const totalBytes = mode === "folder"
-    ? folderFiles.reduce((sum, f) => sum + f.size, 0)
+  const totalBytes =
+    mode === "folder" ? folderFiles.reduce((s, f) => s + f.size, 0)
+    : mode === "files"  ? looseFiles.reduce((s, f) => s + f.size, 0)
     : archiveFile?.size ?? 0;
 
   const canSubmit =
     nameOk
     && !submitting
-    && ((mode === "folder" && folderFiles.length > 0) || (mode === "archive" && !!archiveFile));
+    && (
+      (mode === "folder" && folderFiles.length > 0)
+      || (mode === "files" && looseFiles.length > 0)
+      || (mode === "archive" && !!archiveFile)
+    );
 
   const submit = async () => {
     setErr(""); setSubmitting(true);
@@ -163,6 +180,16 @@ function NewBundlePanel(props: {
             // basename — better than failing the upload.
             rel_path: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
           })),
+        });
+      } else if (mode === "files") {
+        await api.createFileBundleFromFiles({
+          name,
+          tags: tags.trim() || undefined,
+          // Loose files land flat at the bundle root under their basename.
+          // Browsers strip directory info from regular multi-select so we
+          // can't reconstruct sub-paths even if the user dragged in files
+          // from different dirs.
+          files: looseFiles.map((f) => ({ file: f, rel_path: f.name })),
         });
       } else {
         await api.createFileBundleFromArchive({
@@ -213,75 +240,69 @@ function NewBundlePanel(props: {
         </div>
       </div>
 
-      <div className="row" style={{ gap: 16, marginBottom: 10 }}>
-        <label
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            margin: 0, fontSize: 13, cursor: "pointer",
-          }}
-        >
-          <input
-            type="radio"
-            name="bundle-mode"
-            checked={mode === "folder"}
-            onChange={() => setMode("folder")}
-            style={CHECKBOX_STYLE}
-          />
-          <span style={LABEL_SPAN_STYLE}>Upload a folder</span>
-        </label>
-        <label
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            margin: 0, fontSize: 13, cursor: "pointer",
-          }}
-        >
-          <input
-            type="radio"
-            name="bundle-mode"
-            checked={mode === "archive"}
-            onChange={() => setMode("archive")}
-            style={CHECKBOX_STYLE}
-          />
-          <span style={LABEL_SPAN_STYLE}>Upload an archive</span>
-        </label>
+      <div className="row" style={{ gap: 16, marginBottom: 12, flexWrap: "wrap" }}>
+        <ModeRadio label="Folder"  checked={mode === "folder"}  onSelect={() => setMode("folder")} />
+        <ModeRadio label="File(s)" checked={mode === "files"}   onSelect={() => setMode("files")} />
+        <ModeRadio label="Archive" checked={mode === "archive"} onSelect={() => setMode("archive")} />
       </div>
 
-      {mode === "folder" ? (
-        <div>
-          <input
-            ref={folderInputRef}
-            type="file"
-            /* webkitdirectory: every browser that ships the Chromium File API
-             * honours this (Chrome, Edge, Safari 11.1+, Firefox 50+). Typed
-             * as any because the React DOM typings still flag it as
-             * non-standard. */
-            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-            multiple
-            onChange={onPickFolder}
-            style={{ width: "auto", padding: 4 }}
-          />
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-            {folderFiles.length > 0
-              ? `${folderFiles.length} file${folderFiles.length === 1 ? "" : "s"} selected · ${formatBytes(totalBytes)}`
-              : "Pick a folder — its full sub-tree is preserved."}
-          </div>
-        </div>
-      ) : (
-        <div>
-          <input
-            ref={archiveInputRef}
-            type="file"
-            accept=".tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.zip"
-            onChange={onPickArchive}
-            style={{ width: "auto", padding: 4 }}
-          />
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-            {archiveFile
-              ? `${archiveFile.name} · ${formatBytes(totalBytes)}`
-              : "Pick a tar / tar.gz / tar.bz2 / zip. Extracted server-side."}
-          </div>
-        </div>
+      {mode === "folder" && (
+        <PickerRow
+          onClick={() => folderInputRef.current?.click()}
+          summary={
+            folderFiles.length > 0
+              ? `${folderFiles.length} file${folderFiles.length === 1 ? "" : "s"} · ${formatBytes(totalBytes)}`
+              : "Pick a folder — its full sub-tree is preserved."
+          }
+          buttonLabel={folderFiles.length > 0 ? "Change folder" : "Choose folder"}
+        />
       )}
+      {mode === "files" && (
+        <PickerRow
+          onClick={() => filesInputRef.current?.click()}
+          summary={
+            looseFiles.length > 0
+              ? `${looseFiles.length} file${looseFiles.length === 1 ? "" : "s"} · ${formatBytes(totalBytes)}`
+              : "Pick one or more files — flattened to the bundle root by basename."
+          }
+          buttonLabel={looseFiles.length > 0 ? "Change files" : "Choose files"}
+        />
+      )}
+      {mode === "archive" && (
+        <PickerRow
+          onClick={() => archiveInputRef.current?.click()}
+          summary={
+            archiveFile
+              ? `${archiveFile.name} · ${formatBytes(totalBytes)}`
+              : "Pick a tar / tar.gz / tar.bz2 / zip. Extracted server-side."
+          }
+          buttonLabel={archiveFile ? "Change archive" : "Choose archive"}
+        />
+      )}
+
+      {/* Hidden native inputs — clicked programmatically via refs above. */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+        multiple
+        onChange={onPickFolder}
+        style={HIDDEN_INPUT}
+      />
+      <input
+        ref={filesInputRef}
+        type="file"
+        multiple
+        onChange={onPickFiles}
+        style={HIDDEN_INPUT}
+      />
+      <input
+        ref={archiveInputRef}
+        type="file"
+        accept=".tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.zip"
+        onChange={onPickArchive}
+        style={HIDDEN_INPUT}
+      />
 
       {err && <div className="error-banner" style={{ marginTop: 10 }}>{err}</div>}
 
@@ -294,6 +315,57 @@ function NewBundlePanel(props: {
     </div>
   );
 }
+
+function ModeRadio(props: { label: string; checked: boolean; onSelect: () => void }) {
+  return (
+    <label
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        margin: 0, fontSize: 13, cursor: "pointer",
+      }}
+    >
+      <input
+        type="radio"
+        name="bundle-mode"
+        checked={props.checked}
+        onChange={props.onSelect}
+        style={CHECKBOX_STYLE}
+      />
+      <span style={LABEL_SPAN_STYLE}>{props.label}</span>
+    </label>
+  );
+}
+
+function PickerRow(props: {
+  onClick: () => void;
+  buttonLabel: string;
+  summary: string;
+}) {
+  return (
+    <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <button type="button" className="secondary" onClick={props.onClick}>
+        {props.buttonLabel}
+      </button>
+      <div className="muted" style={{ fontSize: 11, flex: 1, minWidth: 0 }}>
+        {props.summary}
+      </div>
+    </div>
+  );
+}
+
+// Accessible hide — off-screen rather than display:none so React keeps
+// the element in the accessibility tree and the click trigger works.
+const HIDDEN_INPUT: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 // Match the popover's idiom — global `input { width: 100% }` bleeds into
 // radio buttons too and stretches them across the row otherwise. See

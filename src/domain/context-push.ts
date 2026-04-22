@@ -5,20 +5,33 @@
  * same tree it would see locally, just under a different prefix, so no
  * mapping logic is needed on either side.
  *
- * Currently supported: git-repo. Keys ride along only when the selected
- * git-repo has a `deploy_key` and the user explicitly opted in — they are
- * never pushed standalone.
+ * Transport is rsync-over-ssh (reusing our per-machine ssh config with
+ * ControlMaster + ProxyJump, so jump hosts and multiplexing still work).
+ * We pre-collect the list of relative paths from `dir.root` that need
+ * to land on the remote, hand them to a single `rsync --files-from`
+ * invocation, and let rsync do incremental transfer + mode preservation.
+ *
+ * Supported resources:
+ *   - git-repo → resources/git-repo/<name>/meta.toml
+ *   - markdown → resources/markdown/<name>/{meta.toml,content.md}
+ *   - file-bundle → resources/file-bundle/<name>/{meta.toml, content/**}
+ *   - keys (pulled in by a git-repo's include_deploy_key opt-in) →
+ *         private/keys/<name>/{meta.toml,key.pub,key}   (key mode 600)
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { DataDir } from "../storage/index.ts";
 import { readMachine } from "./machines.ts";
-import { readGitRepo, readMarkdown, markdownExists } from "./resources.ts";
+import { readGitRepo } from "./resources.ts";
+import { markdownExists } from "./resources.ts";
 import { fileBundleExists } from "./file-bundles.ts";
 import { readSession, appendEvent } from "./sessions.ts";
 import { keyExists } from "./keys.ts";
 import { sshExec, shSingleQuote } from "../lib/remote.ts";
+import { buildSshConfig } from "../lib/sshconfig.ts";
 
 export type GitRepoPick = {
   name: string;
@@ -57,11 +70,9 @@ export type ContextPushResult = {
   /** Absolute path of the context root on the remote (with ~ already
    *  expanded by bash). Useful for the UI's success toast. */
   remote_base: string;
+  /** Rough tally for the UI — how many rsync'd paths total. */
+  transferred_files: number;
 };
-
-/** Files to write, as (relative-path, content-bytes, mode) tuples. The
- *  relative path is rooted at `<workdir>/.botdock/context/`. */
-type FileSpec = { rel: string; bytes: Buffer; mode?: number };
 
 export async function pushContext(
   dir: DataDir,
@@ -71,40 +82,38 @@ export async function pushContext(
   const session = readSession(dir, sessionId);
   const machine = readMachine(dir, session.machine);
 
-  // Collect files + dedupe keys that get pulled in twice (e.g. two git-repos
-  // sharing the same deploy_key). First occurrence wins; second is a no-op.
-  const files: FileSpec[] = [];
+  // Collect every path (relative to dir.root) that must land on the remote.
+  // Pair each with the PushedItem it belongs to so we can report back what
+  // actually got written.
+  const relPaths: string[] = [];
   const pushed: PushedItem[] = [];
   const keysIncluded = new Map<string, PushedItem>();
 
+  const pushFile = (rel: string) => {
+    const abs = join(dir.root, rel);
+    if (!existsSync(abs)) throw new Error(`expected source file missing: ${rel}`);
+    relPaths.push(rel);
+  };
+
   for (const pick of req.git_repos) {
     const repo = readGitRepo(dir, pick.name);
-    const metaPath = join(dir.gitRepoDir(pick.name), "meta.toml");
-    if (!existsSync(metaPath)) {
-      throw new Error(`git-repo "${pick.name}" has no meta.toml on disk`);
-    }
-    files.push({
-      rel: `resources/git-repo/${repo.name}/meta.toml`,
-      bytes: readFileSync(metaPath),
-    });
+    pushFile(`resources/git-repo/${repo.name}/meta.toml`);
     pushed.push({
       kind: "git-repo",
       name: repo.name,
       path: `resources/git-repo/${repo.name}/`,
     });
-
     if (pick.include_deploy_key) {
       if (!repo.deploy_key) {
         throw new Error(`git-repo "${pick.name}" has no deploy_key configured`);
       }
-      if (keysIncluded.has(repo.deploy_key)) continue;  // dedupe
+      if (keysIncluded.has(repo.deploy_key)) continue;
       if (!keyExists(dir, repo.deploy_key)) {
         throw new Error(`deploy_key "${repo.deploy_key}" referenced by git-repo "${pick.name}" is missing`);
       }
-      const keyBase = dir.keyDir(repo.deploy_key);
-      files.push({ rel: `private/keys/${repo.deploy_key}/meta.toml`, bytes: readFileSync(join(keyBase, "meta.toml")) });
-      files.push({ rel: `private/keys/${repo.deploy_key}/key.pub`, bytes: readFileSync(join(keyBase, "key.pub")) });
-      files.push({ rel: `private/keys/${repo.deploy_key}/key`, bytes: readFileSync(join(keyBase, "key")), mode: 0o600 });
+      pushFile(`private/keys/${repo.deploy_key}/meta.toml`);
+      pushFile(`private/keys/${repo.deploy_key}/key.pub`);
+      pushFile(`private/keys/${repo.deploy_key}/key`);
       const item: PushedItem = {
         kind: "keys",
         name: repo.deploy_key,
@@ -120,20 +129,12 @@ export async function pushContext(
     if (!markdownExists(dir, pick.name)) {
       throw new Error(`markdown "${pick.name}" not found`);
     }
-    const mk = readMarkdown(dir, pick.name);
-    const base = dir.markdownDir(pick.name);
-    files.push({
-      rel: `resources/markdown/${mk.meta.name}/meta.toml`,
-      bytes: readFileSync(join(base, "meta.toml")),
-    });
-    files.push({
-      rel: `resources/markdown/${mk.meta.name}/content.md`,
-      bytes: Buffer.from(mk.content, "utf8"),
-    });
+    pushFile(`resources/markdown/${pick.name}/meta.toml`);
+    pushFile(`resources/markdown/${pick.name}/content.md`);
     pushed.push({
       kind: "markdown",
-      name: mk.meta.name,
-      path: `resources/markdown/${mk.meta.name}/`,
+      name: pick.name,
+      path: `resources/markdown/${pick.name}/`,
     });
   }
 
@@ -141,35 +142,15 @@ export async function pushContext(
     if (!fileBundleExists(dir, pick.name)) {
       throw new Error(`file-bundle "${pick.name}" not found`);
     }
-    const base = dir.fileBundleDir(pick.name);
-    const metaRel = `resources/file-bundle/${pick.name}/meta.toml`;
-    files.push({
-      rel: metaRel,
-      bytes: readFileSync(join(base, "meta.toml")),
-    });
-    const contentRoot = join(base, "content");
+    const bundleRoot = dir.fileBundleDir(pick.name);
+    pushFile(`resources/file-bundle/${pick.name}/meta.toml`);
+    const contentRoot = join(bundleRoot, "content");
     let fileCount = 0;
     if (existsSync(contentRoot)) {
-      // Walk the bundle's content tree. For v1 we reuse the base64-heredoc
-      // path (same as git-repo / markdown) — simple, one sshExec call.
-      // Very large bundles will be slow; streaming tar-over-ssh is the
-      // follow-up if size becomes a bottleneck.
-      const stack: Array<{ abs: string; rel: string }> = [{ abs: contentRoot, rel: "" }];
-      while (stack.length) {
-        const cur = stack.pop()!;
-        for (const entry of readdirSync(cur.abs)) {
-          const abs = join(cur.abs, entry);
-          const rel = cur.rel ? `${cur.rel}/${entry}` : entry;
-          const st = statSync(abs);
-          if (st.isDirectory()) stack.push({ abs, rel });
-          else if (st.isFile()) {
-            files.push({
-              rel: `resources/file-bundle/${pick.name}/content/${rel}`,
-              bytes: readFileSync(abs),
-            });
-            fileCount += 1;
-          }
-        }
+      for (const abs of walkFiles(contentRoot)) {
+        const rel = relative(dir.root, abs);
+        relPaths.push(rel);
+        fileCount += 1;
       }
     }
     pushed.push({
@@ -180,86 +161,104 @@ export async function pushContext(
     });
   }
 
-  if (files.length === 0) {
+  if (relPaths.length === 0) {
     throw new Error("nothing selected to push");
   }
 
-  const script = buildPushScript(session.workdir, files);
-  const res = sshExec(dir, machine, "bash -s", script, 60_000);
-  if (res.code !== 0) {
-    throw new Error(`remote push failed (ssh exit ${res.code}): ${res.stderr.trim() || res.stdout.trim()}`);
+  // Resolve ~ in workdir server-side, ensure the context root exists with
+  // mode 700, and print the absolute path back so we can feed it to rsync.
+  const prep = `
+set -euo pipefail
+WORKDIR=${shSingleQuote(session.workdir)}
+case "$WORKDIR" in
+  "~")   WORKDIR="$HOME" ;;
+  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+BASE="$WORKDIR/.botdock/context"
+mkdir -p "$BASE"
+chmod 700 "$BASE" || true
+echo "BOTDOCK_CONTEXT_BASE:$BASE"
+`;
+  const prepRes = sshExec(dir, machine, "bash -s", prep, 30_000);
+  if (prepRes.code !== 0) {
+    throw new Error(`remote prep failed (ssh exit ${prepRes.code}): ${prepRes.stderr.trim()}`);
   }
-  const marker = "BOTDOCK_CONTEXT_PUSHED:";
-  const line = res.stdout.split("\n").find((l) => l.startsWith(marker));
-  const remoteBase = line ? line.slice(marker.length).trim() : "";
+  const marker = "BOTDOCK_CONTEXT_BASE:";
+  const line = prepRes.stdout.split("\n").find((l) => l.startsWith(marker));
+  if (!line) {
+    throw new Error("remote prep didn't return a base path");
+  }
+  const remoteBase = line.slice(marker.length).trim();
 
-  // Audit trail — the event log records exactly what was written and
-  // whether any private key material left the host. Viewable in the
-  // Events panel of the session.
+  // Drop the list into a temp file and feed rsync via --files-from so we
+  // don't blow through argv limits with a big bundle. Paths are relative
+  // to dir.root; rsync materialises them under remoteBase preserving
+  // directory structure.
+  const staging = mkdtempSync(join(tmpdir(), "botdock-rsync-"));
+  const listPath = join(staging, "files.list");
+  writeFileSync(listPath, relPaths.join("\n") + "\n");
+
+  const cfg = buildSshConfig(dir, machine);
+  try {
+    const args = [
+      "-a",
+      "--files-from", listPath,
+      // Ensure the context_push event below is accurate — --stats would
+      // be nice but we only consume exit code. Quiet otherwise to avoid
+      // a flood of filenames in server logs.
+      "--quiet",
+      "-e", `ssh -F ${cfg.configPath}`,
+      `${dir.root}/`,
+      `${cfg.targetAlias}:${remoteBase}/`,
+    ];
+    const res = spawnSync("rsync", args, { encoding: "utf8", timeout: 600_000 });
+    if (res.error) {
+      const code = (res.error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        throw new Error(
+          "rsync isn't installed on the BotDock host — install it (e.g. `apt install rsync`) and retry.",
+        );
+      }
+      throw res.error;
+    }
+    if ((res.status ?? -1) !== 0) {
+      const stderrTrim = (res.stderr ?? "").trim();
+      // rsync exit 12 = protocol error, usually "rsync: not found" on the
+      // remote. Surface a friendlier hint in that case.
+      if (res.status === 12 && /(not found|command not found)/i.test(stderrTrim)) {
+        throw new Error(
+          `rsync isn't installed on the remote machine "${machine.name}" — install it there and retry.`,
+        );
+      }
+      const msg = stderrTrim || (res.stdout ?? "").trim() || `rsync exited ${res.status}`;
+      throw new Error(`rsync failed: ${msg}`);
+    }
+  } finally {
+    cfg.dispose();
+    try { rmSync(staging, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
   appendEvent(dir, sessionId, {
     ts: new Date().toISOString(),
     kind: "context_push",
     remote_base: remoteBase,
+    transport: "rsync",
     items: pushed,
   });
 
-  return { pushed, remote_base: remoteBase };
+  return { pushed, remote_base: remoteBase, transferred_files: relPaths.length };
 }
 
-/**
- * Build a bash script that:
- *   1. resolves `~/...` in the workdir against $HOME,
- *   2. creates the context root at 700,
- *   3. writes every file via base64 heredoc (binary-safe),
- *   4. chmods private-key files to 600 / their parent dirs to 700,
- *   5. prints a marker with the absolute remote path on success.
- *
- * Heredoc delimiter is a unique per-file tag; content is base64 so no
- * character in the file can collide with the delimiter or the shell.
- */
-function buildPushScript(workdir: string, files: FileSpec[]): string {
-  const wq = shSingleQuote(workdir);
-  const parts: string[] = [];
-  parts.push("#!/bin/bash");
-  parts.push("set -euo pipefail");
-  parts.push(`WORKDIR=${wq}`);
-  parts.push(`case "$WORKDIR" in`);
-  parts.push(`  "~")   WORKDIR="$HOME" ;;`);
-  parts.push(`  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;`);
-  parts.push(`esac`);
-  parts.push(`BASE="$WORKDIR/.botdock/context"`);
-  parts.push(`mkdir -p "$BASE"`);
-  parts.push(`chmod 700 "$BASE" || true`);
-
-  // Collect unique parent dirs so we mkdir -p once per dir, deterministically.
-  const dirs = new Set<string>();
-  for (const f of files) {
-    const parent = f.rel.includes("/") ? f.rel.slice(0, f.rel.lastIndexOf("/")) : "";
-    if (parent) dirs.add(parent);
-  }
-  for (const d of Array.from(dirs).sort()) {
-    parts.push(`mkdir -p "$BASE/${d}"`);
-  }
-  // Any private/keys/<name>/ dir must be 700 — covers both existing dirs
-  // (re-push) and just-created ones.
-  for (const d of Array.from(dirs).sort()) {
-    if (d.startsWith("private/keys/")) parts.push(`chmod 700 "$BASE/${d}" || true`);
-  }
-
-  files.forEach((f, i) => {
-    const tag = `BDCTX_${i}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const b64 = f.bytes.toString("base64");
-    parts.push(`base64 -d > "$BASE/${f.rel}" <<'${tag}'`);
-    // Chunk the base64 into 76-char lines so heredocs stay readable in
-    // transit logs and don't trip on any single-line length limits.
-    parts.push(b64.match(/.{1,76}/g)?.join("\n") ?? b64);
-    parts.push(tag);
-    if (f.mode !== undefined) {
-      const octal = f.mode.toString(8).padStart(3, "0");
-      parts.push(`chmod ${octal} "$BASE/${f.rel}"`);
+/** Yield absolute paths of every regular file under `root`. */
+function* walkFiles(root: string): Generator<string> {
+  const stack: string[] = [root];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    for (const name of readdirSync(cur)) {
+      const p = join(cur, name);
+      const st = statSync(p);
+      if (st.isDirectory()) stack.push(p);
+      else if (st.isFile()) yield p;
     }
-  });
-
-  parts.push(`echo "BOTDOCK_CONTEXT_PUSHED:$BASE"`);
-  return parts.join("\n") + "\n";
+  }
 }

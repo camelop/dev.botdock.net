@@ -421,6 +421,7 @@ export const api = {
       file_count?: number;
     }>;
     remote_base: string;
+    transferred_files: number;
   }>(`/api/sessions/${encodeURIComponent(id)}/context/push`, {
     method: "POST",
     body: JSON.stringify(body),
