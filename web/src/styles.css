@@ -131,6 +131,38 @@ button.secondary:active { background: #2d3340; }
 button.secondary:disabled { background: #2a2f38; color: var(--fg-dim); border-color: var(--border); box-shadow: none; }
 button.danger { background: var(--danger); color: #2a0a0a; }
 
+/* Action-bar buttons (session toolbar: Context / Notes / Keyboard /
+ * FileBrowser / VS Code, plus zoom controls on the right). Emoji glyphs
+ * render at wildly different heights — 📝 vs ⌨ vs 🧑‍💻 ZWJ — so we
+ * pin the outer box instead of letting content decide it. flex + fixed
+ * height keeps a row of these aligned even when emoji vendors disagree. */
+.action-bar-btn,
+a.action-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.action-bar-btn > .emoji,
+a.action-bar-btn > .emoji {
+  /* Fixed-width slot for the emoji so baselines match no matter which
+   * font the OS uses to render it. Slightly larger than the surrounding
+   * 12px text so the icon reads as an icon. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  font-size: 13px;
+  line-height: 1;
+}
+
 input, textarea, select {
   font: inherit;
   padding: 6px 10px;

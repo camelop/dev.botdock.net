@@ -8,6 +8,13 @@ import {
   gitRepoExists,
   resourceNameInUse,
   probeGitRepo,
+  listMarkdowns,
+  readMarkdown,
+  createMarkdown,
+  updateMarkdown,
+  deleteMarkdown,
+  markdownExists,
+  MARKDOWN_CONTENT_LIMIT,
   type GitRepoResource,
 } from "../../domain/resources.ts";
 
@@ -77,6 +84,72 @@ export function mountResources(router: Router, dir: DataDir): void {
   router.delete("/api/resources/git-repo/:name", ({ params }) => {
     if (!gitRepoExists(dir, params.name!)) throw new HttpError(404, "not found");
     deleteGitRepo(dir, params.name!);
+    return json({ ok: true });
+  });
+
+  // ---- markdown ---------------------------------------------------------
+
+  router.get("/api/resources/markdown", () => json(listMarkdowns(dir)));
+
+  router.get("/api/resources/markdown/:name", ({ params }) => {
+    if (!markdownExists(dir, params.name!)) throw new HttpError(404, "not found");
+    return json(readMarkdown(dir, params.name!));
+  });
+
+  router.post("/api/resources/markdown", async ({ req }) => {
+    const body = await parseJsonBody<{
+      name?: string;
+      title?: string;
+      tags?: string[];
+      content?: string;
+    }>(req);
+    if (!body.name) throw new HttpError(400, "name required");
+    const clash = resourceNameInUse(dir, body.name);
+    if (clash) {
+      throw new HttpError(409, `name "${body.name}" is already used by a ${clash} resource`);
+    }
+    if (typeof body.content === "string"
+      && Buffer.byteLength(body.content, "utf8") > MARKDOWN_CONTENT_LIMIT) {
+      throw new HttpError(413, `content exceeds ${MARKDOWN_CONTENT_LIMIT} bytes`);
+    }
+    try {
+      const meta = createMarkdown(dir, body.name, {
+        title: body.title,
+        tags: body.tags,
+        content: body.content,
+      });
+      return json(meta, { status: 201 });
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
+
+  router.put("/api/resources/markdown/:name", async ({ req, params }) => {
+    if (!markdownExists(dir, params.name!)) throw new HttpError(404, "not found");
+    const body = await parseJsonBody<{
+      title?: string;
+      tags?: string[];
+      content?: string;
+    }>(req);
+    if (typeof body.content === "string"
+      && Buffer.byteLength(body.content, "utf8") > MARKDOWN_CONTENT_LIMIT) {
+      throw new HttpError(413, `content exceeds ${MARKDOWN_CONTENT_LIMIT} bytes`);
+    }
+    try {
+      const meta = updateMarkdown(dir, params.name!, {
+        title: body.title,
+        tags: body.tags,
+        content: body.content,
+      });
+      return json(meta);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
+
+  router.delete("/api/resources/markdown/:name", ({ params }) => {
+    if (!markdownExists(dir, params.name!)) throw new HttpError(404, "not found");
+    deleteMarkdown(dir, params.name!);
     return json({ ok: true });
   });
 }

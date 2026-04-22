@@ -7,12 +7,13 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { SessionHubPage } from "./pages/SessionHubPage";
 import { GitReposPage } from "./pages/GitReposPage";
+import { MarkdownsPage } from "./pages/MarkdownsPage";
 import { ForwardsPage } from "./pages/ForwardsPage";
 import { CreditsPage } from "./pages/CreditsPage";
 import { TerminalsPage } from "./pages/TerminalsPage";
 import { WarRoomPage } from "./pages/WarRoomPage";
 
-type Tab = "dashboard" | "sessions" | "hub" | "warroom" | "budgets" | "keys" | "secrets" | "machines" | "forwards" | "terminals" | "git-repos";
+type Tab = "dashboard" | "sessions" | "hub" | "warroom" | "budgets" | "keys" | "secrets" | "machines" | "forwards" | "terminals" | "git-repos" | "markdowns";
 
 type NavItem  = { id: Tab; label: string };
 type NavGroup = { kind: "group"; label: string; items: NavItem[] };
@@ -51,6 +52,7 @@ const NAV: NavEntry[] = [
     label: "Context",
     items: [
       { id: "git-repos", label: "Git Repos" },
+      { id: "markdowns", label: "Markdown" },
     ],
   },
   // Budgets: temporarily disabled until the Anthropic cost-report integration
@@ -244,6 +246,7 @@ export function App() {
         {tab === "forwards" && <ForwardsPage />}
         {tab === "terminals" && <TerminalsPage />}
         {tab === "git-repos" && <GitReposPage />}
+        {tab === "markdowns" && <MarkdownsPage />}
       </div>
     </div>
   );

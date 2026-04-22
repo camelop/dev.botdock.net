@@ -17,7 +17,9 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "boring-avatars": "^2.0.4"
+    "@monaco-editor/react": "^4.7.0",
+    "boring-avatars": "^2.0.4",
+    "monaco-editor": "^0.55.1"
   },
   "devDependencies": {
     "@types/bun": "latest",

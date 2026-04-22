@@ -76,6 +76,12 @@ export class DataDir {
   gitRepoFile(name: string): string {
     return join(this.gitRepoDir(name), "meta.toml");
   }
+
+  markdownsDir(): string { return join(this.resourcesDir(), "markdown"); }
+  markdownDir(name: string): string {
+    assertSafeName(name, "markdown name");
+    return join(this.markdownsDir(), name);
+  }
 }
 
 /** Names are used as path segments; enforce a strict charset. */

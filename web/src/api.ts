@@ -46,6 +46,19 @@ export type GitRepoResource = {
   updated_at: string;
 };
 
+export type MarkdownMeta = {
+  name: string;
+  title?: string;
+  tags?: string[];
+  bytes: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MarkdownResource = { meta: MarkdownMeta; content: string };
+
+export const MARKDOWN_CONTENT_LIMIT = 256 * 1024;
+
 export type SecretMeta = {
   name: string;
   created_at: string;
@@ -189,6 +202,19 @@ export const api = {
       "/api/resources/git-repo/probe",
       { method: "POST", body: JSON.stringify(body) },
     ),
+
+  // --- resources / markdown ---
+  listMarkdowns: () => request<MarkdownMeta[]>("/api/resources/markdown"),
+  getMarkdown: (name: string) =>
+    request<MarkdownResource>(`/api/resources/markdown/${encodeURIComponent(name)}`),
+  createMarkdown: (body: { name: string; title?: string; tags?: string[]; content?: string }) =>
+    request<MarkdownMeta>("/api/resources/markdown", { method: "POST", body: JSON.stringify(body) }),
+  updateMarkdown: (name: string, body: { title?: string; tags?: string[]; content?: string }) =>
+    request<MarkdownMeta>(`/api/resources/markdown/${encodeURIComponent(name)}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  deleteMarkdown: (name: string) =>
+    request<{ ok: true }>(`/api/resources/markdown/${encodeURIComponent(name)}`, { method: "DELETE" }),
   updateStatus: () => request<UpdateStatus>("/api/update/status"),
   installUpdate: () =>
     request<{ accepted: true; target: string }>("/api/update/install", { method: "POST" }),

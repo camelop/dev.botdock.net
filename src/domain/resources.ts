@@ -8,7 +8,7 @@
  * meta.toml holds the kind-specific schema.
  */
 
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { DataDir, assertSafeName, readToml, writeToml } from "../storage/index.ts";
@@ -170,4 +170,148 @@ function parseLsRemote(out: string): GitRepoProbe {
   }
   branches.sort((a, b) => a.localeCompare(b));
   return { default_branch: defaultBranch, branches };
+}
+
+// ---- markdown ------------------------------------------------------------
+
+/**
+ * A chunk of markdown the user maintains in the root-folder and can push
+ * into a session's context. `title` is a human-readable label; `bytes` is
+ * the content.md size and is derived at write time so listings can show
+ * size without reading every file.
+ */
+export type MarkdownMeta = {
+  name: string;
+  title?: string;
+  tags?: string[];
+  bytes: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MarkdownResource = { meta: MarkdownMeta; content: string };
+
+/** Hard cap so the UI's "draft buffer" stays bounded and the push
+ *  channel doesn't ship accidentally-huge chunks. 256 KiB is generous
+ *  for prose but strict enough that binary paste accidents fail fast. */
+export const MARKDOWN_CONTENT_LIMIT = 256 * 1024;
+
+function markdownContentPath(dir: DataDir, name: string): string {
+  return join(dir.markdownDir(name), "content.md");
+}
+function markdownMetaPath(dir: DataDir, name: string): string {
+  return join(dir.markdownDir(name), "meta.toml");
+}
+
+export function listMarkdowns(dir: DataDir): MarkdownMeta[] {
+  const root = kindDir(dir, "markdown");
+  if (!existsSync(root)) return [];
+  const out: MarkdownMeta[] = [];
+  for (const name of readdirSync(root)) {
+    try { assertSafeName(name, "markdown name"); } catch { continue; }
+    const meta = join(root, name, "meta.toml");
+    if (!existsSync(meta)) continue;
+    out.push(readToml<MarkdownMeta>(meta));
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+export function markdownExists(dir: DataDir, name: string): boolean {
+  try { return existsSync(markdownMetaPath(dir, name)); } catch { return false; }
+}
+
+export function readMarkdown(dir: DataDir, name: string): MarkdownResource {
+  const metaPath = markdownMetaPath(dir, name);
+  if (!existsSync(metaPath)) throw new Error(`markdown not found: ${name}`);
+  const meta = readToml<MarkdownMeta>(metaPath);
+  const contentPath = markdownContentPath(dir, name);
+  const content = existsSync(contentPath) ? readFileSync(contentPath, "utf8") : "";
+  return { meta, content };
+}
+
+type MarkdownWritePatch = {
+  title?: string;
+  tags?: string[];
+  content?: string;
+};
+
+/**
+ * Create a new markdown resource. `title` / `tags` / `content` all
+ * optional — the record is valid with just a name. Bytes is derived.
+ */
+export function createMarkdown(
+  dir: DataDir,
+  name: string,
+  patch: MarkdownWritePatch,
+): MarkdownMeta {
+  assertSafeName(name, "markdown name");
+  if (markdownExists(dir, name)) {
+    throw new Error(`markdown already exists: ${name}`);
+  }
+  const content = patch.content ?? "";
+  if (Buffer.byteLength(content, "utf8") > MARKDOWN_CONTENT_LIMIT) {
+    throw new Error(`markdown content exceeds ${MARKDOWN_CONTENT_LIMIT} bytes`);
+  }
+  mkdirSync(dir.markdownDir(name), { recursive: true });
+  writeFileSync(markdownContentPath(dir, name), content, { encoding: "utf8" });
+  const now = new Date().toISOString();
+  const meta: MarkdownMeta = {
+    name,
+    title: patch.title?.trim() || undefined,
+    tags: patch.tags?.length ? patch.tags : undefined,
+    bytes: Buffer.byteLength(content, "utf8"),
+    created_at: now,
+    updated_at: now,
+  };
+  writeToml(markdownMetaPath(dir, name), toTomlable(meta));
+  return meta;
+}
+
+/**
+ * Partial update: any of title / tags / content can be left undefined to
+ * keep the prior value. `content: ""` is a deliberate wipe and IS written.
+ */
+export function updateMarkdown(
+  dir: DataDir,
+  name: string,
+  patch: MarkdownWritePatch,
+): MarkdownMeta {
+  if (!markdownExists(dir, name)) throw new Error(`markdown not found: ${name}`);
+  const prev = readMarkdown(dir, name);
+  const nextContent = patch.content !== undefined ? patch.content : prev.content;
+  if (Buffer.byteLength(nextContent, "utf8") > MARKDOWN_CONTENT_LIMIT) {
+    throw new Error(`markdown content exceeds ${MARKDOWN_CONTENT_LIMIT} bytes`);
+  }
+  if (patch.content !== undefined) {
+    writeFileSync(markdownContentPath(dir, name), nextContent, { encoding: "utf8" });
+  }
+  const meta: MarkdownMeta = {
+    name,
+    title: patch.title !== undefined ? (patch.title.trim() || undefined) : prev.meta.title,
+    tags: patch.tags !== undefined ? (patch.tags.length ? patch.tags : undefined) : prev.meta.tags,
+    bytes: Buffer.byteLength(nextContent, "utf8"),
+    created_at: prev.meta.created_at,
+    updated_at: new Date().toISOString(),
+  };
+  writeToml(markdownMetaPath(dir, name), toTomlable(meta));
+  return meta;
+}
+
+export function deleteMarkdown(dir: DataDir, name: string): void {
+  const path = dir.markdownDir(name);
+  if (!existsSync(path)) throw new Error(`markdown not found: ${name}`);
+  rmSync(path, { recursive: true, force: true });
+}
+
+function toTomlable(meta: MarkdownMeta): Record<string, unknown> {
+  const data: Record<string, unknown> = {
+    name: meta.name,
+    bytes: meta.bytes,
+    created_at: meta.created_at,
+    updated_at: meta.updated_at,
+  };
+  if (meta.title) data.title = meta.title;
+  if (meta.tags && meta.tags.length) data.tags = meta.tags;
+  return data;
 }

@@ -1045,26 +1045,24 @@ export function SessionView(props: {
                 notesToggle={(
                   <button
                     ref={notesButtonRef}
-                    className="secondary"
-                    style={{
-                      padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
-                      ...(notesOpen ? ACTIVE_TOGGLE_STYLE : {}),
-                    }}
+                    className="secondary action-bar-btn"
+                    style={notesOpen ? ACTIVE_TOGGLE_STYLE : undefined}
                     onClick={onToggleNotes}
                     title="Toggle the floating scratchpad (persisted to notes.md)"
-                  >📝 {notesOpen ? "Hide Notes" : "Notes"}</button>
+                  >
+                    <span className="emoji">📝</span>
+                    {notesOpen ? "Hide Notes" : "Notes"}
+                  </button>
                 )}
                 inputToggle={session.status === "active" ? (
                   <button
-                    className="secondary"
-                    style={{
-                      padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
-                      ...(showInput ? ACTIVE_TOGGLE_STYLE : {}),
-                    }}
+                    className="secondary action-bar-btn"
+                    style={showInput ? ACTIVE_TOGGLE_STYLE : undefined}
                     onClick={() => setShowInput((v) => !v)}
                     title="Toggle the input pane (send text / quick keys to tmux)"
                   >
-                    {showInput ? "⌨ Hide Keyboard" : "⌨ Keyboard"}
+                    <span className="emoji">⌨</span>
+                    {showInput ? "Hide Keyboard" : "Keyboard"}
                   </button>
                 ) : null}
                 fileBrowserControls={session.status === "active" ? (
@@ -1097,11 +1095,13 @@ export function SessionView(props: {
                   <h2 style={{ margin: 0, flex: 1 }}>Live log</h2>
                   {session?.status === "active" && (
                     <button
-                      className="secondary"
-                      style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0 }}
+                      className="secondary action-bar-btn"
                       onClick={() => setShowInput((v) => !v)}
                       title="Toggle the input pane"
-                    >{showInput ? "▾ Hide keyboard" : "⌨ Keyboard"}</button>
+                    >
+                      <span className="emoji">{showInput ? "▾" : "⌨"}</span>
+                      {showInput ? "Hide keyboard" : "Keyboard"}
+                    </button>
                   )}
                 </div>
                 <div
@@ -1921,9 +1921,6 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
   onStart: () => void;
   onStop: () => void;
 }) {
-  const baseBtn: React.CSSProperties = {
-    padding: "4px 10px", fontSize: 12, flexShrink: 0,
-  };
   const running = !!session.filebrowser_local_port;
   const url = `/api/sessions/${encodeURIComponent(session.id)}/files/`;
 
@@ -1934,15 +1931,15 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
     return (
       <div className="row" style={{ gap: 4, alignItems: "center" }}>
         <button
-          className="secondary"
-          style={{
-            ...baseBtn, borderRadius: 6,
-            ...(state === "starting" ? ACTIVE_TOGGLE_STYLE : {}),
-          }}
+          className="secondary action-bar-btn"
+          style={state === "starting" ? ACTIVE_TOGGLE_STYLE : undefined}
           onClick={onStart}
           disabled={state !== "idle"}
           title="Spawn filebrowser on the remote scoped to this session's workdir"
-        >📁 {state === "starting" ? "Starting…" : "FileBrowser"}</button>
+        >
+          <span className="emoji">📁</span>
+          {state === "starting" ? "Starting…" : "FileBrowser"}
+        </button>
         {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
       </div>
     );
@@ -1952,10 +1949,9 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
   // active-toggle accent is applied across the whole group so it reads as
   // one "FileBrowser is on" affordance, with the specific action buttons
   // inside.
-  const groupBtn: React.CSSProperties = {
-    ...baseBtn,
-    borderRadius: 0,
+  const groupBtnStyle: React.CSSProperties = {
     ...ACTIVE_TOGGLE_STYLE,
+    borderRadius: 0,
   };
   return (
     <div className="row" style={{ gap: 0, alignItems: "center" }}>
@@ -1965,27 +1961,33 @@ function FileBrowserControls({ session, state, err, onStart, onStop }: {
           only targets `button.secondary`, which is another reason <a> was
           mis-styled here. */}
       <button
-        className="secondary"
+        className="secondary action-bar-btn"
         style={{
-          ...groupBtn,
+          ...groupBtnStyle,
           borderTopLeftRadius: 6,
           borderBottomLeftRadius: 6,
           borderRight: "none",
         }}
         onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
         title="Open the filebrowser UI in a new tab"
-      >📁 Open FileBrowser ↗</button>
+      >
+        <span className="emoji">📁</span>
+        Open FileBrowser
+        <span className="emoji">↗</span>
+      </button>
       <button
-        className="secondary"
+        className="secondary action-bar-btn"
         style={{
-          ...groupBtn,
+          ...groupBtnStyle,
           borderTopRightRadius: 6,
           borderBottomRightRadius: 6,
         }}
         onClick={onStop}
         disabled={state !== "idle"}
         title="Kill the remote filebrowser and drop its SSH forward"
-      >{state === "stopping" ? "Stopping…" : "⏹ Stop"}</button>
+      >
+        {state === "stopping" ? "Stopping…" : <><span className="emoji">⏹</span>Stop</>}
+      </button>
       {err && <span className="pill err" style={{ fontSize: 10, marginLeft: 4 }} title={err}>error</span>}
     </div>
   );
@@ -2003,9 +2005,6 @@ function VsCodeControls({ session, state, err, onStart, onStop }: {
   onStart: () => void;
   onStop: () => void;
 }) {
-  const baseBtn: React.CSSProperties = {
-    padding: "4px 10px", fontSize: 12, flexShrink: 0,
-  };
   const running = !!session.codeserver_local_port;
   // Default-open the session's workdir in the browser VS Code instead of
   // the welcome page. code-server reads ?folder=<abs> to auto-open.
@@ -2018,49 +2017,54 @@ function VsCodeControls({ session, state, err, onStart, onStop }: {
     return (
       <div className="row" style={{ gap: 4, alignItems: "center" }}>
         <button
-          className="secondary"
-          style={{
-            ...baseBtn, borderRadius: 6,
-            ...(state === "starting" ? ACTIVE_TOGGLE_STYLE : {}),
-          }}
+          className="secondary action-bar-btn"
+          style={state === "starting" ? ACTIVE_TOGGLE_STYLE : undefined}
           onClick={onStart}
           disabled={state !== "idle"}
           title="Spawn code-server (browser VS Code) scoped to this session's workdir — first launch downloads ~200MB"
-        >🧑‍💻 {state === "starting" ? "Starting…" : "VS Code"}</button>
+        >
+          <span className="emoji">🧑‍💻</span>
+          {state === "starting" ? "Starting…" : "VS Code"}
+        </button>
         {err && <span className="pill err" style={{ fontSize: 10 }} title={err}>error</span>}
       </div>
     );
   }
 
-  const groupBtn: React.CSSProperties = {
-    ...baseBtn,
-    borderRadius: 0,
+  const groupBtnStyle: React.CSSProperties = {
     ...ACTIVE_TOGGLE_STYLE,
+    borderRadius: 0,
   };
   return (
     <div className="row" style={{ gap: 0, alignItems: "center" }}>
       <button
-        className="secondary"
+        className="secondary action-bar-btn"
         style={{
-          ...groupBtn,
+          ...groupBtnStyle,
           borderTopLeftRadius: 6,
           borderBottomLeftRadius: 6,
           borderRight: "none",
         }}
         onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
         title="Open VS Code in a new tab"
-      >🧑‍💻 Open VS Code ↗</button>
+      >
+        <span className="emoji">🧑‍💻</span>
+        Open VS Code
+        <span className="emoji">↗</span>
+      </button>
       <button
-        className="secondary"
+        className="secondary action-bar-btn"
         style={{
-          ...groupBtn,
+          ...groupBtnStyle,
           borderTopRightRadius: 6,
           borderBottomRightRadius: 6,
         }}
         onClick={onStop}
         disabled={state !== "idle"}
         title="Kill the remote code-server and drop its SSH forward"
-      >{state === "stopping" ? "Stopping…" : "⏹ Stop"}</button>
+      >
+        {state === "stopping" ? "Stopping…" : <><span className="emoji">⏹</span>Stop</>}
+      </button>
       {err && <span className="pill err" style={{ fontSize: 10, marginLeft: 4 }} title={err}>error</span>}
     </div>
   );
@@ -2182,10 +2186,6 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
       // Legacy single-column modal: fixed height so the flow below still fits.
       : { height: 420, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" };
 
-  const iconBtn: React.CSSProperties = {
-    padding: "4px 10px", fontSize: 12, borderRadius: 6, flexShrink: 0,
-  };
-
   const contextBtnRef = useRef<HTMLButtonElement | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
 
@@ -2198,11 +2198,12 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
             <div style={{ position: "relative" }}>
               <button
                 ref={contextBtnRef}
-                className="secondary"
-                style={iconBtn}
+                className="secondary action-bar-btn"
                 onClick={() => setContextOpen((v) => !v)}
                 title="Push resources (git-repos, optionally their deploy keys) into this session's remote workdir"
-              >＋ Context</button>
+              >
+                <span className="emoji">＋</span>Context
+              </button>
               {contextOpen && (
                 <ContextPushPopover
                   session={session}
@@ -2219,8 +2220,7 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
           {/* RIGHT: viewport controls — zoom, nav, window. */}
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
             <button
-              className="secondary"
-              style={iconBtn}
+              className="secondary action-bar-btn"
               onClick={() => setContentZoom((z) => z - 0.1)}
               title="Shrink terminal content (CSS zoom; Chromium/Safari only)"
             >−</button>
@@ -2228,40 +2228,36 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
               {Math.round(contentZoom * 100)}%
             </span>
             <button
-              className="secondary"
-              style={iconBtn}
+              className="secondary action-bar-btn"
               onClick={() => setContentZoom((z) => z + 0.1)}
               title="Enlarge terminal content (CSS zoom; Chromium/Safari only)"
             >+</button>
             {onOpenInWorkspace && (
               <button
-                className="secondary"
-                style={iconBtn}
+                className="secondary action-bar-btn"
                 onClick={onOpenInWorkspace}
                 title="Close this modal and open the session in the Workspace view"
-              >⇲ Workspace</button>
+              ><span className="emoji">⇲</span>Workspace</button>
             )}
             <a
               href={url}
               target="_blank"
               rel="noreferrer"
-              className="secondary"
+              className="secondary action-bar-btn"
               style={{
-                ...iconBtn, textDecoration: "none",
+                textDecoration: "none",
                 background: "#323844", color: "var(--fg)",
                 border: "1px solid #3f4754",
               }}
               title="Open in a new browser tab"
-            >↗ New tab</a>
+            ><span className="emoji">↗</span>New tab</a>
             <button
-              className="secondary"
-              style={iconBtn}
+              className="secondary action-bar-btn"
               onClick={() => setZoomed(true)}
               title="Expand to full screen (Esc to exit)"
-            >⛶ Full screen</button>
+            ><span className="emoji">⛶</span>Full screen</button>
             <button
-              className="secondary"
-              style={iconBtn}
+              className="secondary action-bar-btn"
               onClick={() => setReloadKey((k) => k + 1)}
               title="Reload the ttyd iframe (forces tmux to re-measure the pane)"
             >↻</button>
