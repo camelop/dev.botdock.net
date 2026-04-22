@@ -2,6 +2,11 @@
 
 Only user-visible changes. Latest first.
 
+## v0.4.9 — 2026-04-22
+
+- Transcript follow-latest: on a long session, `pageIndex=-1` now stays -1 after first fetch so new turns auto-advance the view instead of pinning you to the page number that was "latest" when you opened the session.
+- code-server start script gets an ERR trap + executable-path pre-check so a future failure prints `BOTDOCK_CS_ERR line=N code=M` instead of the current silent `exit 1`.
+
 ## v0.4.8 — 2026-04-22
 
 - Workspace remembers the last-selected session across reloads (via `localStorage`), so update-triggered restarts drop you back where you were.

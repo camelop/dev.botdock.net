@@ -822,9 +822,19 @@ export function startSessionCodeServer(
   const supervisorSession = `botdock-cs-${opts.sessionId}`;
   const script = `
 set -euo pipefail
+# Diagnostic trap: whenever set -e trips we want to see which LINE and
+# which EXIT CODE so the daemon's error surface is actionable instead
+# of "exit 1, no idea why".
+trap 'echo "BOTDOCK_CS_ERR line=$LINENO code=$?" >&2' ERR
 SUPER=${shQ(supervisorSession)}
 CS=${shQ(installed.codeserver!.path)}
 WORKDIR=${shQ(opts.workdir)}
+
+if [ ! -x "$CS" ]; then
+  echo "code-server binary not found or not executable at $CS" >&2
+  echo "  (install marker claims it lives here; try clearing ~/.botdock/installed.toml and re-running)" >&2
+  exit 3
+fi
 
 case "$WORKDIR" in
   "~")   WORKDIR="$HOME" ;;

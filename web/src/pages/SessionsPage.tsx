@@ -1601,9 +1601,12 @@ function TranscriptView({ sessionId, hasFile, transcriptSize, lastTranscriptAt }
       setPageSize(r.page_size);
       const turns = parseTranscript(r.text);
       cacheRef.current.set(r.page_index, { turns, text: r.text });
-      // If we asked for "latest" (-1) the server resolved to a real index;
-      // sync our state so the UI can tell we're truly on the latest page.
-      if (pageIndex < 0) setPageIndex(r.page_index);
+      // Keep pageIndex at -1 for the "follow latest" mode. Previously we
+      // promoted it to r.page_index on first fetch, but that pinned the
+      // user's view to an absolute page number — so when new transcript
+      // content bumped total_pages, resolvedPage stayed put and the
+      // view stopped advancing. Staying at -1 lets resolvedPage track
+      // totalPages - 1 automatically on every subsequent growth.
     }).catch((e) => {
       if (cancelled) return;
       setErr(String((e as Error)?.message ?? e));
