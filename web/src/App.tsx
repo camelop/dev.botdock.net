@@ -67,9 +67,16 @@ function isNavGroup(e: NavEntry): e is NavGroup {
   return "kind" in e && e.kind === "group";
 }
 
+/** Parse the leading `#<tab>` from the URL hash. Tabs may carry extra
+ *  suffixes (currently `#hub/<sessionId>`); we only care about the first
+ *  segment for tab selection. */
+function parseTabFromHash(): Tab {
+  const base = window.location.hash.slice(1).split("/")[0] as Tab;
+  return ALL_TABS.includes(base) ? base : "dashboard";
+}
+
 function initialTab(): Tab {
-  const h = window.location.hash.slice(1) as Tab;
-  return ALL_TABS.includes(h) ? h : "dashboard";
+  return parseTabFromHash();
 }
 
 export function App() {
@@ -116,17 +123,24 @@ export function App() {
     return () => { cancelled = true; window.clearInterval(h); };
   }, []);
 
+  // Update the hash when switching tabs — but preserve any sub-route (e.g.
+  // the hub's /<sessionId> suffix) if the tab hasn't actually changed.
+  // Otherwise a no-op re-render would clobber SessionHubPage's URL-stored
+  // session id.
   useEffect(() => {
-    window.location.hash = tab;
+    const current = window.location.hash.slice(1);
+    const curTab = current.split("/")[0];
+    if (curTab !== tab) window.location.hash = tab;
   }, [tab]);
 
   // React to external hash changes — e.g. the session modal's "Open in
-  // workspace" button that navigates via `location.hash = "hub"`. Without
-  // this listener the address bar would update but the active tab wouldn't.
+  // workspace" button navigating via `location.hash = "hub"`, or the
+  // hub's own session-id sub-route updates. We only flip the active tab
+  // when the tab-part actually differs.
   useEffect(() => {
     const onHash = () => {
-      const h = window.location.hash.slice(1) as Tab;
-      if (ALL_TABS.includes(h) && h !== tab) setTab(h);
+      const next = parseTabFromHash();
+      if (next !== tab) setTab(next);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);

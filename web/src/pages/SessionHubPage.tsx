@@ -7,10 +7,28 @@ import { relativeTime, fullTime } from "../lib/time";
 import { aliasColor } from "../lib/alias-colors";
 import { SessionNameChip } from "../components/SessionNameChip";
 
-// Persist-across-reloads key for the currently-selected session. Kept
-// global (not per-tab) so a full page reload — update-triggered or not —
-// drops the user back on the same session.
+// Legacy fallback key. The selected session now primarily lives in
+// window.location.hash (`#hub/<sessionId>`) so a reload — daemon-restart
+// or otherwise — doesn't jump the user to a different session. This
+// localStorage entry is retained only as a second-chance fallback when
+// landing on bare `#hub` without a session suffix.
 const HUB_LAST_SELECTED_KEY = "botdock:hub-last-selected";
+
+/** Extract the session-id suffix from `#hub/<id>`, if any. */
+function parseHubSessionFromHash(): string | null {
+  const h = window.location.hash.slice(1);
+  const parts = h.split("/");
+  if (parts[0] !== "hub" || !parts[1]) return null;
+  try { return decodeURIComponent(parts[1]); } catch { return parts[1]; }
+}
+
+/** Replace just the session-id suffix on `#hub` without touching other
+ *  history state. No-op if the URL already matches. */
+function writeHubSessionToHash(id: string | null): void {
+  const want = id ? `hub/${encodeURIComponent(id)}` : "hub";
+  if (window.location.hash.slice(1) === want) return;
+  window.location.hash = want;
+}
 
 /**
  * Three-column workspace:
@@ -58,18 +76,23 @@ export function SessionHubPage() {
     return list[0]?.id ?? null;
   };
 
-  // Pick an initial selection on first mount, with three sources, checked
-  // in decreasing priority:
-  //   1. sessionStorage hint from the detail modal's "Open in workspace"
+  // Pick an initial selection on first mount. Sources, in decreasing priority:
+  //   1. URL hash `#hub/<id>` — the primary persistence channel. Survives
+  //      reloads, including daemon self-upgrade reloads.
+  //   2. sessionStorage hint from the detail modal's "Open in workspace"
   //      button (one-shot — consumed and cleared on use).
-  //   2. localStorage "last selected" — the session the user was on before
-  //      the previous page unload, so an update-triggered reload drops
-  //      them back where they were instead of the generic pickDefault.
-  //   3. pickDefault (pending > running > list[0]).
-  // Any of (1) / (2) that references a now-deleted session falls through.
+  //   3. localStorage "last selected" — legacy fallback if the URL was
+  //      bare `#hub` (e.g. opened from the nav menu).
+  //   4. pickDefault (pending > running > list[0]).
+  // Any source that references a now-deleted session falls through.
   useEffect(() => {
     if (selected != null) return;
     if (sessions.length === 0) return;
+    const fromHash = parseHubSessionFromHash();
+    if (fromHash && sessions.find((s) => s.id === fromHash)) {
+      setSelected(fromHash);
+      return;
+    }
     let preselect: string | null = null;
     let remembered: string | null = null;
     try {
@@ -90,12 +113,28 @@ export function SessionHubPage() {
     // in sessionStorage — the next refresh will pick it up.
   }, [sessions]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persist the current selection so a daemon-restart / update reload
-  // lands us back on the same session.
+  // Mirror the selection into the URL hash (primary) AND localStorage
+  // (legacy fallback). The hash write is idempotent so we don't spam
+  // history entries on every re-render.
   useEffect(() => {
     if (!selected) return;
+    writeHubSessionToHash(selected);
     try { localStorage.setItem(HUB_LAST_SELECTED_KEY, selected); } catch {}
   }, [selected]);
+
+  // Pick up external hash changes — another tab, back/forward, or the
+  // "Open in workspace" hand-off from a non-hub page. If the user arrows
+  // the address bar to `#hub/<other>` we follow.
+  useEffect(() => {
+    const onHash = () => {
+      const fromHash = parseHubSessionFromHash();
+      if (fromHash && fromHash !== selected && sessions.find((s) => s.id === fromHash)) {
+        setSelected(fromHash);
+      }
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [selected, sessions]);
 
   const grouped = useMemo(() => {
     const cmp = (a: Session, b: Session) => {

@@ -7,11 +7,27 @@ import {
   deleteGitRepo,
   gitRepoExists,
   resourceNameInUse,
+  probeGitRepo,
   type GitRepoResource,
 } from "../../domain/resources.ts";
 
 export function mountResources(router: Router, dir: DataDir): void {
   router.get("/api/resources/git-repo", () => json(listGitRepos(dir)));
+
+  // Probe a remote URL (before the user commits to creating a resource) to
+  // surface the default branch + full branch list for the Ref dropdown. The
+  // heavy lifting is a plain `git ls-remote`; we just select the right
+  // deploy key when the caller supplies one.
+  router.post("/api/resources/git-repo/probe", async ({ req }) => {
+    const body = await parseJsonBody<{ url?: string; deploy_key?: string }>(req);
+    if (!body.url) throw new HttpError(400, "url required");
+    try {
+      const probe = probeGitRepo(dir, body.url, body.deploy_key || undefined);
+      return json(probe);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
 
   router.get("/api/resources/git-repo/:name", ({ params }) => {
     if (!gitRepoExists(dir, params.name!)) throw new HttpError(404, "not found");

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type GitRepoResource, type KeyMeta } from "../api";
 import { Modal } from "../components/Modal";
 import { relativeTime, fullTime } from "../lib/time";
@@ -79,6 +79,9 @@ export function GitReposPage() {
         <GitRepoEditor
           target={edit}
           keys={keys}
+          onKeysChanged={async () => {
+            try { setKeys(await api.listKeys()); } catch { /* non-fatal */ }
+          }}
           onClose={() => setEdit(null)}
           onDone={async () => { setEdit(null); await refresh(); }}
         />
@@ -87,9 +90,26 @@ export function GitReposPage() {
   );
 }
 
+/** Pull a repo name out of common clone-URL shapes. Returns "" for
+ *  anything that wouldn't pass BotDock's safe-name regex so the user is
+ *  prompted to pick one explicitly instead of starting with a junk name. */
+function deriveNameFromUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  // Strip protocol + auth; grab the last non-empty path segment.
+  const stripped = trimmed
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "");
+  const seg = stripped.split(/[\/:]/).filter(Boolean).pop() ?? "";
+  if (!seg) return "";
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(seg)) return "";
+  return seg;
+}
+
 function GitRepoEditor(props: {
   target: Exclude<EditTarget, null>;
   keys: KeyMeta[];
+  onKeysChanged: () => void | Promise<void>;
   onClose: () => void;
   onDone: () => void | Promise<void>;
 }) {
@@ -97,6 +117,22 @@ function GitRepoEditor(props: {
   const [tagStr, setTagStr] = useState("");
   const [err, setErr] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Branch-probe state — populated by a debounced call whenever the URL
+  // (or deploy_key) changes and is non-empty. On success we drop the user
+  // into a select-of-branches with the remote's default preselected; the
+  // raw-text fallback stays available so SHAs / tags still work.
+  const [branches, setBranches] = useState<string[]>([]);
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeErr, setProbeErr] = useState("");
+  // Has the user typed in the Name field? Flips on first edit and locks
+  // out URL-driven auto-fill so we never clobber the user's typing.
+  const nameEdited = useRef(props.target.mode === "edit");
+  const [showPub, setShowPub] = useState(false);
+  const [pub, setPub] = useState<string>("");
+  const [pubErr, setPubErr] = useState("");
+  const [newKeyModal, setNewKeyModal] = useState(false);
 
   useEffect(() => {
     if (props.target.mode === "edit") {
@@ -107,8 +143,80 @@ function GitRepoEditor(props: {
     }
   }, []);
 
+  // Debounced branch probe. Triggers on URL / deploy_key change in BOTH
+  // new and edit modes — edit mode is where you're most likely to want to
+  // switch from a stale branch to whatever the upstream default is now.
+  useEffect(() => {
+    if (!r.url || !r.url.trim()) {
+      setBranches([]); setDefaultBranch(null); setProbeErr(""); setProbing(false);
+      return;
+    }
+    let cancelled = false;
+    setProbeErr("");
+    setProbing(true);
+    const t = window.setTimeout(async () => {
+      try {
+        const out = await api.probeGitRepo({
+          url: r.url.trim(),
+          deploy_key: r.deploy_key || undefined,
+        });
+        if (cancelled) return;
+        setBranches(out.branches);
+        setDefaultBranch(out.default_branch);
+        // New repo and user hasn't touched Ref? Pre-select the default.
+        // Edit mode: don't override an existing ref — user chose it on
+        // purpose and may prefer it sticks through a re-probe.
+        setR((cur) => {
+          if (props.target.mode === "new" && (!cur.ref || !cur.ref.trim()) && out.default_branch) {
+            return { ...cur, ref: out.default_branch };
+          }
+          return cur;
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setBranches([]); setDefaultBranch(null);
+        setProbeErr(String((e as Error).message ?? e));
+      } finally {
+        if (!cancelled) setProbing(false);
+      }
+    }, 500);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [r.url, r.deploy_key, props.target.mode]);
+
+  // Load / clear the selected deploy key's public key so the "show pub" panel
+  // can render it inline without forcing another round-trip per reveal click.
+  useEffect(() => {
+    if (!r.deploy_key) { setPub(""); setPubErr(""); return; }
+    let cancelled = false;
+    api.getKey(r.deploy_key)
+      .then((d) => { if (!cancelled) { setPub(d.publicKey.trim()); setPubErr(""); } })
+      .catch((e) => { if (!cancelled) { setPub(""); setPubErr(String((e as Error).message ?? e)); } });
+    return () => { cancelled = true; };
+  }, [r.deploy_key]);
+
   const set = <K extends keyof GitRepoResource>(k: K, v: GitRepoResource[K]) =>
     setR((cur) => ({ ...cur, [k]: v }));
+
+  const onUrlChange = (next: string) => {
+    setR((cur) => {
+      const copy = { ...cur, url: next };
+      if (props.target.mode === "new" && !nameEdited.current) {
+        const derived = deriveNameFromUrl(next);
+        copy.name = derived;
+      }
+      return copy;
+    });
+  };
+
+  const onNameChange = (next: string) => {
+    nameEdited.current = true;
+    set("name", next);
+  };
+
+  const refInBranches = useMemo(
+    () => branches.includes((r.ref ?? "").trim()),
+    [branches, r.ref],
+  );
 
   const submit = async () => {
     setErr(""); setSubmitting(true);
@@ -140,37 +248,127 @@ function GitRepoEditor(props: {
       onClose={props.onClose}
     >
       <label>
+        <span>URL</span>
+        <input
+          autoFocus={props.target.mode === "new"}
+          value={r.url}
+          placeholder="git@github.com:owner/repo.git"
+          onChange={(e) => onUrlChange(e.target.value)}
+        />
+      </label>
+
+      <label>
+        <span>
+          Deploy key{" "}
+          <span className="muted">(optional — pushed with the repo at session time if you opt in)</span>
+        </span>
+        <div className="row" style={{ gap: 6 }}>
+          <select
+            style={{ flex: 1 }}
+            value={r.deploy_key ?? ""}
+            onChange={(e) => set("deploy_key", e.target.value || undefined)}
+          >
+            <option value="">(none)</option>
+            {props.keys.map((k) => <option key={k.nickname} value={k.nickname}>{k.nickname}</option>)}
+          </select>
+          <button
+            type="button"
+            className="secondary"
+            title="Generate a new ed25519 deploy key"
+            onClick={() => setNewKeyModal(true)}
+          >+ New key</button>
+        </div>
+        {r.deploy_key && (
+          <div style={{ marginTop: 6 }}>
+            <button
+              type="button"
+              className="secondary"
+              style={{ fontSize: 11, padding: "2px 8px" }}
+              onClick={() => setShowPub((v) => !v)}
+            >{showPub ? "Hide public key" : "Show public key"}</button>
+            {showPub && (
+              <div
+                className="mono"
+                style={{
+                  marginTop: 6,
+                  padding: 8,
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+                {pubErr ? <span className="muted">{pubErr}</span>
+                  : pub
+                    ? pub
+                    : <span className="muted">loading…</span>}
+                {pub && (
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      style={{ fontSize: 10, padding: "1px 6px" }}
+                      onClick={() => { navigator.clipboard?.writeText(pub); }}
+                    >Copy</button>
+                    <span className="muted" style={{ fontSize: 10, marginLeft: 8 }}>
+                      Paste into the git host's deploy-keys settings.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </label>
+
+      <label>
         <span>Name</span>
         <input
           value={r.name}
           disabled={props.target.mode === "edit"}
-          placeholder="botdock-main"
-          onChange={(e) => set("name", e.target.value)}
+          placeholder={props.target.mode === "new" ? "auto-filled from URL" : "botdock-main"}
+          onChange={(e) => onNameChange(e.target.value)}
         />
       </label>
+
       <label>
-        <span>URL</span>
-        <input
-          value={r.url}
-          placeholder="git@github.com:owner/repo.git"
-          onChange={(e) => set("url", e.target.value)}
-        />
+        <span>
+          Ref <span className="muted">(branch / tag / SHA — optional)</span>
+          {probing && <span className="muted" style={{ marginLeft: 8, fontSize: 11 }}>probing…</span>}
+          {!probing && probeErr && (
+            <span className="muted" style={{ marginLeft: 8, fontSize: 11, color: "var(--warn)" }}>
+              probe failed — enter a ref manually
+            </span>
+          )}
+        </span>
+        {branches.length > 0 ? (
+          <select
+            value={refInBranches ? (r.ref ?? "") : "__custom__"}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__custom__") set("ref", r.ref ?? "");
+              else set("ref", v);
+            }}
+          >
+            {branches.map((b) => (
+              <option key={b} value={b}>
+                {b}{b === defaultBranch ? "  (default)" : ""}
+              </option>
+            ))}
+            <option value="__custom__">Custom (tag / SHA / other)…</option>
+          </select>
+        ) : null}
+        {(branches.length === 0 || !refInBranches) && (
+          <input
+            value={r.ref ?? ""}
+            placeholder={defaultBranch ? `default: ${defaultBranch}` : "main"}
+            onChange={(e) => set("ref", e.target.value)}
+          />
+        )}
       </label>
-      <label>
-        <span>Ref <span className="muted">(branch / tag / SHA — optional)</span></span>
-        <input
-          value={r.ref ?? ""}
-          placeholder="main"
-          onChange={(e) => set("ref", e.target.value)}
-        />
-      </label>
-      <label>
-        <span>Deploy key <span className="muted">(optional — pushed with the repo at session time if you opt in)</span></span>
-        <select value={r.deploy_key ?? ""} onChange={(e) => set("deploy_key", e.target.value || undefined)}>
-          <option value="">(none)</option>
-          {props.keys.map((k) => <option key={k.nickname} value={k.nickname}>{k.nickname}</option>)}
-        </select>
-      </label>
+
       <label>
         <span>Tags <span className="muted">(comma-separated)</span></span>
         <input
@@ -185,6 +383,103 @@ function GitRepoEditor(props: {
         <button onClick={submit} disabled={submitting || !r.name || !r.url}>
           {submitting ? "Saving…" : props.target.mode === "new" ? "Create" : "Save"}
         </button>
+      </div>
+
+      {newKeyModal && (
+        <NewKeyMiniModal
+          existing={props.keys}
+          onClose={() => setNewKeyModal(false)}
+          onCreated={async (nickname) => {
+            setNewKeyModal(false);
+            set("deploy_key", nickname);
+            await props.onKeysChanged();
+          }}
+        />
+      )}
+    </Modal>
+  );
+}
+
+/**
+ * Bite-sized key generator that re-uses `/api/keys` so the created key
+ * lands in the shared private-keys registry (same as the Keys page).
+ * Only covers the generate-ed25519 path — for imports the user still
+ * goes to Keys. Kept in this file because it's the git-repo editor's
+ * inline escape hatch.
+ */
+function NewKeyMiniModal(props: {
+  existing: KeyMeta[];
+  onClose: () => void;
+  onCreated: (nickname: string) => void | Promise<void>;
+}) {
+  const [nickname, setNickname] = useState("");
+  const [comment, setComment] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState("");
+
+  const taken = useMemo(
+    () => new Set(props.existing.map((k) => k.nickname)),
+    [props.existing],
+  );
+  const nameOk = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(nickname);
+  const nameClash = nickname && taken.has(nickname);
+
+  const submit = async () => {
+    setErr(""); setSubmitting(true);
+    try {
+      await api.createKey({
+        nickname,
+        comment: comment.trim() || `botdock:${nickname}`,
+      });
+      await props.onCreated(nickname);
+    } catch (e) {
+      setErr(String((e as Error).message ?? e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal title="New deploy key" onClose={props.onClose}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+        Generates a passphrase-less ed25519 key and adds it to your private
+        key registry. After it's created, paste the public key into the git
+        host's deploy-keys settings.
+      </div>
+      <label>
+        <span>Nickname</span>
+        <input
+          autoFocus
+          value={nickname}
+          placeholder="my-repo-deploy"
+          onChange={(e) => setNickname(e.target.value)}
+        />
+        {nickname && !nameOk && (
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+            letters/digits/<code>._-</code> only, max 64 chars
+          </div>
+        )}
+        {nameClash && (
+          <div className="muted" style={{ fontSize: 11, marginTop: 4, color: "var(--warn)" }}>
+            a key with this nickname already exists
+          </div>
+        )}
+      </label>
+      <label>
+        <span>Comment <span className="muted">(optional)</span></span>
+        <input
+          value={comment}
+          placeholder="botdock:<nickname>"
+          onChange={(e) => setComment(e.target.value)}
+        />
+      </label>
+      {err && <div className="error-banner">{err}</div>}
+      <div className="row" style={{ justifyContent: "flex-end", marginTop: 12, gap: 8 }}>
+        <button className="secondary" onClick={props.onClose}>Cancel</button>
+        <button
+          onClick={submit}
+          disabled={submitting || !nameOk || !!nameClash}
+        >{submitting ? "Generating…" : "Generate"}</button>
       </div>
     </Modal>
   );

@@ -184,6 +184,11 @@ export const api = {
     }),
   deleteGitRepo: (name: string) =>
     request<{ ok: true }>(`/api/resources/git-repo/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  probeGitRepo: (body: { url: string; deploy_key?: string }) =>
+    request<{ default_branch: string | null; branches: string[] }>(
+      "/api/resources/git-repo/probe",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   updateStatus: () => request<UpdateStatus>("/api/update/status"),
   installUpdate: () =>
     request<{ accepted: true; target: string }>("/api/update/install", { method: "POST" }),

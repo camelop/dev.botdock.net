@@ -10,6 +10,7 @@
 
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { DataDir, assertSafeName, readToml, writeToml } from "../storage/index.ts";
 import { keyExists } from "./keys.ts";
 
@@ -94,4 +95,79 @@ export function deleteGitRepo(dir: DataDir, name: string): void {
   const path = dir.gitRepoDir(name);
   if (!existsSync(path)) throw new Error(`git-repo not found: ${name}`);
   rmSync(path, { recursive: true, force: true });
+}
+
+export type GitRepoProbe = {
+  default_branch: string | null;
+  branches: string[];
+};
+
+/**
+ * Run `git ls-remote --symref <url>` to discover the default branch and
+ * all branch heads. If `deployKey` is supplied we select it via
+ * `GIT_SSH_COMMAND` so private repos probe without leaking to the user's
+ * default ssh-agent. Accepts new host keys on first contact — matches the
+ * ssh-config precedent in src/lib/sshconfig.ts.
+ */
+export function probeGitRepo(dir: DataDir, url: string, deployKey?: string): GitRepoProbe {
+  const trimmed = url.trim();
+  if (!trimmed) throw new Error("url required");
+  const env: Record<string, string> = { ...process.env as Record<string, string> };
+  if (deployKey) {
+    if (!keyExists(dir, deployKey)) {
+      throw new Error(`deploy_key not found: ${deployKey}`);
+    }
+    const keyPath = join(dir.keyDir(deployKey), "key");
+    env.GIT_SSH_COMMAND = [
+      "ssh",
+      "-i", keyPath,
+      "-o", "IdentitiesOnly=yes",
+      "-o", "StrictHostKeyChecking=accept-new",
+      "-o", "BatchMode=yes",
+    ].join(" ");
+  } else {
+    env.GIT_SSH_COMMAND = [
+      "ssh",
+      "-o", "StrictHostKeyChecking=accept-new",
+      "-o", "BatchMode=yes",
+    ].join(" ");
+  }
+  // Short-circuit any askpass prompt — probe should never hang on creds.
+  env.GIT_TERMINAL_PROMPT = "0";
+
+  const res = spawnSync("git", ["ls-remote", "--symref", trimmed], {
+    env,
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  if (res.error) throw res.error;
+  if ((res.status ?? -1) !== 0) {
+    const msg = (res.stderr ?? "").trim() || (res.stdout ?? "").trim() || `git ls-remote exited ${res.status}`;
+    throw new Error(msg);
+  }
+  return parseLsRemote(res.stdout ?? "");
+}
+
+function parseLsRemote(out: string): GitRepoProbe {
+  let defaultBranch: string | null = null;
+  const branches: string[] = [];
+  for (const raw of out.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("ref: ")) {
+      // "ref: refs/heads/<b>\tHEAD"
+      const m = line.match(/^ref:\s+refs\/heads\/(.+?)\s+HEAD$/);
+      if (m) defaultBranch = m[1]!;
+      continue;
+    }
+    // "<sha>\trefs/heads/<b>" — ignore tags and HEAD deref line.
+    const parts = line.split(/\s+/);
+    if (parts.length < 2) continue;
+    const ref = parts[1]!;
+    if (ref.startsWith("refs/heads/")) {
+      branches.push(ref.slice("refs/heads/".length));
+    }
+  }
+  branches.sort((a, b) => a.localeCompare(b));
+  return { default_branch: defaultBranch, branches };
 }
