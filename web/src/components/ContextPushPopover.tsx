@@ -479,6 +479,17 @@ function SkillBanner(props: {
         </div>
         <SkillAction status={status} busy={busy} onInstall={props.onInstall} />
       </div>
+      {status.state === "installed" && busy === "idle" && (
+        <div
+          className="muted"
+          style={{ fontSize: 11, marginTop: 8, lineHeight: 1.45 }}
+        >
+          In the session's Claude Code: run{" "}
+          <code className="mono">/reload-plugins</code> to pick up the skill,
+          then <code className="mono">/skills</code> to confirm{" "}
+          <span className="mono">botdock-context</span> is listed.
+        </div>
+      )}
       {err && (
         <div
           className="error-banner"
