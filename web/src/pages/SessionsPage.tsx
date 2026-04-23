@@ -2096,6 +2096,16 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
   // fresh handshake and re-measure its container — useful after modal
   // resizes that left the terminal drawn to stale dimensions.
   const [reloadKey, setReloadKey] = useState(0);
+  // ContextPushPopover plumbing. Declared here — ABOVE the isLive /
+  // portReady early-return branches further down — because hooks
+  // declared after those returns would be skipped on the provisioning
+  // render but called on the active render, which blows up with
+  // React #310 "Rendered more hooks than during the previous render"
+  // the moment the session flips status mid-mount. Bit us in v0.5.9
+  // when ContextPushPopover was first wired in; the symptom is a
+  // black screen right after "+ New session" that goes away on reload.
+  const contextBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
   // CSS zoom on the iframe scales the xterm content. Chrome/Safari/Edge
   // support this; Firefox ignores — acceptable. Persisted globally so
   // the user's preferred zoom sticks across reloads and sessions.
@@ -2185,9 +2195,6 @@ function ClaudeTerminal({ session, fillParent, notesToggle, inputToggle, fileBro
       ? { flex: 1, minHeight: 320, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" }
       // Legacy single-column modal: fixed height so the flow below still fits.
       : { height: 420, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#0a0c10", display: "flex", flexDirection: "column" };
-
-  const contextBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [contextOpen, setContextOpen] = useState(false);
 
   return (
     <>
