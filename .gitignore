@@ -17,6 +17,10 @@ dist-bin/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
+# Agent skills installed into this repo for dev — the canonical source
+# is the orphan `skill/botdock-context` branch, not files under main.
+.claude/skills/
+
 # BotDock runtime state written by the shim when a session runs in this repo
 .botdock/
 
