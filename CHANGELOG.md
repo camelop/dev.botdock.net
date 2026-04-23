@@ -4,6 +4,30 @@ Only user-visible changes. Latest first. Before v1.0.0, each minor
 version gets one summary entry here; for line-level detail, read the
 commit log between the two adjacent tags.
 
+## v0.6.0 — 2026-04-23
+
+- Curate reusable context — a new Context section in the nav lets you
+  register **git repos** (with optional deploy keys), stash **markdown
+  snippets** (coding style, house rules, docs), and bundle **arbitrary
+  directory trees** of config templates or samples. Anything you stash
+  here is ready to attach to a session later.
+- ＋Context on every session — pick what you want pushed into the
+  session's workdir and hit Push. For private repos, tick "include
+  deploy key" and the agent can clone without you pasting any
+  credentials.
+- `botdock-context` agent skill — teaches the session's Claude Code
+  agent where pushed resources live and how to use them (e.g. which
+  deploy key to clone with). Install / Update it from the ＋Context
+  popover.
+- Managed `local` machine — the reserved "local" entry in Machines is
+  now a first-class affordance: Enable it to point a session at your
+  BotDock host.
+- Multi-tab workspace is smoother — the current session now lives in
+  the URL, so separate tabs stay on separate sessions across reloads.
+- Fixes: action-bar button heights align despite emoji font variance;
+  git-repo editor's Custom ref stays custom once you pick it;
+  ＋Context popover's form layout no longer squashed by global CSS.
+
 ## v0.5.0 — 2026-04-22
 
 - One-click self-upgrade from the topbar — checks GitHub, installs in place, rolls over without dropping your `serve` terminal. Popover shows the real release notes and the `vA → vB` pair.
