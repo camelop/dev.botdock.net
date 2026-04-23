@@ -83,9 +83,20 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
     // launcher itself now stands up the per-session ttyd + forward
     // before flipping status to "active", so UI observers can rely on
     // "status=active ⇒ terminal ready".
-    launchSession(dir, s.id, forwardManager)
-      .then(() => poller.watch(s.id))
-      .catch((err) => console.error(`[sessions] launch ${s.id} failed:`, err));
+    //
+    // The setTimeout wrap is load-bearing: `launchSession` is `async`
+    // but has no `await` before its first `sshExec` (spawnSync), so
+    // calling it synchronously from here would block the event loop
+    // — and therefore this handler's response — for the full ssh
+    // bootstrap (up to 60s). Deferring to a macrotask lets us return
+    // the 201 first, so the frontend's POST completes immediately and
+    // the new-session modal doesn't freeze while the remote tmux is
+    // being set up.
+    setTimeout(() => {
+      launchSession(dir, s.id, forwardManager)
+        .then(() => poller.watch(s.id))
+        .catch((err) => console.error(`[sessions] launch ${s.id} failed:`, err));
+    }, 0);
     return json(s, { status: 201 });
   });
 
