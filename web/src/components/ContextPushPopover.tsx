@@ -4,6 +4,7 @@ import { api, type FileBundleMeta, type GitRepoResource, type MarkdownMeta, type
 type RepoPicks = Record<string, { selected: boolean; includeKey: boolean }>;
 type MarkdownPicks = Record<string, boolean>;
 type BundlePicks = Record<string, boolean>;
+type SkillStatus = Awaited<ReturnType<typeof api.getSessionSkillStatus>>;
 
 type PushResult = Awaited<ReturnType<typeof api.pushSessionContext>>;
 
@@ -56,6 +57,17 @@ export function ContextPushPopover(props: {
   const [err, setErr] = useState("");
   const [result, setResult] = useState<PushResult | null>(null);
 
+  // Skill install state. "checking" = probe in flight; after that the
+  // backend-reported state drives UI. A separate "installing" | "updating"
+  // flag rides on top while a POST is in flight so the button can show
+  // a spinner.
+  const [skillStatus, setSkillStatus] = useState<SkillStatus>({
+    state: "checking",
+    target_path: "",
+  });
+  const [skillBusy, setSkillBusy] = useState<"idle" | "installing" | "updating">("idle");
+  const [skillErr, setSkillErr] = useState("");
+
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Dismissal: outside-click + Escape. Mirrors the UpdatePopover pattern
@@ -99,6 +111,44 @@ export function ContextPushPopover(props: {
       });
     return () => { cancelled = true; };
   }, []);
+
+  // Probe the skill install state once when the popover opens. We
+  // intentionally don't poll — the user is looking at a short-lived
+  // affordance and any install action will refresh explicitly.
+  useEffect(() => {
+    let cancelled = false;
+    api.getSessionSkillStatus(session.id)
+      .then((s) => { if (!cancelled) setSkillStatus(s); })
+      .catch((e) => {
+        if (!cancelled) {
+          setSkillStatus({
+            state: "error",
+            target_path: "",
+            error: String((e as Error).message ?? e),
+          });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [session.id]);
+
+  const installOrUpdateSkill = async () => {
+    const updating = skillStatus.state === "update_available";
+    setSkillBusy(updating ? "updating" : "installing");
+    setSkillErr("");
+    try {
+      const r = await api.installSessionSkill(session.id);
+      setSkillStatus({
+        state: "installed",
+        local_sha: r.local_sha,
+        remote_sha: r.remote_sha,
+        target_path: r.target_path,
+      });
+    } catch (e) {
+      setSkillErr(String((e as Error).message ?? e));
+    } finally {
+      setSkillBusy("idle");
+    }
+  };
 
   const toggleSelected = (name: string) => {
     setPicks((cur) => {
@@ -199,6 +249,15 @@ export function ContextPushPopover(props: {
       <div className="mono muted" style={{ fontSize: 11, marginBottom: 10 }}>
         {session.workdir}/.botdock/context/
       </div>
+
+      {!result && (
+        <SkillBanner
+          status={skillStatus}
+          busy={skillBusy}
+          err={skillErr}
+          onInstall={installOrUpdateSkill}
+        />
+      )}
 
       {result ? (
         <PushResultView result={result} onClose={onClose} />
@@ -348,6 +407,150 @@ function PickerView(props: {
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Top-of-popover banner advertising the `botdock-context` Claude Agent
+ * Skill. Has four display states:
+ *   checking → skeleton
+ *   not_installed → prominent "Install skill" CTA + explanation
+ *   installed → compact "✅ installed (<sha>)" + subtle "Reinstall"
+ *   update_available → warn-accented "Update available" + prominent CTA
+ *   error → red banner with retry affordance (just re-run install)
+ *
+ * The skill itself is a one-file repo on an orphan branch of the main
+ * BotDock repo; install = `git clone --branch skill/botdock-context`
+ * into `<workdir>/.claude/skills/botdock-context/`. Keeping the .git
+ * dir in place is what lets us detect "update available" via
+ * `git ls-remote`.
+ */
+function SkillBanner(props: {
+  status: SkillStatus;
+  busy: "idle" | "installing" | "updating";
+  err: string;
+  onInstall: () => void;
+}) {
+  const { status, busy, err } = props;
+  const short = (sha?: string) => (sha ? sha.slice(0, 7) : "");
+
+  // Pick the visual tone: neutral grey when absent, success green when
+  // installed, warn amber when update available or action in flight.
+  const toneBg =
+    status.state === "update_available" || busy !== "idle"
+      ? "rgba(242,185,75,0.08)"
+      : status.state === "installed"
+        ? "rgba(111,196,130,0.08)"
+        : status.state === "error"
+          ? "rgba(228,92,92,0.08)"
+          : "rgba(255,255,255,0.02)";
+  const toneBorder =
+    status.state === "update_available" || busy !== "idle"
+      ? "rgba(242,185,75,0.5)"
+      : status.state === "installed"
+        ? "rgba(111,196,130,0.5)"
+        : status.state === "error"
+          ? "rgba(228,92,92,0.5)"
+          : "var(--border)";
+
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: "10px 12px",
+        border: `1px solid ${toneBorder}`,
+        background: toneBg,
+        borderRadius: 6,
+        fontSize: 12,
+        lineHeight: 1.4,
+      }}
+    >
+      <div
+        className="row"
+        style={{ justifyContent: "space-between", gap: 8, alignItems: "center" }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            botdock-context skill
+          </div>
+          <div className="muted" style={{ fontSize: 11 }}>
+            <SkillBody status={status} busy={busy} short={short} />
+          </div>
+        </div>
+        <SkillAction status={status} busy={busy} onInstall={props.onInstall} />
+      </div>
+      {err && (
+        <div
+          className="error-banner"
+          style={{ marginTop: 8, fontSize: 11 }}
+          title={err}
+        >{err.slice(0, 160)}</div>
+      )}
+    </div>
+  );
+}
+
+function SkillBody(props: {
+  status: SkillStatus;
+  busy: "idle" | "installing" | "updating";
+  short: (sha?: string) => string;
+}) {
+  const { status, busy, short } = props;
+  if (busy === "installing") return <>Installing via git clone…</>;
+  if (busy === "updating")   return <>Fetching update…</>;
+  if (status.state === "checking") return <>Checking install state…</>;
+  if (status.state === "not_installed") {
+    return <>Not yet installed. Click Install to git-clone it into <code className="mono">./.claude/skills/</code> — teaches the target agent how to use pushed resources.</>;
+  }
+  if (status.state === "error") {
+    return <>Status check failed. You can still try Install — it's idempotent.</>;
+  }
+  const localShort = short(status.local_sha);
+  const remoteShort = short(status.remote_sha);
+  if (status.state === "update_available") {
+    return <>Installed @ <span className="mono">{localShort}</span> · update available → <span className="mono">{remoteShort}</span></>;
+  }
+  // installed
+  const note = status.remote_unreachable
+    ? " · remote unreachable"
+    : localShort ? ` @ ${localShort}` : "";
+  return (
+    <>
+      <span style={{ color: "var(--ok)" }}>✓</span>{" "}
+      Installed<span className="mono">{note}</span>
+    </>
+  );
+}
+
+function SkillAction(props: {
+  status: SkillStatus;
+  busy: "idle" | "installing" | "updating";
+  onInstall: () => void;
+}) {
+  const { status, busy, onInstall } = props;
+  if (busy !== "idle") {
+    return (
+      <button className="secondary action-bar-btn" disabled>
+        {busy === "installing" ? "Installing…" : "Updating…"}
+      </button>
+    );
+  }
+  if (status.state === "checking") {
+    return (
+      <button className="secondary action-bar-btn" disabled>Checking…</button>
+    );
+  }
+  if (status.state === "not_installed" || status.state === "error") {
+    return <button onClick={onInstall}>Install skill</button>;
+  }
+  if (status.state === "update_available") {
+    return <button onClick={onInstall}>Update</button>;
+  }
+  // installed
+  return (
+    <button className="secondary action-bar-btn" onClick={onInstall}>
+      Reinstall
+    </button>
   );
 }
 

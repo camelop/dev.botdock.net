@@ -408,6 +408,24 @@ export const api = {
     request<{ turns: Array<Record<string, unknown>> }>(
       `/api/sessions/${encodeURIComponent(id)}/recent-turns?limit=${limit}`,
     ),
+  getSessionSkillStatus: (id: string) =>
+    request<{
+      state: "checking" | "not_installed" | "installed" | "update_available" | "error";
+      local_sha?: string;
+      remote_sha?: string;
+      target_path: string;
+      error?: string;
+      remote_unreachable?: boolean;
+    }>(`/api/sessions/${encodeURIComponent(id)}/context/skill-status`),
+  installSessionSkill: (id: string) =>
+    request<{
+      action: "installed" | "updated";
+      local_sha: string;
+      remote_sha?: string;
+      target_path: string;
+    }>(`/api/sessions/${encodeURIComponent(id)}/context/skill-install`, {
+      method: "POST",
+    }),
   pushSessionContext: (id: string, body: {
     git_repos: Array<{ name: string; include_deploy_key: boolean }>;
     markdowns: Array<{ name: string }>;

@@ -30,6 +30,7 @@ import {
 import type { SessionPoller } from "../../domain/session-poller.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
 import { pushContext, type GitRepoPick, type MarkdownPick, type FileBundlePick } from "../../domain/context-push.ts";
+import { getSkillStatus, installSkill } from "../../domain/skill-install.ts";
 
 export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller, forwardManager: ForwardManager): void {
   router.get("/api/sessions", () => json(listSessions(dir)));
@@ -265,6 +266,32 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
         markdowns: mdPicks.map((p) => ({ name: p.name })),
         file_bundles: bundlePicks.map((p) => ({ name: p.name })),
       });
+      return json(result);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
+
+  // Inspect the botdock-context skill's install state inside the session's
+  // workdir. Used by the ＋Context popover to decide whether to prompt
+  // the user to install / update.
+  router.get("/api/sessions/:id/context/skill-status", async ({ params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    try {
+      const status = await getSkillStatus(dir, params.id!);
+      return json(status);
+    } catch (e) {
+      throw new HttpError(500, (e as Error).message || String(e));
+    }
+  });
+
+  // Install (or update) the botdock-context skill via git clone over ssh.
+  // Idempotent: `installed` on first run, `updated` on subsequent runs
+  // when the remote branch has new commits.
+  router.post("/api/sessions/:id/context/skill-install", async ({ params }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    try {
+      const result = await installSkill(dir, params.id!);
       return json(result);
     } catch (e) {
       throw new HttpError(400, (e as Error).message || String(e));
