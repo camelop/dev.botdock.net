@@ -165,23 +165,24 @@ export async function pushContext(
     throw new Error("nothing selected to push");
   }
 
-  // Resolve ~ in workdir server-side, ensure the context root exists with
-  // mode 700, and print the absolute path back so we can feed it to rsync.
-  const prep = `
-set -euo pipefail
-WORKDIR=${shSingleQuote(session.workdir)}
-case "$WORKDIR" in
-  "~")   WORKDIR="$HOME" ;;
-  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
-esac
-BASE="$WORKDIR/.botdock/context"
-mkdir -p "$BASE"
-chmod 700 "$BASE" || true
-echo "BOTDOCK_CONTEXT_BASE:$BASE"
-`;
-  const prepRes = sshExec(dir, machine, "bash -s", prep, 30_000);
+  // Pre-step ssh: resolve ~ in workdir, auto-install rsync if missing (same
+  // pattern as ttyd/filebrowser/code-server), and create the context root
+  // at mode 700. All diagnostics go to stderr so the BOTDOCK_CONTEXT_BASE
+  // marker on stdout stays easy to parse. Writes to stderr are echoed back
+  // on errors for the UI to show.
+  const prep = buildPrepScript(session.workdir);
+  // Bumped from 30s → 180s: apt-get install rsync on a slow mirror can
+  // easily exceed 30s. When rsync is already present this just returns
+  // immediately, so the higher ceiling only costs us on first push per
+  // machine.
+  const prepRes = sshExec(dir, machine, "bash -s", prep, 180_000);
   if (prepRes.code !== 0) {
-    throw new Error(`remote prep failed (ssh exit ${prepRes.code}): ${prepRes.stderr.trim()}`);
+    const hint = prepRes.stderr.includes("passwordless sudo unavailable")
+      ? ` — configure passwordless sudo for rsync install, or run \`apt install rsync\` (or equivalent) on "${machine.name}" once.`
+      : "";
+    throw new Error(
+      `remote prep failed on "${machine.name}" (ssh exit ${prepRes.code}): ${prepRes.stderr.trim() || prepRes.stdout.trim()}${hint}`,
+    );
   }
   const marker = "BOTDOCK_CONTEXT_BASE:";
   const line = prepRes.stdout.split("\n").find((l) => l.startsWith(marker));
@@ -247,6 +248,91 @@ echo "BOTDOCK_CONTEXT_BASE:$BASE"
   });
 
   return { pushed, remote_base: remoteBase, transferred_files: relPaths.length };
+}
+
+/**
+ * Build the bash prep script that runs on the remote before rsync. Does:
+ *   1. Resolves ~ in workdir to $HOME.
+ *   2. Ensures rsync is installed — detects the package manager and auto-
+ *      installs if missing (apt/dnf/yum/apk/brew), using sudo -n when not
+ *      root. Mirrors the ttyd/filebrowser/code-server install idiom.
+ *   3. Creates `<workdir>/.botdock/context/` at mode 700.
+ *   4. Prints `BOTDOCK_CONTEXT_BASE:<abspath>` on stdout for the caller.
+ *
+ * All user-facing diagnostics go to stderr so stdout is just the marker.
+ * Any failure exits non-zero with a message the daemon surfaces verbatim.
+ */
+function buildPrepScript(workdir: string): string {
+  return `
+set -euo pipefail
+
+# --- 1. ensure rsync is installed on the remote ---------------------------
+ensure_rsync() {
+  if command -v rsync >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Resolve sudo strategy. Root needs no sudo; otherwise we require
+  # passwordless sudo (-n) and bail early with a clear message if that's
+  # not configured. Avoids hanging the ssh session on a password prompt.
+  SUDO=""
+  if [ "$(id -u)" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      SUDO="sudo -n"
+    else
+      echo "rsync missing and passwordless sudo unavailable" >&2
+      return 1
+    fi
+  fi
+
+  echo "[botdock] rsync not found — installing via detected package manager…" >&2
+  # Try each package manager in preference order. The update-then-install
+  # apt form is split so an already-fresh cache doesn't double the latency.
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y rsync >&2 \\
+      || { $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 \\
+           && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y rsync >&2; }
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y rsync >&2
+  elif command -v yum >/dev/null 2>&1; then
+    $SUDO yum install -y rsync >&2
+  elif command -v apk >/dev/null 2>&1; then
+    $SUDO apk add --no-cache rsync >&2
+  elif command -v pacman >/dev/null 2>&1; then
+    $SUDO pacman -Sy --noconfirm rsync >&2
+  elif command -v zypper >/dev/null 2>&1; then
+    $SUDO zypper install -y rsync >&2
+  elif command -v brew >/dev/null 2>&1; then
+    # brew refuses to run as root; no sudo here regardless.
+    brew install rsync >&2
+  else
+    echo "no known package manager (apt/dnf/yum/apk/pacman/zypper/brew) — install rsync manually" >&2
+    return 1
+  fi
+
+  # Some package managers return 0 even when the target wasn't actually
+  # installed (e.g. network hiccup on a proxy cache). Re-probe to catch
+  # that before we return success.
+  if ! command -v rsync >/dev/null 2>&1; then
+    echo "package manager ran but rsync is still not on PATH" >&2
+    return 1
+  fi
+  echo "[botdock] rsync installed." >&2
+}
+
+ensure_rsync
+
+# --- 2. resolve workdir + create context root -----------------------------
+WORKDIR=${shSingleQuote(workdir)}
+case "$WORKDIR" in
+  "~")   WORKDIR="$HOME" ;;
+  "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+BASE="$WORKDIR/.botdock/context"
+mkdir -p "$BASE"
+chmod 700 "$BASE" || true
+echo "BOTDOCK_CONTEXT_BASE:$BASE"
+`;
 }
 
 /** Yield absolute paths of every regular file under `root`. */
