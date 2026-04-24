@@ -168,10 +168,88 @@ EC=$?
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"
 `;
 
+/**
+ * Remote shim for `codex`: interactive TUI running OpenAI's codex CLI. Same
+ * shape as the claude-code shim — rely on `tmux pipe-pane` to mirror output
+ * to raw.log, load the user's login dotfiles so npm-installed global bins
+ * are on PATH, and emit breadcrumbs via events.ndjson. Codex persists its
+ * own conversation state under $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl
+ * (default $CODEX_HOME=~/.codex); P1 will wire a discovery helper like the
+ * claude-code branch does. For P0 we just launch the binary and let the
+ * existing ttyd + raw.log plumbing carry the session.
+ */
+const CODEX_SHIM = String.raw`#!/bin/sh
+# No "set -u" — sourcing a user's .bashrc / .zshrc with strict unbound-var
+# checking routinely blows up the shim. Same decision as the claude-code one.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+EVENTS="$DIR/events.ndjson"
+exec 2>>"$DIR/shim.stderr"
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"shim_boot\",\"agent\":\"codex\",\"pid\":$$}" >> "$EVENTS"
+
+# Same PATH priming as the claude-code shim: npm / bun / cargo global
+# installs land under these paths and login-shell dotfiles add them — which
+# ssh non-interactive shells miss by default.
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+  if [ -f "$f" ]; then
+    # shellcheck disable=SC1090
+    . "$f" >/dev/null 2>&1 || true
+  fi
+done
+
+if ! command -v codex >/dev/null 2>&1; then
+  ESCAPED_PATH=$(printf '%s' "$PATH" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+  printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"failed_to_start\",\"error\":\"codex CLI not found\",\"path\":\"$ESCAPED_PATH\"}" >> "$EVENTS"
+  exit 127
+fi
+
+CODEX_BIN=$(command -v codex)
+ESCAPED_BIN=$(printf '%s' "$CODEX_BIN" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"pre_codex\",\"bin\":\"$ESCAPED_BIN\"}" >> "$EVENTS"
+
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"codex\"}" >> "$EVENTS"
+
+PROMPT=""
+SKIP_TRUST=""
+RESUME_UUID=""
+# shellcheck disable=SC1091
+. "$DIR/cmd.sh"
+
+# SKIP_TRUST maps to codex's global --dangerously-bypass-approvals-and-sandbox
+# (alias --yolo). Matches the semantic user expectation set by cc_skip_trust:
+# the agent runs without per-tool approval prompts inside a workdir the user
+# has decided is OK to auto-accept in. Softer tiers (--full-auto, --sandbox)
+# aren't exposed in P0 — user can plumb them later via a launch_command
+# override like the claude-code path has.
+FLAGS=""
+if [ -n "$SKIP_TRUST" ]; then
+  FLAGS="--dangerously-bypass-approvals-and-sandbox"
+fi
+
+# codex has three invocation shapes:
+#   codex                  — interactive TUI, blank session
+#   codex "<prompt>"       — interactive TUI, seeded with initial prompt
+#   codex resume <uuid>    — attach to a previously-persisted rollout
+# Unquoted $FLAGS expansion is intentional so the flag word-splits into argv
+# when set, and disappears cleanly when empty.
+if [ -n "$RESUME_UUID" ]; then
+  codex $FLAGS resume "$RESUME_UUID"
+elif [ -n "$PROMPT" ]; then
+  codex $FLAGS "$PROMPT"
+else
+  codex $FLAGS
+fi
+EC=$?
+printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"exited\",\"exit_code\":$EC}" >> "$EVENTS"
+`;
+
 function shimFor(kind: AgentKind): string {
   switch (kind) {
     case "generic-cmd": return GENERIC_CMD_SHIM;
     case "claude-code": return CLAUDE_CODE_SHIM;
+    case "codex":       return CODEX_SHIM;
   }
 }
 
@@ -183,15 +261,33 @@ function shimFor(kind: AgentKind): string {
 export function buildCmdB64(
   kind: AgentKind,
   cmd: string,
-  opts?: { skipTrust?: boolean; resumeUuid?: string; launchCommand?: string; agentTeams?: boolean },
+  opts?: {
+    skipTrust?: boolean;
+    resumeUuid?: string;
+    launchCommand?: string;
+    agentTeams?: boolean;
+    /** codex-specific: maps to --dangerously-bypass-approvals-and-sandbox. */
+    codexSkipTrust?: boolean;
+    /** codex-specific: maps to `codex resume <uuid>`. */
+    codexResumeUuid?: string;
+  },
 ): string {
-  const content = kind === "claude-code"
-    ? `PROMPT=${shSingleQuote(cmd)}\n`
+  let content: string;
+  if (kind === "claude-code") {
+    content =
+      `PROMPT=${shSingleQuote(cmd)}\n`
       + `SKIP_TRUST=${opts?.skipTrust ? "1" : ""}\n`
       + `RESUME_UUID=${shSingleQuote(opts?.resumeUuid ?? "")}\n`
       + `LAUNCH_CMD=${shSingleQuote(opts?.launchCommand ?? "")}\n`
-      + `AGENT_TEAMS=${opts?.agentTeams ? "1" : ""}\n`
-    : cmd;
+      + `AGENT_TEAMS=${opts?.agentTeams ? "1" : ""}\n`;
+  } else if (kind === "codex") {
+    content =
+      `PROMPT=${shSingleQuote(cmd)}\n`
+      + `SKIP_TRUST=${opts?.codexSkipTrust ? "1" : ""}\n`
+      + `RESUME_UUID=${shSingleQuote(opts?.codexResumeUuid ?? "")}\n`;
+  } else {
+    content = cmd;
+  }
   return Buffer.from(content, "utf8").toString("base64");
 }
 
@@ -217,9 +313,13 @@ export function provisioningScript(opts: {
   const wq = shDouble(workdir);
   const tq = shDouble(tmuxSession);
   const shim = shimFor(agentKind);
-  const pipePane = agentKind === "claude-code"
-    ? `tmux pipe-pane -t "$TMUX_NAME" -o "cat >> $SDIR/raw.log"`
-    : `# generic-cmd shim redirects to raw.log itself; pipe-pane skipped.`;
+  // Interactive agents (claude-code, codex) render their own TUI and can't
+  // self-redirect stdio without losing the TTY — pipe-pane is what gets the
+  // scrollback into raw.log. generic-cmd's shim already writes to raw.log
+  // directly, so piping would duplicate output.
+  const pipePane = agentKind === "generic-cmd"
+    ? `# generic-cmd shim redirects to raw.log itself; pipe-pane skipped.`
+    : `tmux pipe-pane -t "$TMUX_NAME" -o "cat >> $SDIR/raw.log"`;
 
   return String.raw`#!/bin/bash
 set -euo pipefail

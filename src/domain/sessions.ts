@@ -10,14 +10,14 @@ export type SessionStatus =
   | "exited"
   | "failed_to_start";
 
-export type AgentKind = "generic-cmd" | "claude-code";
+export type AgentKind = "generic-cmd" | "claude-code" | "codex";
 
 export type Session = {
   id: string;
   machine: string;         // machines/<name>
   workdir: string;         // absolute path on the remote
   agent_kind: AgentKind;
-  cmd: string;             // shell command line for generic-cmd; stub for claude-code
+  cmd: string;             // shell cmd for generic-cmd; initial prompt for claude-code / codex
   tmux_session: string;    // e.g. "botdock-<id>"
   status: SessionStatus;
   created_at: string;
@@ -94,6 +94,23 @@ export type Session = {
   /** For claude-code: export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 before
    * launching claude. Opt-in; default unset behaves identically to before. */
   cc_agent_teams?: boolean;
+  /** For codex: absolute path on remote to the codex rollout jsonl
+   * (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl). Populated by the poller
+   * once it locates the file the current `codex` process opened. */
+  codex_session_file?: string;
+  /** For codex: the session UUID parsed out of the rollout filename. */
+  codex_session_uuid?: string;
+  /** For codex: if true, the shim launches codex with
+   *  --dangerously-bypass-approvals-and-sandbox (aka --yolo) so the agent
+   *  can work uninterrupted inside the session's workdir. Opt-in; mirrors
+   *  cc_skip_trust's semantics for the codex sandbox/approvals stack. */
+  codex_skip_trust?: boolean;
+  /** For codex: if set, the shim runs `codex resume <uuid>` to continue a
+   *  prior rollout on the remote instead of starting a fresh conversation.
+   *  Currently unused in P0 (UI doesn't yet offer the resume picker for
+   *  codex); the field exists so P1 can switch it on without another
+   *  schema change. */
+  codex_resume_uuid?: string;
 };
 
 export type SessionEvent = {
@@ -168,6 +185,8 @@ export function createSessionRecord(
     cc_resume_uuid?: string;
     launch_command?: string;
     cc_agent_teams?: boolean;
+    codex_skip_trust?: boolean;
+    codex_resume_uuid?: string;
   },
 ): Session {
   const id = newSessionId();
@@ -186,6 +205,8 @@ export function createSessionRecord(
     ...(args.cc_resume_uuid ? { cc_resume_uuid: args.cc_resume_uuid } : {}),
     ...(args.launch_command && args.launch_command.trim() ? { launch_command: args.launch_command.trim() } : {}),
     ...(args.cc_agent_teams ? { cc_agent_teams: true } : {}),
+    ...(args.codex_skip_trust ? { codex_skip_trust: true } : {}),
+    ...(args.codex_resume_uuid ? { codex_resume_uuid: args.codex_resume_uuid } : {}),
   };
   const p = paths(dir, id);
   mkdirSync(p.base, { recursive: true });

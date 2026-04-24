@@ -39,6 +39,15 @@ export type SessionDraft = {
   /** Advanced: opt into CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in the
    * remote shim before launching claude. */
   cc_agent_teams: boolean;
+  /** codex: auto-approve everything — maps to
+   *  `--dangerously-bypass-approvals-and-sandbox` (alias --yolo). Mirrors
+   *  the semantic of cc_skip_trust for the codex approvals/sandbox stack. */
+  codex_skip_trust: boolean;
+  /** codex: if set, the shim runs `codex resume <uuid>` rather than a
+   *  fresh conversation. Not surfaced in the New Session modal yet —
+   *  field exists so P1 can switch on the resume picker without a
+   *  schema change. */
+  codex_resume_uuid?: string;
 };
 
 const TRUST_PREF_KEY = "botdock:cc-skip-trust";
@@ -47,6 +56,17 @@ function loadTrustPref(): boolean {
 }
 function saveTrustPref(v: boolean): void {
   try { localStorage.setItem(TRUST_PREF_KEY, v ? "1" : "0"); } catch {}
+}
+
+// Codex has its own "yolo" toggle (--dangerously-bypass-approvals-and-sandbox)
+// with different semantics from CC's trust dialog, so we persist the user's
+// last choice separately rather than conflating the two defaults.
+const CODEX_TRUST_PREF_KEY = "botdock:codex-skip-trust";
+function loadCodexTrustPref(): boolean {
+  try { return localStorage.getItem(CODEX_TRUST_PREF_KEY) === "1"; } catch { return false; }
+}
+function saveCodexTrustPref(v: boolean): void {
+  try { localStorage.setItem(CODEX_TRUST_PREF_KEY, v ? "1" : "0"); } catch {}
 }
 
 // Terminal content zoom is a single global preference — setting it in
@@ -119,6 +139,7 @@ export function freshDraft(machines: Machine[]): SessionDraft {
     cc_skip_trust: loadTrustPref(),
     launch_command: "",
     cc_agent_teams: false,
+    codex_skip_trust: loadCodexTrustPref(),
   };
 }
 
@@ -311,6 +332,7 @@ export function NewSessionModal(props: {
     setSubmitting(true);
     try {
       if (draft.agent_kind === "claude-code") saveTrustPref(draft.cc_skip_trust);
+      if (draft.agent_kind === "codex")       saveCodexTrustPref(draft.codex_skip_trust);
       const s = await api.createSession(draft);
       await props.onDone(s.id);
     } catch (e) {
@@ -366,14 +388,14 @@ export function NewSessionModal(props: {
 
       {!draft.cc_resume_uuid && (
         <label>
-          <span>{draft.agent_kind === "claude-code" ? "Initial prompt (optional)" : "Command"}</span>
+          <span>{draft.agent_kind === "generic-cmd" ? "Command" : "Initial prompt (optional)"}</span>
           <textarea
             rows={4}
             value={draft.cmd}
             onChange={(e) => patch({ cmd: e.target.value })}
-            placeholder={draft.agent_kind === "claude-code"
-              ? "e.g. Explain this repo's README"
-              : 'echo "hello"; sleep 1'}
+            placeholder={draft.agent_kind === "generic-cmd"
+              ? 'echo "hello"; sleep 1'
+              : "e.g. Explain this repo's README"}
           />
         </label>
       )}
@@ -382,7 +404,9 @@ export function NewSessionModal(props: {
           ? (draft.cc_resume_uuid
             ? "Resuming an existing conversation — BotDock runs `claude --resume <uuid>` in a fresh tmux."
             : "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote.")
-          : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
+          : draft.agent_kind === "codex"
+            ? "Runs the `codex` CLI inside tmux. Leave the prompt blank to start empty. Requires `codex` installed and authenticated on the remote (OPENAI_API_KEY or `codex login`)."
+            : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
       {draft.agent_kind === "claude-code" && (
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8 }}>
@@ -404,6 +428,27 @@ export function NewSessionModal(props: {
           </label>
         </div>
       )}
+      {draft.agent_kind === "codex" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8 }}>
+          <input
+            id="codex-skip-trust"
+            type="checkbox"
+            checked={draft.codex_skip_trust}
+            onChange={(e) => patch({ codex_skip_trust: e.target.checked })}
+            style={{ width: 16, height: 16, marginTop: 2, cursor: "pointer" }}
+          />
+          <label
+            htmlFor="codex-skip-trust"
+            style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0, cursor: "pointer", lineHeight: 1.5 }}
+          >
+            Bypass approvals + sandbox (maps to{" "}
+            <code className="mono">--dangerously-bypass-approvals-and-sandbox</code>{" "}
+            aka <code className="mono">--yolo</code>). The agent runs without per-tool
+            confirmation prompts in the session's workdir. Only opt in when you trust
+            both the workdir and the model's current instructions.
+          </label>
+        </div>
+      )}
       <AdvancedSessionOptions
         draft={draft}
         onLaunchCommand={(v) => patch({ launch_command: v })}
@@ -413,7 +458,7 @@ export function NewSessionModal(props: {
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
         <button className="secondary" onClick={props.onCancel}>Cancel (keep draft)</button>
         <button
-          disabled={submitting || !draft.machine || !draft.workdir || (draft.agent_kind !== "claude-code" && !draft.cmd)}
+          disabled={submitting || !draft.machine || !draft.workdir || (draft.agent_kind === "generic-cmd" && !draft.cmd)}
           onClick={submit}
         >Create &amp; launch</button>
       </div>
@@ -665,7 +710,8 @@ function ResumeRow({ active, onClick, title, subtitle, badge }: {
 function AgentKindPicker({ value, onChange }: { value: AgentKind; onChange: (v: AgentKind) => void }) {
   const kinds: Array<{ id: AgentKind; label: string; disabled?: boolean; hint?: string }> = [
     { id: "generic-cmd", label: "Generic command", hint: "any shell command inside tmux" },
-    { id: "claude-code", label: "Claude Code", hint: "interactive `claude` CLI; initial prompt optional" },
+    { id: "claude-code", label: "Claude Code",     hint: "interactive `claude` CLI; initial prompt optional" },
+    { id: "codex",       label: "Codex",           hint: "interactive `codex` CLI (OpenAI); initial prompt optional" },
   ];
   return (
     <div style={{ marginBottom: 10 }}>

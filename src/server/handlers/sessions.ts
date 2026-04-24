@@ -75,16 +75,20 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       cc_resume_uuid?: string;
       launch_command?: string;
       cc_agent_teams?: boolean;
+      codex_skip_trust?: boolean;
+      codex_resume_uuid?: string;
     }>(req);
     for (const k of ["machine", "workdir", "agent_kind"] as const) {
       if (!body[k]) throw new HttpError(400, `${k} required`);
     }
-    if (body.agent_kind !== "generic-cmd" && body.agent_kind !== "claude-code") {
+    if (body.agent_kind !== "generic-cmd"
+        && body.agent_kind !== "claude-code"
+        && body.agent_kind !== "codex") {
       throw new HttpError(400, "unknown agent_kind");
     }
     // cmd is the shell command for generic-cmd (required) and the initial
-    // prompt for claude-code (optional — empty means open claude with no
-    // preloaded message; fully optional when cc_resume_uuid is set).
+    // prompt for claude-code / codex (optional — empty means open the TUI
+    // with no preloaded message; fully optional when a resume UUID is set).
     if (body.agent_kind === "generic-cmd" && !body.cmd) {
       throw new HttpError(400, "cmd required");
     }
@@ -103,6 +107,8 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       cc_resume_uuid: body.cc_resume_uuid || undefined,
       launch_command: body.launch_command || undefined,
       cc_agent_teams: !!body.cc_agent_teams,
+      codex_skip_trust: !!body.codex_skip_trust,
+      codex_resume_uuid: body.codex_resume_uuid || undefined,
     });
     // Launch asynchronously so the HTTP request returns quickly. The
     // launcher itself now stands up the per-session ttyd + forward

@@ -49,6 +49,8 @@ export async function launchSession(
     resumeUuid: s.cc_resume_uuid,
     launchCommand: s.launch_command,
     agentTeams: s.cc_agent_teams,
+    codexSkipTrust: s.codex_skip_trust,
+    codexResumeUuid: s.codex_resume_uuid,
   });
   const bootstrap = provisioningScript({
     workdir: s.workdir,
@@ -75,7 +77,10 @@ export async function launchSession(
   // Stand up the per-session ttyd + forward BEFORE flipping status. If this
   // fails we still flip to active (the session container is alive) but
   // record the error in the event stream so the UI can flag it.
-  if (s.agent_kind === "claude-code" && forwardManager) {
+  // Interactive agents (claude-code, codex) render their own TUI in the
+  // tmux pane; ttyd surfaces that pane through the browser. generic-cmd
+  // opts out — it's batch-style and the raw.log view is enough.
+  if ((s.agent_kind === "claude-code" || s.agent_kind === "codex") && forwardManager) {
     await setupSessionTerminal(dir, forwardManager, id).catch((err) => {
       console.error(`[launch ${id}] terminal setup failed:`, err);
     });
@@ -99,7 +104,9 @@ export async function setupSessionTerminal(
   id: string,
 ): Promise<void> {
   const s = readSession(dir, id);
-  if (s.agent_kind !== "claude-code") return; // only claude-code gets an embedded terminal for now
+  // Only interactive agents run a TTY — generic-cmd self-redirects to
+  // raw.log and has nothing to embed.
+  if (s.agent_kind !== "claude-code" && s.agent_kind !== "codex") return;
   if (s.terminal_local_port) return;          // already set up
 
   try {

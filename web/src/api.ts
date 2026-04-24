@@ -145,7 +145,7 @@ export type SessionImportPreview = {
 };
 
 export type SessionStatus = "provisioning" | "active" | "exited" | "failed_to_start";
-export type AgentKind = "generic-cmd" | "claude-code";
+export type AgentKind = "generic-cmd" | "claude-code" | "codex";
 export type Session = {
   id: string;
   machine: string;
@@ -178,6 +178,10 @@ export type Session = {
   cc_resume_uuid?: string;
   launch_command?: string;
   cc_agent_teams?: boolean;
+  codex_session_file?: string;
+  codex_session_uuid?: string;
+  codex_skip_trust?: boolean;
+  codex_resume_uuid?: string;
   alias?: string;
   alias_color?: string;
   tags?: string[];
@@ -359,6 +363,8 @@ export const api = {
     cc_resume_uuid?: string;
     launch_command?: string;
     cc_agent_teams?: boolean;
+    codex_skip_trust?: boolean;
+    codex_resume_uuid?: string;
   }) => request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
