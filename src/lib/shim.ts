@@ -46,7 +46,7 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"shim_boot\",\"agent\":\"claude-code\
 # ssh non-interactive shells often don't source ~/.bashrc or ~/.profile,
 # which is where ~/.local/bin and similar get added to PATH. Prepend the
 # usual suspects so the claude installer's symlink resolves.
-export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.botdock/bin:$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
 
 # Best-effort source of login-shell dotfiles for users who put installs
 # under other prefixes. Errors here must not kill the shim.
@@ -191,7 +191,7 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"shim_boot\",\"agent\":\"codex\",\"pi
 # Same PATH priming as the claude-code shim: npm / bun / cargo global
 # installs land under these paths and login-shell dotfiles add them — which
 # ssh non-interactive shells miss by default.
-export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.botdock/bin:$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
 for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   if [ -f "$f" ]; then
     # shellcheck disable=SC1090

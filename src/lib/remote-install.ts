@@ -934,3 +934,100 @@ export function sessionCodeServerBasePath(sessionId: string): string {
 function shQ(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
+
+// --- codex CLI auto-install ----------------------------------------------
+//
+// Codex is distributed as an npm package (`@openai/codex`) that ships a
+// prebuilt native binary. Unlike ttyd / filebrowser / code-server we don't
+// need to know platform-specific asset URLs — npm's install hook picks the
+// right artifact for the remote's node_modules.
+//
+// We install into `~/.botdock/bin/codex` by passing `--prefix $HOME/.botdock`
+// so the install is strictly user-owned (no sudo required, regardless of
+// how the system npm is configured). That matches where ttyd / filebrowser
+// land, and lets the shim's $HOME/.botdock/bin PATH-prime find it without
+// any distro-specific path juggling.
+//
+// Not tracked in ~/.botdock/installed.toml: for agent CLIs we use
+// `command -v codex` as the source of truth on every launch instead of a
+// marker, because the user may upgrade or install codex through their
+// own package manager in between sessions, and a stale marker would make
+// us skip a real install.
+
+export type EnsureCodexResult = {
+  /** Absolute path to `codex` on the remote after the call returns. */
+  path: string;
+  /** True if codex was already installed when we checked; false if we
+   *  just installed it. Useful for surfacing a "first-time install, this
+   *  took 30s" note to the UI. */
+  already_installed: boolean;
+};
+
+/**
+ * Make sure `codex` is runnable on the remote. If it's already on PATH
+ * (via any install method — npm system-wide, homebrew, a manually-dropped
+ * binary) we leave it alone. Otherwise we npm-install it into
+ * `~/.botdock/bin` which the shim's PATH priming picks up.
+ *
+ * Requires npm on the remote. If neither codex nor npm is available, we
+ * surface an actionable error instead of silently flailing.
+ */
+export function ensureCodex(dir: DataDir, machine: Machine): EnsureCodexResult {
+  const script = `
+set -u
+# Match the shim's PATH so we see whatever the shim would see at launch —
+# including a prior ~/.botdock/bin install from this very helper.
+export PATH="$HOME/.botdock/bin:$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+  if [ -f "$f" ]; then
+    . "$f" >/dev/null 2>&1 || true
+  fi
+done
+
+if command -v codex >/dev/null 2>&1; then
+  BIN=$(command -v codex)
+  printf 'STATE=present\nPATH=%s\n' "$BIN"
+  exit 0
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "codex not found on PATH and npm is not available to auto-install it." >&2
+  echo "Install codex on the remote first: npm install -g @openai/codex" >&2
+  echo "(or grab a prebuilt binary from https://github.com/openai/codex/releases)" >&2
+  exit 127
+fi
+
+mkdir -p "$HOME/.botdock"
+echo "[botdock] installing @openai/codex into $HOME/.botdock via npm…" >&2
+if ! npm install -g --prefix "$HOME/.botdock" --silent @openai/codex >&2; then
+  echo "npm install -g --prefix $HOME/.botdock @openai/codex failed" >&2
+  exit 1
+fi
+
+if [ ! -x "$HOME/.botdock/bin/codex" ]; then
+  echo "npm install reported success but $HOME/.botdock/bin/codex is missing" >&2
+  exit 1
+fi
+printf 'STATE=installed\nPATH=%s\n' "$HOME/.botdock/bin/codex"
+`;
+  // 180s: npm + native binary download on a slow network can genuinely
+  // take a couple of minutes. When codex is already present the call
+  // returns in <1s anyway, so the ceiling only costs us on first install.
+  const r = sshExec(dir, machine, "bash -s", script, 180_000, { noControlMaster: true });
+  if (r.code !== 0) {
+    const msg = (r.stderr || r.stdout).trim() || `ssh exit ${r.code}`;
+    throw new Error(`ensureCodex failed on "${machine.name}": ${msg}`);
+  }
+  const parsed = Object.fromEntries(
+    r.stdout.split("\n")
+      .filter((l) => l.includes("="))
+      .map((l) => {
+        const i = l.indexOf("=");
+        return [l.slice(0, i), l.slice(i + 1).trim()];
+      }),
+  );
+  return {
+    path: parsed.PATH ?? "",
+    already_installed: parsed.STATE === "present",
+  };
+}

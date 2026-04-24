@@ -12,6 +12,7 @@ import {
   startSessionTerminal, sessionTerminalBasePath, stopSessionTerminal,
   startSessionFilebrowser, sessionFilebrowserBasePath, stopSessionFilebrowser,
   startSessionCodeServer, sessionCodeServerBasePath, stopSessionCodeServer,
+  ensureCodex,
 } from "../lib/remote-install.ts";
 import { findFreeLocalPort } from "../lib/free-port.ts";
 import {
@@ -43,6 +44,31 @@ export async function launchSession(
   }
   appendEvent(dir, id, { ts: new Date().toISOString(), kind: "provisioning" });
   const machine = readMachine(dir, s.machine);
+
+  // For codex sessions, auto-install the CLI if it's missing on the remote.
+  // ensureCodex is idempotent — returns immediately when `codex` is already
+  // on PATH, npm-installs into ~/.botdock/bin otherwise. We log informational
+  // breadcrumbs so the UI's Events panel tells the user why the first codex
+  // launch against a fresh machine takes longer than subsequent ones.
+  if (s.agent_kind === "codex") {
+    try {
+      const res = ensureCodex(dir, machine);
+      appendEvent(dir, id, {
+        ts: new Date().toISOString(),
+        kind: "info",
+        subject: "codex-ready",
+        path: res.path,
+        already_installed: res.already_installed,
+      });
+    } catch (err) {
+      appendEvent(dir, id, {
+        ts: new Date().toISOString(),
+        kind: "failed_to_start",
+        error: (err as Error).message ?? String(err),
+      });
+      return updateSession(dir, id, { status: "failed_to_start" });
+    }
+  }
 
   const cmdB64 = buildCmdB64(s.agent_kind, s.cmd, {
     skipTrust: s.cc_skip_trust,
