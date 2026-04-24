@@ -984,36 +984,90 @@ for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   fi
 done
 
+# If nvm is installed — either by the user or by a previous run of this
+# helper — source it so its active node version is on PATH. Harmless
+# if nvm isn't present.
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+fi
+
 if command -v codex >/dev/null 2>&1; then
   BIN=$(command -v codex)
   printf 'STATE=present\nPATH=%s\n' "$BIN"
   exit 0
 fi
 
+# Bootstrap chain: no npm → install nvm → install node-LTS via nvm → install
+# codex via npm. Each step is gated on the prior already being present so
+# re-runs are fast and idempotent.
 if ! command -v npm >/dev/null 2>&1; then
-  echo "codex not found on PATH and npm is not available to auto-install it." >&2
-  echo "Install codex on the remote first: npm install -g @openai/codex" >&2
-  echo "(or grab a prebuilt binary from https://github.com/openai/codex/releases)" >&2
-  exit 127
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    echo "codex not found, and neither npm nor curl/wget is available to bootstrap it." >&2
+    echo "Install npm (or Node.js) manually and retry, or drop a codex binary at \$HOME/.botdock/bin/codex." >&2
+    exit 127
+  fi
+
+  if [ ! -s "$HOME/.nvm/nvm.sh" ]; then
+    echo "[botdock] npm not found — installing nvm into \$HOME/.nvm (no dotfile edits)…" >&2
+    # PROFILE=/dev/null tells nvm's installer NOT to write its source
+    # snippet into the user's .bashrc / .zshrc — we'd rather explicitly
+    # source nvm.sh from our own shim than silently mutate the user's
+    # shell profile. We also unset NVM_DIR first so the installer uses
+    # its default HOME/.nvm, not whatever the shell already has.
+    unset NVM_DIR
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh \
+        | PROFILE=/dev/null bash >&2
+    else
+      wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh \
+        | PROFILE=/dev/null bash >&2
+    fi
+  else
+    echo "[botdock] nvm already present at \$HOME/.nvm — reusing." >&2
+  fi
+
+  if [ ! -s "$HOME/.nvm/nvm.sh" ]; then
+    echo "nvm install finished but \$HOME/.nvm/nvm.sh is missing" >&2
+    exit 1
+  fi
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh"
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[botdock] installing Node.js LTS via nvm…" >&2
+    nvm install --lts >&2
+  fi
+  # Ensure the just-installed version is active for this shell.
+  nvm use --lts >/dev/null 2>&1 || true
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "nvm install --lts finished but npm is still not on PATH" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$HOME/.botdock"
-echo "[botdock] installing @openai/codex into $HOME/.botdock via npm…" >&2
+echo "[botdock] installing @openai/codex into \$HOME/.botdock via npm…" >&2
 if ! npm install -g --prefix "$HOME/.botdock" --silent @openai/codex >&2; then
-  echo "npm install -g --prefix $HOME/.botdock @openai/codex failed" >&2
+  echo "npm install -g --prefix \$HOME/.botdock @openai/codex failed" >&2
   exit 1
 fi
 
 if [ ! -x "$HOME/.botdock/bin/codex" ]; then
-  echo "npm install reported success but $HOME/.botdock/bin/codex is missing" >&2
+  echo "npm install reported success but \$HOME/.botdock/bin/codex is missing" >&2
   exit 1
 fi
 printf 'STATE=installed\nPATH=%s\n' "$HOME/.botdock/bin/codex"
 `;
-  // 180s: npm + native binary download on a slow network can genuinely
-  // take a couple of minutes. When codex is already present the call
-  // returns in <1s anyway, so the ceiling only costs us on first install.
-  const r = sshExec(dir, machine, "bash -s", script, 180_000, { noControlMaster: true });
+  // 300s: nvm bootstrap pulls an installer + a ~40MB node tarball + a
+  // native-binary npm install. On a slow mirror this realistically needs
+  // a couple of minutes. When codex (and node) are already present the
+  // call returns in <1s, so the higher ceiling only costs us the FIRST
+  // time we touch a fresh machine.
+  const r = sshExec(dir, machine, "bash -s", script, 300_000, { noControlMaster: true });
   if (r.code !== 0) {
     const msg = (r.stderr || r.stdout).trim() || `ssh exit ${r.code}`;
     throw new Error(`ensureCodex failed on "${machine.name}": ${msg}`);

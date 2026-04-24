@@ -57,6 +57,16 @@ for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   fi
 done
 
+# If BotDock auto-installed nvm (to get node for codex), its source snippet
+# did NOT land in the user's dotfiles — we used PROFILE=/dev/null to avoid
+# mutating them. Source nvm.sh directly here so the session shell sees
+# whatever npm-global binaries the agent needs.
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+fi
+
 if ! command -v claude >/dev/null 2>&1; then
   ESCAPED_PATH=$(printf '%s' "$PATH" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
   printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"failed_to_start\",\"error\":\"claude CLI not found\",\"path\":\"$ESCAPED_PATH\"}" >> "$EVENTS"
@@ -198,6 +208,16 @@ for f in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
     . "$f" >/dev/null 2>&1 || true
   fi
 done
+
+# If BotDock auto-installed nvm (to get node for codex), its source snippet
+# did NOT land in the user's dotfiles — we used PROFILE=/dev/null to avoid
+# mutating them. Source nvm.sh directly here so the session shell sees
+# whatever npm-global binaries the agent needs.
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+fi
 
 if ! command -v codex >/dev/null 2>&1; then
   ESCAPED_PATH=$(printf '%s' "$PATH" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
