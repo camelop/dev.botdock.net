@@ -463,18 +463,20 @@ function computeActivity(
 }
 
 /**
- * Codex activity heuristic. Drives off the rollout's lifecycle EventMsg
- * entries — `task_started` / `turn_started` / `*_delta` / `task_complete`
- * / `turn_complete` / `turn_aborted` / `error`. We scan back through the
- * tail of the rollout for the most recent EventMsg and decide:
- *   - turn_complete / task_complete / turn_aborted / error → pending
- *   - anything else (turn_started, *_delta, etc.)           → running
- *   - no EventMsg lines at all so far                       → running
+ * Codex activity heuristic. Codex rollout JSONL wraps each row as
+ *   { timestamp, type: "<envelope>", payload: { type: "<subtype>", ... } }
+ * with envelope ∈ { session_meta, event_msg, response_item, turn_context }
+ * and the subtype-of-event under payload.type. Only event_msg rows tell
+ * us about turn lifecycle; we walk back to the most recent event_msg and
+ * decide by its payload.type:
+ *   task_complete / turn_complete / task_aborted / turn_aborted / error
+ *     → pending (turn finished, awaiting user)
+ *   anything else (task_started, agent_message_delta, token_count, …)
+ *     → running
+ *   no event_msg at all yet → running
  *
- * Codex's wire format tags the variants under `type: "event_msg"` with a
- * `msg` discriminator (see codex-rs/protocol/src/protocol.rs's EventMsg
- * enum). We tolerate both `event_msg` and a future `event` shape and
- * read whichever string field looks like the discriminator.
+ * `syncing` still applies when we're behind on byte-mirroring — same
+ * flapping-prevention as the CC heuristic.
  */
 function computeCodexActivity(
   s: Session,
@@ -485,23 +487,22 @@ function computeCodexActivity(
   if (size > 0 && off + 1 < size) return "syncing";
   const ev = readLastCodexEvent(dir, s.id);
   if (!ev) return "running";
-  // The kind discriminator can land under .msg (variant tag) or .type
-  // (envelope tag). Try both — codex's serde renames over time and the
-  // exact JSON shape isn't stable across versions.
-  const msg = String((ev as { msg?: unknown }).msg ?? "");
-  const finalMsgs = new Set([
+  const payload = (ev.payload as Record<string, unknown> | undefined) ?? {};
+  const subType = String(payload.type ?? "");
+  const finalSubtypes = new Set([
     "task_complete", "turn_complete",
     "task_aborted", "turn_aborted",
     "error",
   ]);
-  if (finalMsgs.has(msg)) return "pending";
+  if (finalSubtypes.has(subType)) return "pending";
   return "running";
 }
 
-/** Read the last `event_msg` line from the codex rollout mirror. Returns
- *  null when the file is empty or no EventMsg has been seen yet. Same
- *  read-tail-of-file approach as readLastTranscriptEntry but filters to
- *  EventMsg-shaped entries only. */
+/** Read the last `event_msg`-envelope line from the codex rollout mirror.
+ *  Returns null when the file is empty or no event_msg has been seen yet.
+ *  Walks the tail backwards so other envelopes (session_meta /
+ *  response_item / turn_context) get skipped — they tell us nothing
+ *  about turn-completion state. */
 function readLastCodexEvent(
   dir: import("../storage/index.ts").DataDir,
   id: string,
@@ -517,14 +518,10 @@ function readLastCodexEvent(
       const buf = Buffer.alloc(len);
       readSync(fd, buf, 0, len, size - len);
       const lines = buf.toString("utf8").split("\n").filter((l) => l.length > 0);
-      // Walk backwards looking for an EventMsg-shaped line. Other shapes
-      // (response_item, session_meta, compacted, turn_context) tell us
-      // nothing about turn-completion state, so they're skipped.
       for (let i = lines.length - 1; i >= 0; i--) {
         try {
           const obj = JSON.parse(lines[i]!) as Record<string, unknown>;
-          const type = String(obj.type ?? "");
-          if (type === "event_msg" || obj.msg !== undefined) return obj;
+          if (obj.type === "event_msg") return obj;
         } catch { /* malformed line, skip */ }
       }
       return null;

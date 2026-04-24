@@ -38,6 +38,10 @@ export type TranscriptTurn = {
  *
  * `format` defaults to "cc" so existing call sites keep working unchanged;
  * pass "codex" for codex rollout JSONL.
+ *
+ * Codex's classifier returns null for rows that aren't worth showing
+ * (event_msg duplicates of response_item, token_count noise, developer-
+ * role envelopes, etc.); those drop here so the panel stays clean.
  */
 export function parseTranscript(
   text: string,
@@ -48,7 +52,8 @@ export function parseTranscript(
     if (!line.trim()) continue;
     let obj: Record<string, unknown>;
     try { obj = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
-    turns.push(format === "codex" ? classifyCodex(obj) : classify(obj));
+    const turn = format === "codex" ? classifyCodex(obj) : classify(obj);
+    if (turn) turns.push(turn);
   }
   return turns;
 }
@@ -115,124 +120,134 @@ function classify(obj: Record<string, unknown>): TranscriptTurn {
 }
 
 /**
- * Codex rollout classification. Codex's wire format uses a top-level
- * `type` discriminator with a handful of variants:
+ * Codex rollout classification.
  *
- *   - "session_meta"   — first line; carries session_id, cwd, git info.
- *                         Surfaced as a "system" turn so the user sees a
- *                         "[session opened …]" breadcrumb in the panel.
- *   - "response_item"  — model message. Wraps an OpenAI-style {role,
- *                         content} where content is an array of blocks
- *                         (text, tool_call, etc.).
- *   - "event_msg"      — lifecycle event (task_started, turn_complete,
- *                         agent_message_delta, …). Surfaced as a system
- *                         breadcrumb tagged by msg discriminator.
- *   - "compacted"      — context-compaction record. System breadcrumb.
- *   - "turn_context"   — turn-config snapshot. System breadcrumb.
+ * Wire format observed in real rollouts (codex CLI 0.125.0):
+ *   { timestamp, type: "<envelope>", payload: { type: "<subtype>", ... } }
  *
- * The exact JSON spelling has drifted across versions; we read the
- * envelope tag liberally and fall back to looking at any role/content
- * pair we can find before giving up to "unknown". `delta` event_msg
- * variants are dropped at parse time so the panel doesn't fill up with
- * ten thousand single-token rows.
+ * Envelope variants and how we render each:
+ *   - "session_meta"    — first line. Carries session id + cwd + a giant
+ *                          base_instructions blob. We render a one-line
+ *                          "[session opened …]" breadcrumb and DROP the
+ *                          base_instructions (the user doesn't need to
+ *                          read codex's system prompt every session).
+ *   - "response_item"   — payload.type === "message" with role + content.
+ *                          Real conversation lives here; user / assistant
+ *                          turns get rendered, developer (system prompt
+ *                          envelope) gets dropped, and user-role rows
+ *                          whose only content looks like a `<tagged>`
+ *                          machine envelope (environment_context,
+ *                          permissions instructions, …) get dropped too.
+ *   - "event_msg"       — payload.type names the lifecycle event:
+ *                          - user_message / agent_message duplicate the
+ *                            response_item rows above; we drop them.
+ *                          - token_count is periodic noise; drop.
+ *                          - *_delta is streaming-fragment noise; drop.
+ *                          - task_started / task_complete / task_aborted
+ *                            / turn_aborted / error stay as compact
+ *                            breadcrumbs.
+ *                          - any other event keeps a labelled breadcrumb
+ *                            so unknown variants stay visible.
+ *   - "turn_context"    — per-turn config snapshot. Internal only; drop.
+ *   - any other         — pass through as "unknown" for the raw inspector.
+ *
+ * Returning null from this function makes parseTranscript skip the row,
+ * which is how dropped variants disappear from the panel.
  */
-function classifyCodex(obj: Record<string, unknown>): TranscriptTurn {
+function classifyCodex(obj: Record<string, unknown>): TranscriptTurn | null {
   const raw = obj;
-  const ts =
-    (obj.timestamp as string | undefined)
-    ?? (obj.ts as string | undefined)
-    ?? (obj.created_at as string | undefined);
-  const uuid =
-    (obj.id as string | undefined)
-    ?? (obj.uuid as string | undefined)
-    ?? (obj.session_id as string | undefined);
-
+  const ts = (obj.timestamp as string | undefined) ?? (obj.ts as string | undefined);
   const topType = String(obj.type ?? "");
+  const payload = (obj.payload as Record<string, unknown> | undefined) ?? {};
 
   if (topType === "session_meta") {
-    const cwd = (obj.cwd as string | undefined) ?? "";
-    const sid = (obj.session_id as string | undefined) ?? "";
-    const parts: TranscriptContentBlock[] = [
-      { type: "text", text: `[session opened${sid ? ` ${sid}` : ""}${cwd ? ` · cwd ${cwd}` : ""}]` },
-    ];
-    return { uuid, ts, kind: "system", blocks: parts, raw };
-  }
-
-  if (topType === "event_msg" || obj.msg !== undefined) {
-    const msg = String((obj as { msg?: unknown }).msg ?? "");
-    // Drop the streaming delta noise — they're useful for activity
-    // detection on the server but not for the user's reading view.
-    if (/(^|_)delta$/.test(msg)) {
-      return { uuid, ts, kind: "unknown", blocks: [], raw };
-    }
-    const label = msg ? `[${msg}]` : "[event]";
+    const sid = String(payload.id ?? "");
+    const cwd = String(payload.cwd ?? "");
+    const shortSid = sid ? sid.slice(0, 8) : "";
+    const text = `[session opened${shortSid ? ` ${shortSid}` : ""}${cwd ? ` · cwd ${cwd}` : ""}]`;
     return {
-      uuid, ts, kind: "system",
-      blocks: [{ type: "text", text: label }],
+      ts, kind: "system",
+      blocks: [{ type: "text", text }],
       raw,
     };
   }
 
-  if (topType === "compacted" || topType === "turn_context") {
+  if (topType === "turn_context") return null;
+
+  if (topType === "event_msg") {
+    const subType = String(payload.type ?? "");
+    // Duplicates of response_item — we render the response_item version,
+    // not these.
+    if (subType === "user_message" || subType === "agent_message") return null;
+    // Periodic noise — token_count fires every couple of seconds.
+    if (subType === "token_count") return null;
+    // Streaming deltas — fragment-level events, useful for activity
+    // detection on the server but useless as user-facing rows.
+    if (/_delta$/.test(subType)) return null;
+    // Other event_msg variants keep a small labelled breadcrumb so the
+    // user can see lifecycle markers (task_started / task_complete /
+    // turn_aborted / error / etc.) without drowning in noise. Use a
+    // human-friendly version of the snake_case label.
+    const label = subType ? subType.replace(/_/g, " ") : "event";
     return {
-      uuid, ts, kind: "system",
-      blocks: [{ type: "text", text: `[${topType.replace(/_/g, " ")}]` }],
+      ts, kind: "system",
+      blocks: [{ type: "text", text: `[${label}]` }],
       raw,
     };
   }
 
-  // ResponseItem: codex stores OpenAI-style messages, often nested under
-  // `item` or `payload`. Try a few well-known shapes before giving up.
-  const candidate =
-    (obj.item as Record<string, unknown> | undefined)
-    ?? (obj.payload as Record<string, unknown> | undefined)
-    ?? (obj.response_item as Record<string, unknown> | undefined)
-    ?? obj;
+  if (topType === "response_item") {
+    const itemType = String(payload.type ?? "");
+    // We only render `message`-shaped response items for now. tool_call /
+    // function_call etc. fall through to "unknown" so they're inspectable
+    // via the raw view without polluting the readable panel.
+    if (itemType !== "message") return null;
+    const role = String(payload.role ?? "");
+    // Developer role is codex's system-prompt envelope — internal,
+    // never of interest to the operator looking at the conversation.
+    if (role === "developer") return null;
 
-  const role = String((candidate.role as string | undefined) ?? "");
-  const content = candidate.content;
-
-  if (role === "user" || role === "assistant" || role === "system") {
+    const content = payload.content;
     const blocks: TranscriptContentBlock[] = [];
     if (Array.isArray(content)) {
-      for (const c of content) blocks.push(parseBlock(c));
-    } else if (typeof content === "string" && content.trim()) {
+      for (const c of content) blocks.push(parseCodexBlock(c));
+    } else if (typeof content === "string") {
       blocks.push({ type: "text", text: content });
-    } else if (content !== undefined) {
-      blocks.push({ type: "other", raw: content });
     }
     const cleaned = blocks.filter((b) => !(b.type === "text" && !b.text.trim()));
-    const isToolResult = role === "user"
-      && cleaned.length > 0
-      && cleaned.every((b) => b.type === "tool_result");
-    return {
-      uuid, ts,
-      kind: isToolResult
-        ? "tool_result"
-        : (role === "system" ? "system" : (role as "user" | "assistant")),
-      blocks: cleaned, raw,
-    };
+    if (cleaned.length === 0) return null;
+
+    // Drop auto-generated user envelopes — codex prepends user-role
+    // messages whose entire content is a single `<environment_context>`,
+    // `<permissions instructions>`, `<collaboration_mode>`, etc. block.
+    // The user never typed those; they're scaffolding.
+    if (role === "user") {
+      const allEnvelope = cleaned.every((b) =>
+        b.type === "text" && /^\s*<[a-z_][a-z0-9_]*>/i.test(b.text)
+      );
+      if (allEnvelope) return null;
+    }
+
+    const kind = role === "assistant" ? "assistant"
+      : role === "user" ? "user"
+      : "system";
+    return { ts, kind, blocks: cleaned, raw };
   }
 
-  // tool_call / tool_calls — codex sometimes records these as standalone
-  // ResponseItem entries rather than as content blocks of an assistant
-  // message. Treat them as assistant turns with a single tool_use block.
-  const toolCalls = (candidate.tool_calls as unknown[] | undefined) ?? [];
-  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-    const blocks: TranscriptContentBlock[] = toolCalls.map((tc) => {
-      const o = (tc ?? {}) as Record<string, unknown>;
-      const fn = (o.function as Record<string, unknown> | undefined) ?? {};
-      return {
-        type: "tool_use",
-        id: String(o.id ?? ""),
-        name: String((fn.name ?? o.name) ?? ""),
-        input: fn.arguments ?? o.arguments ?? o.input,
-      };
-    });
-    return { uuid, ts, kind: "assistant", blocks, raw };
-  }
+  return { ts, kind: "unknown", blocks: [], raw };
+}
 
-  return { uuid, ts, kind: "unknown", blocks: [], raw };
+/** Codex content blocks come as `{type: "input_text" | "output_text", text}`
+ *  rather than CC's plain `{type: "text", text}`. Anything else (images,
+ *  tool calls, etc.) passes through as raw for the inspector view. */
+function parseCodexBlock(block: unknown): TranscriptContentBlock {
+  if (!block || typeof block !== "object") return { type: "other", raw: block };
+  const b = block as Record<string, unknown>;
+  const t = String(b.type ?? "");
+  if (t === "input_text" || t === "output_text" || t === "text") {
+    return { type: "text", text: String(b.text ?? "") };
+  }
+  return { type: "other", raw: block };
 }
 
 function parseBlock(block: unknown): TranscriptContentBlock {
