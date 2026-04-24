@@ -369,12 +369,40 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       // on our side), so without this step the session's terminal iframe
       // opens a dead port. The remote ttyd supervisor is already running
       // — startSessionTerminal is idempotent and reuses it.
+      //
+      // We also flip the session's status active → provisioning while
+      // the forward comes up. Without that, the SessionView sees an
+      // "active session with no terminal_local_port" and immediately
+      // renders the hard "Terminal didn't come up" error for the few
+      // seconds between apply and setupSessionTerminal completing. Using
+      // the existing provisioning UI state gives the user "Provisioning
+      // remote ttyd + tunnel…" which is truthful, then flips back to
+      // active once the port lands. On failure we also flip back so the
+      // existing error path kicks in instead of the session looking stuck.
       try {
         const imported = readSession(dir, result.session_id);
         if (imported.agent_kind === "claude-code" && imported.status === "active") {
-          setupSessionTerminal(dir, forwardManager, result.session_id).catch((err) => {
-            console.error(`[import ${result.session_id}] terminal setup failed:`, err);
-          });
+          const originalStatus = imported.status;
+          updateSession(dir, result.session_id, { status: "provisioning" });
+          // Nudge the WS subscribers now so the UI sees the
+          // provisioning flip immediately (rather than waiting for the
+          // next poll tick, which can be 2-5s and leaves the user
+          // staring at a stale "Terminal didn't come up" error).
+          poller.emit("update", result.session_id);
+          setupSessionTerminal(dir, forwardManager, result.session_id)
+            .then(() => {
+              try {
+                updateSession(dir, result.session_id, { status: originalStatus });
+                poller.emit("update", result.session_id);
+              } catch (e) { console.error(`[import ${result.session_id}] status restore failed:`, e); }
+            })
+            .catch((err) => {
+              console.error(`[import ${result.session_id}] terminal setup failed:`, err);
+              try {
+                updateSession(dir, result.session_id, { status: originalStatus });
+                poller.emit("update", result.session_id);
+              } catch (e) { console.error(`[import ${result.session_id}] status restore failed:`, e); }
+            });
         }
       } catch (e) {
         console.error(`[import] post-apply terminal setup skipped:`, e);
