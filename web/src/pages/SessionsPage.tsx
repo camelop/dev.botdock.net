@@ -18,6 +18,8 @@ import { parseAnsi, spanStyle } from "../lib/ansi";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 import { SessionNameChip } from "../components/SessionNameChip";
 import { ContextPushPopover } from "../components/ContextPushPopover";
+import { SessionExportModal } from "../components/SessionExportModal";
+import { SessionImportModal } from "../components/SessionImportModal";
 
 export type SessionDraft = {
   machine: string;
@@ -140,6 +142,7 @@ export function SessionsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [draft, setDraft] = useState<SessionDraft | null>(null);
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Open the modal with either the persisted draft or a fresh one.
   const openNew = () => {
@@ -163,9 +166,16 @@ export function SessionsPage() {
     <div>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <h1 style={{ margin: 0 }}>Sessions</h1>
-        <button onClick={openNew} disabled={machines.length === 0}>
-          {machines.length === 0 ? "Add a machine first" : "New session"}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="secondary"
+            onClick={() => setImportOpen(true)}
+            title="Attach to a session someone exported from their BotDock"
+          >Import session</button>
+          <button onClick={openNew} disabled={machines.length === 0}>
+            {machines.length === 0 ? "Add a machine first" : "New session"}
+          </button>
+        </div>
       </div>
       {err && <div className="error-banner">{err}</div>}
 
@@ -223,6 +233,20 @@ export function SessionsPage() {
           id={selected}
           onClose={() => setSelected(null)}
           onChange={refresh}
+        />
+      )}
+      {importOpen && (
+        <SessionImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={async (id) => {
+            setImportOpen(false);
+            await refresh();
+            // Hand off to the Workspace view pointed at the newly-imported
+            // session — same affordance as "Open in workspace" on the
+            // detail modal.
+            try { sessionStorage.setItem("botdock:hub-preselect", id); } catch {}
+            window.location.hash = `hub/${encodeURIComponent(id)}`;
+          }}
         />
       )}
     </div>
@@ -809,6 +833,7 @@ export function SessionView(props: {
   // a button in the terminal toolbar toggles it.
   const [showInput, setShowInput] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   // Floating scratchpad. Open/close is transient (per-mount); text is
   // loaded once on first open and debounce-saved to notes.md on change.
   const [notesOpen, setNotesOpen] = useState(false);
@@ -1158,6 +1183,14 @@ export function SessionView(props: {
                 title="Rename this session and pick an accent color"
               >Config</button>
             )}
+            {session && (
+              <button
+                className="secondary"
+                style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }}
+                onClick={() => setExportOpen(true)}
+                title="Download a zip that lets another BotDock attach to this session"
+              >Export</button>
+            )}
             {session?.status === "active" && (
               <button className="secondary" style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }} onClick={onStop}>
                 Deactivate
@@ -1182,6 +1215,12 @@ export function SessionView(props: {
               session={session}
               onClose={() => setConfigOpen(false)}
               onSaved={(s) => { setSession(s); props.onChange?.(); }}
+            />
+          )}
+          {exportOpen && session && (
+            <SessionExportModal
+              session={session}
+              onClose={() => setExportOpen(false)}
             />
           )}
           {session && (

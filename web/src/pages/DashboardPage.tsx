@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
 import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, type SessionDraft } from "./SessionsPage";
 import { SessionNameChip } from "../components/SessionNameChip";
+import { SessionImportModal } from "../components/SessionImportModal";
 import { relativeTime, fullTime } from "../lib/time";
 import { isAcked } from "../lib/acks";
 
@@ -13,6 +14,7 @@ export function DashboardPage() {
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const openNew = () => setDraft((cur) => cur ?? freshDraft(machines));
 
   const refresh = () =>
@@ -50,6 +52,11 @@ export function DashboardPage() {
             onClick={() => { window.location.hash = "hub"; }}
             title="Open the full-screen Workspace view"
           >⇲ Workspace</button>
+          <button
+            className="secondary"
+            onClick={() => setImportOpen(true)}
+            title="Attach to a session someone exported from their BotDock"
+          >Import session</button>
           <button onClick={openNew} disabled={machines.length === 0}>
             {machines.length === 0 ? "Add a machine first" : "+ New session"}
           </button>
@@ -113,6 +120,17 @@ export function DashboardPage() {
             setDraft(null);
             await refresh();
             setSelected(id);
+          }}
+        />
+      )}
+      {importOpen && (
+        <SessionImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={async (id) => {
+            setImportOpen(false);
+            await refresh();
+            try { sessionStorage.setItem("botdock:hub-preselect", id); } catch {}
+            window.location.hash = `hub/${encodeURIComponent(id)}`;
           }}
         />
       )}

@@ -129,6 +129,21 @@ export type CcSessionEntry = {
   has_active_process: boolean;
 };
 
+export type SessionImportPreview = {
+  session_id: string;
+  machine_name: string;
+  key_name: string;
+  exported_by?: string;
+  exported_at?: string;
+  botdock_version?: string;
+  notes: string[];
+  conflicts: Array<{
+    kind: "session" | "machine" | "key";
+    name: string;
+    detail: string;
+  }>;
+};
+
 export type SessionStatus = "provisioning" | "active" | "exited" | "failed_to_start";
 export type AgentKind = "generic-cmd" | "claude-code";
 export type Session = {
@@ -426,6 +441,38 @@ export const api = {
     }>(`/api/sessions/${encodeURIComponent(id)}/context/skill-install`, {
       method: "POST",
     }),
+  /** URL for the GET export endpoint — used by an <a download> so the
+   *  browser handles the save-dialog and Content-Disposition natively. */
+  sessionExportUrl: (id: string, host?: string): string => {
+    const params = new URLSearchParams();
+    if (host && host.trim()) params.set("host", host.trim());
+    const q = params.toString();
+    return `/api/sessions/${encodeURIComponent(id)}/export${q ? "?" + q : ""}`;
+  },
+  inspectSessionImport: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/sessions/import/inspect", { method: "POST", body: fd });
+    if (!res.ok) {
+      let msg: string;
+      try { msg = ((await res.json()) as { error?: string }).error ?? `${res.status} ${res.statusText}`; }
+      catch { msg = `${res.status} ${res.statusText}`; }
+      throw new Error(msg);
+    }
+    return (await res.json()) as SessionImportPreview;
+  },
+  applySessionImport: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/sessions/import/apply", { method: "POST", body: fd });
+    if (!res.ok) {
+      let msg: string;
+      try { msg = ((await res.json()) as { error?: string }).error ?? `${res.status} ${res.statusText}`; }
+      catch { msg = `${res.status} ${res.statusText}`; }
+      throw new Error(msg);
+    }
+    return (await res.json()) as { session_id: string; machine_name: string; key_name: string };
+  },
   pushSessionContext: (id: string, body: {
     git_repos: Array<{ name: string; include_deploy_key: boolean }>;
     markdowns: Array<{ name: string }>;

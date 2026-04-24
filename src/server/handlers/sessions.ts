@@ -31,6 +31,31 @@ import type { SessionPoller } from "../../domain/session-poller.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
 import { pushContext, type GitRepoPick, type MarkdownPick, type FileBundlePick } from "../../domain/context-push.ts";
 import { getSkillStatus, installSkill } from "../../domain/skill-install.ts";
+import { exportSession } from "../../domain/session-export.ts";
+import { inspectImport, applyImport } from "../../domain/session-import.ts";
+
+/**
+ * Pull the uploaded zip bytes out of either a `multipart/form-data`
+ * payload (with a single `file` field — normal browser form submission)
+ * or a raw `application/zip` body (curl / scripted uploads). Kept here
+ * rather than in the router helpers module because import is currently
+ * the only endpoint that needs it.
+ */
+async function readUploadedZip(req: Request): Promise<Buffer> {
+  const ctype = req.headers.get("content-type") ?? "";
+  if (ctype.includes("multipart/form-data")) {
+    const form = await req.formData();
+    const file = form.get("file");
+    if (!file || typeof (file as { arrayBuffer?: unknown }).arrayBuffer !== "function") {
+      throw new Error("multipart body must include a `file` field with the zip");
+    }
+    return Buffer.from(await (file as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer());
+  }
+  // Raw body — accept any content-type, but refuse empty.
+  const buf = Buffer.from(await req.arrayBuffer());
+  if (buf.length === 0) throw new Error("empty request body");
+  return buf;
+}
 
 export function mountSessions(router: Router, dir: DataDir, poller: SessionPoller, forwardManager: ForwardManager): void {
   router.get("/api/sessions", () => json(listSessions(dir)));
@@ -277,6 +302,67 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
         markdowns: mdPicks.map((p) => ({ name: p.name })),
         file_bundles: bundlePicks.map((p) => ({ name: p.name })),
       });
+      return json(result);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
+
+  // Export a session as a zip — bundles machine + key + session files
+  // (minus notes.md) so another BotDock instance can attach to the same
+  // tmux. For local-machine sessions the caller must pass ?host=<addr>
+  // since 127.0.0.1 is meaningless to the recipient. Jump-host machines
+  // are rejected.
+  router.get("/api/sessions/:id/export", async ({ params, url }) => {
+    if (!sessionExists(dir, params.id!)) throw new HttpError(404, "not found");
+    const host = url.searchParams.get("host")?.trim() || undefined;
+    try {
+      const result = exportSession(dir, params.id!, host);
+      return new Response(result.bytes, {
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": `attachment; filename="${result.filename}"`,
+          "content-length": String(result.bytes.length),
+        },
+      });
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
+
+  // Inspect an import zip — extract to a temp dir, summarise contents,
+  // detect conflicts against existing machines/keys/sessions. Does NOT
+  // write anything. Frontend uses this to render the confirmation modal.
+  router.post("/api/sessions/import/inspect", async ({ req }) => {
+    let buf: Buffer;
+    try {
+      buf = await readUploadedZip(req);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
+    }
+    try {
+      return json(inspectImport(dir, buf));
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message || String(e));
+    }
+  });
+
+  // Apply the import. Rejects if conflicts exist (caller should've
+  // resolved them before calling). On success, registers the session
+  // with the poller so updates stream in like any other live session.
+  router.post("/api/sessions/import/apply", async ({ req }) => {
+    let buf: Buffer;
+    try {
+      buf = await readUploadedZip(req);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
+    }
+    try {
+      const result = applyImport(dir, buf);
+      // Kick the poller so the imported session behaves like a live one
+      // from the UI's perspective — transcript / raw / events stream in
+      // on the WebSocket, same as any locally-launched session.
+      try { poller.watch(result.session_id); } catch { /* non-fatal */ }
       return json(result);
     } catch (e) {
       throw new HttpError(400, (e as Error).message || String(e));
