@@ -35,17 +35,39 @@ function pollScript(
   tmuxName: string,
   evOffset: number,
   rawOffset: number,
-  ccSessionFile: string | undefined,
+  /** Path of the agent's transcript on the remote — for claude-code this
+   *  is the CC jsonl, for codex it's the rollout file. Polling treats it
+   *  as opaque bytes; the kind only matters for self-discovery below. */
+  transcriptFile: string | undefined,
   txOffset: number,
-  /** Epoch seconds of session start; used to self-heal cc_session_file
-   * discovery if the shim missed it. */
+  /** Epoch seconds of session start; used to self-heal the transcript
+   *  path if the shim's discovery helper missed it. */
   startedEpoch: number,
   agentKind: string,
 ): string {
-  const txSrcQ = ccSessionFile ? shQ(ccSessionFile) : "''";
-  // Only self-discover for claude-code sessions — no point scanning
-  // ~/.claude/projects for generic-cmd.
-  const shouldAutoDiscover = agentKind === "claude-code";
+  const txSrcQ = transcriptFile ? shQ(transcriptFile) : "''";
+  // Self-heal command per agent. Generic-cmd has no transcript file, so
+  // we skip scanning entirely. CC scans ~/.claude/projects; codex scans
+  // $CODEX_HOME/sessions (default ~/.codex/sessions).
+  let selfHeal = "";
+  if (agentKind === "claude-code") {
+    selfHeal = `
+if [ -z "$TX_PATH" ] && [ -d "$HOME/.claude/projects" ]; then
+  TX_PATH=$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null \\
+            | head -1)
+fi
+`;
+  } else if (agentKind === "codex") {
+    selfHeal = `
+if [ -z "$TX_PATH" ]; then
+  CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
+  if [ -d "$CODEX_ROOT" ]; then
+    TX_PATH=$(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' \\
+              -newermt "@${startedEpoch}" 2>/dev/null | head -1)
+  fi
+fi
+`;
+  }
   return `
 set -u
 WORKDIR=${shQ(workdir)}
@@ -57,17 +79,7 @@ SDIR="$WORKDIR/.botdock/session"
 EV_PATH="$SDIR/events.ndjson"
 RAW_PATH="$SDIR/raw.log"
 TX_PATH=${txSrcQ}
-
-# Self-heal: if we never captured a transcript path (shim's one-shot
-# find ran before claude wrote its jsonl, or the claude-code binary
-# changed layouts), look it up again each tick. Match any jsonl under
-# ~/.claude/projects/ whose mtime is newer than this session's start.
-${shouldAutoDiscover ? `
-if [ -z "$TX_PATH" ] && [ -d "$HOME/.claude/projects" ]; then
-  TX_PATH=$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null \\
-            | head -1)
-fi
-` : ""}
+${selfHeal}
 EV_SIZE=0; [ -f "$EV_PATH" ] && EV_SIZE=$(wc -c < "$EV_PATH" | tr -d ' ')
 RAW_SIZE=0; [ -f "$RAW_PATH" ] && RAW_SIZE=$(wc -c < "$RAW_PATH" | tr -d ' ')
 TX_SIZE=0; [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ] && TX_SIZE=$(wc -c < "$TX_PATH" | tr -d ' ')
@@ -215,12 +227,18 @@ export class SessionPoller extends EventEmitter {
       const startedEpoch = Math.floor(
         (s.started_at ? Date.parse(s.started_at) : Date.parse(s.created_at)) / 1000,
       );
+      // Pick the right transcript field for the agent. CC populates
+      // `cc_session_file`, codex populates `codex_session_file`; both
+      // are bytes-mirrored the same way once we know the path.
+      const transcriptFile = s.agent_kind === "codex"
+        ? s.codex_session_file
+        : s.cc_session_file;
       const script = pollScript(
         s.workdir,
         s.tmux_session,
         s.remote_events_offset ?? 0,
         s.remote_raw_offset ?? 0,
-        s.cc_session_file,
+        transcriptFile,
         s.remote_transcript_offset ?? 0,
         isFinite(startedEpoch) ? startedEpoch : 0,
         s.agent_kind,
@@ -248,23 +266,44 @@ export class SessionPoller extends EventEmitter {
     const prevRaw = s.remote_raw_offset ?? 0;
     const prevTx = s.remote_transcript_offset ?? 0;
 
-    // Poller may have discovered the CC jsonl path on its own if the shim
-    // missed it. Commit the discovery to meta so future ticks skip the
-    // find() and so the UI can surface the absolute path.
-    if (!s.cc_session_file && report.txPath) {
-      const uuid = report.txPath.split("/").pop()?.replace(/\.jsonl$/, "");
-      updateSession(this.dir, s.id, {
-        cc_session_file: report.txPath,
-        ...(uuid ? { cc_session_uuid: uuid } : {}),
-      });
-      appendEvent(this.dir, s.id, {
-        ts: new Date().toISOString(),
-        kind: "cc_session",
-        file: report.txPath,
-        uuid,
-        source: "poller",
-      });
-      changed = true;
+    // Poller may have discovered the agent's transcript path on its own
+    // if the shim's one-shot find missed it. Commit the discovery to meta
+    // so future ticks skip the find(). For CC we extract the UUID from
+    // the basename minus .jsonl; for codex we pull the trailing 8-4-4-4-12
+    // hex group out of the rollout filename.
+    if (report.txPath) {
+      if (s.agent_kind === "claude-code" && !s.cc_session_file) {
+        const uuid = report.txPath.split("/").pop()?.replace(/\.jsonl$/, "");
+        updateSession(this.dir, s.id, {
+          cc_session_file: report.txPath,
+          ...(uuid ? { cc_session_uuid: uuid } : {}),
+        });
+        appendEvent(this.dir, s.id, {
+          ts: new Date().toISOString(),
+          kind: "cc_session",
+          file: report.txPath,
+          uuid,
+          source: "poller",
+        });
+        changed = true;
+      } else if (s.agent_kind === "codex" && !s.codex_session_file) {
+        const base = report.txPath.split("/").pop() ?? "";
+        const uuid = base
+          .match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
+          ?.[0];
+        updateSession(this.dir, s.id, {
+          codex_session_file: report.txPath,
+          ...(uuid ? { codex_session_uuid: uuid } : {}),
+        });
+        appendEvent(this.dir, s.id, {
+          ts: new Date().toISOString(),
+          kind: "codex_session",
+          file: report.txPath,
+          uuid,
+          source: "poller",
+        });
+        changed = true;
+      }
     }
 
     let exitCodeFromEvent: number | undefined;
@@ -282,6 +321,12 @@ export class SessionPoller extends EventEmitter {
             updateSession(this.dir, s.id, {
               cc_session_file: ev.file,
               ...(typeof ev.uuid === "string" ? { cc_session_uuid: ev.uuid } : {}),
+            });
+          }
+          if (ev.kind === "codex_session" && typeof ev.file === "string") {
+            updateSession(this.dir, s.id, {
+              codex_session_file: ev.file,
+              ...(typeof ev.uuid === "string" ? { codex_session_uuid: ev.uuid } : {}),
             });
           }
         } catch {
@@ -327,13 +372,19 @@ export class SessionPoller extends EventEmitter {
       changed = true;
     }
 
-    // Derive activity: running if we've seen output in the last N seconds
-    // OR the transcript's last line indicates a pending turn (tool_use or
-    // in-flight tool_result). Waiting otherwise. Only meaningful for
-    // running claude-code sessions.
+    // Derive activity from the local transcript mirror. CC and codex have
+    // different log shapes — one parser per agent, but the same {running
+    // | pending | syncing} output. Generic-cmd has no transcript, no
+    // activity inference.
     const cur = readSession(this.dir, s.id);
     if (cur.status === "active" && cur.agent_kind === "claude-code") {
       const activity = computeActivity(cur, this.dir);
+      if (activity !== cur.activity) {
+        updateSession(this.dir, s.id, { activity });
+        changed = true;
+      }
+    } else if (cur.status === "active" && cur.agent_kind === "codex") {
+      const activity = computeCodexActivity(cur, this.dir);
       if (activity !== cur.activity) {
         updateSession(this.dir, s.id, { activity });
         changed = true;
@@ -409,6 +460,80 @@ function computeActivity(
   const lastEntry = readLastTranscriptEntry(dir, s.id);
   if (!lastEntry) return "running";
   return lastEntryLooksFinal(lastEntry) ? "pending" : "running";
+}
+
+/**
+ * Codex activity heuristic. Drives off the rollout's lifecycle EventMsg
+ * entries — `task_started` / `turn_started` / `*_delta` / `task_complete`
+ * / `turn_complete` / `turn_aborted` / `error`. We scan back through the
+ * tail of the rollout for the most recent EventMsg and decide:
+ *   - turn_complete / task_complete / turn_aborted / error → pending
+ *   - anything else (turn_started, *_delta, etc.)           → running
+ *   - no EventMsg lines at all so far                       → running
+ *
+ * Codex's wire format tags the variants under `type: "event_msg"` with a
+ * `msg` discriminator (see codex-rs/protocol/src/protocol.rs's EventMsg
+ * enum). We tolerate both `event_msg` and a future `event` shape and
+ * read whichever string field looks like the discriminator.
+ */
+function computeCodexActivity(
+  s: Session,
+  dir: import("../storage/index.ts").DataDir,
+): "running" | "pending" | "syncing" {
+  const off = s.remote_transcript_offset ?? 0;
+  const size = s.remote_transcript_size ?? 0;
+  if (size > 0 && off + 1 < size) return "syncing";
+  const ev = readLastCodexEvent(dir, s.id);
+  if (!ev) return "running";
+  // The kind discriminator can land under .msg (variant tag) or .type
+  // (envelope tag). Try both — codex's serde renames over time and the
+  // exact JSON shape isn't stable across versions.
+  const msg = String((ev as { msg?: unknown }).msg ?? "");
+  const finalMsgs = new Set([
+    "task_complete", "turn_complete",
+    "task_aborted", "turn_aborted",
+    "error",
+  ]);
+  if (finalMsgs.has(msg)) return "pending";
+  return "running";
+}
+
+/** Read the last `event_msg` line from the codex rollout mirror. Returns
+ *  null when the file is empty or no EventMsg has been seen yet. Same
+ *  read-tail-of-file approach as readLastTranscriptEntry but filters to
+ *  EventMsg-shaped entries only. */
+function readLastCodexEvent(
+  dir: import("../storage/index.ts").DataDir,
+  id: string,
+): Record<string, unknown> | null {
+  try {
+    const { statSync, openSync, readSync, closeSync } = require("node:fs") as typeof import("node:fs");
+    const path = dir.path("sessions", id, "transcript.ndjson");
+    const size = statSync(path).size;
+    if (size === 0) return null;
+    const len = Math.min(size, 64 * 1024);
+    const fd = openSync(path, "r");
+    try {
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      const lines = buf.toString("utf8").split("\n").filter((l) => l.length > 0);
+      // Walk backwards looking for an EventMsg-shaped line. Other shapes
+      // (response_item, session_meta, compacted, turn_context) tell us
+      // nothing about turn-completion state, so they're skipped.
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const obj = JSON.parse(lines[i]!) as Record<string, unknown>;
+          const type = String(obj.type ?? "");
+          if (type === "event_msg" || obj.msg !== undefined) return obj;
+        } catch { /* malformed line, skip */ }
+      }
+      return null;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
 }
 
 function readLastTranscriptEntry(

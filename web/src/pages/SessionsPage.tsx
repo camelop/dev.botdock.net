@@ -15,7 +15,7 @@ import { ALIAS_COLORS } from "../lib/alias-colors";
 import * as streamCache from "../lib/session-stream-cache";
 import { twoWordSlug } from "../lib/slug";
 import { parseAnsi, spanStyle } from "../lib/ansi";
-import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
+import { parseTranscript, type TranscriptTurn, type TranscriptFormat } from "../lib/transcript";
 import { SessionNameChip } from "../components/SessionNameChip";
 import { ContextPushPopover } from "../components/ContextPushPopover";
 import { SessionExportModal } from "../components/SessionExportModal";
@@ -294,9 +294,9 @@ function SessionPill({ session: s }: { session: Pick<Session, "status" | "activi
   if (s.status === "exited") { label = "exited"; cls = ""; }
   else if (s.status === "failed_to_start") { label = "failed"; cls = "err"; }
   else if (s.status === "provisioning") { label = "provisioning"; cls = "warn"; }
-  else if (s.agent_kind === "claude-code" && s.activity === "syncing") { label = "syncing"; cls = "warn"; }
-  else if (s.agent_kind === "claude-code" && s.activity === "pending") { label = "pending"; cls = "warn"; }
-  else if (s.agent_kind === "claude-code" && s.activity === "running") { label = "running"; cls = "ok"; }
+  else if (isInteractiveAgent(s.agent_kind) && s.activity === "syncing") { label = "syncing"; cls = "warn"; }
+  else if (isInteractiveAgent(s.agent_kind) && s.activity === "pending") { label = "pending"; cls = "warn"; }
+  else if (isInteractiveAgent(s.agent_kind) && s.activity === "running") { label = "running"; cls = "ok"; }
   else { label = "active"; cls = "ok"; }
   return <span className={`pill ${cls}`}>{label}</span>;
 }
@@ -1285,12 +1285,15 @@ export function SessionView(props: {
           {err && <div className="error-banner">{err}</div>}
           {session && <Meta s={session} />}
 
-          {session?.agent_kind === "claude-code" && (
+          {session && isInteractiveAgent(session.agent_kind) && (
             <TranscriptView
               sessionId={props.id}
-              hasFile={!!session.cc_session_file}
+              hasFile={!!(session.agent_kind === "codex"
+                ? session.codex_session_file
+                : session.cc_session_file)}
               transcriptSize={session.remote_transcript_size}
               lastTranscriptAt={session.last_transcript_at}
+              format={session.agent_kind === "codex" ? "codex" : "cc"}
             />
           )}
 
@@ -1656,11 +1659,14 @@ function TranscriptPageIndicator({ totalPages, pageIndex, lineCount, onJump }: {
  * explicitly clicks to them. Older pages are cached per-session per-tab
  * so flipping back and forth is instant.
  */
-function TranscriptView({ sessionId, hasFile, transcriptSize, lastTranscriptAt }: {
+function TranscriptView({ sessionId, hasFile, transcriptSize, lastTranscriptAt, format }: {
   sessionId: string;
   hasFile: boolean;
   transcriptSize?: number;
   lastTranscriptAt?: string;
+  /** Which agent's JSONL shape to expect. Defaults to "cc" so the
+   *  pre-codex code paths work unchanged. */
+  format?: TranscriptFormat;
 }) {
   type PageCache = Map<number, { turns: TranscriptTurn[]; text: string }>;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1707,7 +1713,7 @@ function TranscriptView({ sessionId, hasFile, transcriptSize, lastTranscriptAt }
       setLineCount(r.line_count);
       setTotalPages(r.total_pages);
       setPageSize(r.page_size);
-      const turns = parseTranscript(r.text);
+      const turns = parseTranscript(r.text, format ?? "cc");
       cacheRef.current.set(r.page_index, { turns, text: r.text });
       // Keep pageIndex at -1 for the "follow latest" mode. Previously we
       // promoted it to r.page_index on first fetch, but that pinned the
@@ -2591,6 +2597,9 @@ function Meta({ s }: { s: Session }) {
       </Row>
       {s.cc_session_file && (
         <Row k="cc file"><span className="mono" style={{ wordBreak: "break-all" }}>{s.cc_session_file}</span></Row>
+      )}
+      {s.codex_session_file && (
+        <Row k="codex file"><span className="mono" style={{ wordBreak: "break-all" }}>{s.codex_session_file}</span></Row>
       )}
     </div>
   );

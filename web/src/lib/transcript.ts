@@ -1,11 +1,20 @@
 /**
- * Best-effort parser for the Claude Code JSONL transcript format.
+ * Best-effort parser for agent transcripts. Two flavours supported:
  *
- * The schema drifts across CC versions; we lean on message.role + content
- * shape rather than the top-level `type` field so we can handle a few
- * variants. Anything we can't classify we keep as `{kind: "unknown"}` with
- * the raw JSON intact so the user can still inspect it.
+ *   - "cc"    — Claude Code JSONL. Top-level shape varies across CC
+ *               versions; we lean on message.role + content shape rather
+ *               than the top-level `type` field so we tolerate a few
+ *               variants.
+ *   - "codex" — OpenAI codex rollout JSONL. Each line is a RolloutLine —
+ *               either a session-meta header, a response_item with the
+ *               OpenAI-style {role, content} message, an event_msg
+ *               lifecycle marker, or a context/compaction record.
+ *
+ * Anything we can't classify we keep as {kind: "unknown"} with the raw
+ * JSON intact so the user can still inspect the line in the panel.
  */
+
+export type TranscriptFormat = "cc" | "codex";
 
 export type TranscriptContentBlock =
   | { type: "text"; text: string }
@@ -26,14 +35,20 @@ export type TranscriptTurn = {
 /**
  * Parse the accumulated transcript text (newline-delimited JSON) into turns.
  * Tolerates blank lines and malformed lines (dropped, not fatal).
+ *
+ * `format` defaults to "cc" so existing call sites keep working unchanged;
+ * pass "codex" for codex rollout JSONL.
  */
-export function parseTranscript(text: string): TranscriptTurn[] {
+export function parseTranscript(
+  text: string,
+  format: TranscriptFormat = "cc",
+): TranscriptTurn[] {
   const turns: TranscriptTurn[] = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let obj: Record<string, unknown>;
     try { obj = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
-    turns.push(classify(obj));
+    turns.push(format === "codex" ? classifyCodex(obj) : classify(obj));
   }
   return turns;
 }
@@ -97,6 +112,127 @@ function classify(obj: Record<string, unknown>): TranscriptTurn {
   }
 
   return { uuid, parent_uuid, ts, kind: "unknown", blocks: [], raw };
+}
+
+/**
+ * Codex rollout classification. Codex's wire format uses a top-level
+ * `type` discriminator with a handful of variants:
+ *
+ *   - "session_meta"   — first line; carries session_id, cwd, git info.
+ *                         Surfaced as a "system" turn so the user sees a
+ *                         "[session opened …]" breadcrumb in the panel.
+ *   - "response_item"  — model message. Wraps an OpenAI-style {role,
+ *                         content} where content is an array of blocks
+ *                         (text, tool_call, etc.).
+ *   - "event_msg"      — lifecycle event (task_started, turn_complete,
+ *                         agent_message_delta, …). Surfaced as a system
+ *                         breadcrumb tagged by msg discriminator.
+ *   - "compacted"      — context-compaction record. System breadcrumb.
+ *   - "turn_context"   — turn-config snapshot. System breadcrumb.
+ *
+ * The exact JSON spelling has drifted across versions; we read the
+ * envelope tag liberally and fall back to looking at any role/content
+ * pair we can find before giving up to "unknown". `delta` event_msg
+ * variants are dropped at parse time so the panel doesn't fill up with
+ * ten thousand single-token rows.
+ */
+function classifyCodex(obj: Record<string, unknown>): TranscriptTurn {
+  const raw = obj;
+  const ts =
+    (obj.timestamp as string | undefined)
+    ?? (obj.ts as string | undefined)
+    ?? (obj.created_at as string | undefined);
+  const uuid =
+    (obj.id as string | undefined)
+    ?? (obj.uuid as string | undefined)
+    ?? (obj.session_id as string | undefined);
+
+  const topType = String(obj.type ?? "");
+
+  if (topType === "session_meta") {
+    const cwd = (obj.cwd as string | undefined) ?? "";
+    const sid = (obj.session_id as string | undefined) ?? "";
+    const parts: TranscriptContentBlock[] = [
+      { type: "text", text: `[session opened${sid ? ` ${sid}` : ""}${cwd ? ` · cwd ${cwd}` : ""}]` },
+    ];
+    return { uuid, ts, kind: "system", blocks: parts, raw };
+  }
+
+  if (topType === "event_msg" || obj.msg !== undefined) {
+    const msg = String((obj as { msg?: unknown }).msg ?? "");
+    // Drop the streaming delta noise — they're useful for activity
+    // detection on the server but not for the user's reading view.
+    if (/(^|_)delta$/.test(msg)) {
+      return { uuid, ts, kind: "unknown", blocks: [], raw };
+    }
+    const label = msg ? `[${msg}]` : "[event]";
+    return {
+      uuid, ts, kind: "system",
+      blocks: [{ type: "text", text: label }],
+      raw,
+    };
+  }
+
+  if (topType === "compacted" || topType === "turn_context") {
+    return {
+      uuid, ts, kind: "system",
+      blocks: [{ type: "text", text: `[${topType.replace(/_/g, " ")}]` }],
+      raw,
+    };
+  }
+
+  // ResponseItem: codex stores OpenAI-style messages, often nested under
+  // `item` or `payload`. Try a few well-known shapes before giving up.
+  const candidate =
+    (obj.item as Record<string, unknown> | undefined)
+    ?? (obj.payload as Record<string, unknown> | undefined)
+    ?? (obj.response_item as Record<string, unknown> | undefined)
+    ?? obj;
+
+  const role = String((candidate.role as string | undefined) ?? "");
+  const content = candidate.content;
+
+  if (role === "user" || role === "assistant" || role === "system") {
+    const blocks: TranscriptContentBlock[] = [];
+    if (Array.isArray(content)) {
+      for (const c of content) blocks.push(parseBlock(c));
+    } else if (typeof content === "string" && content.trim()) {
+      blocks.push({ type: "text", text: content });
+    } else if (content !== undefined) {
+      blocks.push({ type: "other", raw: content });
+    }
+    const cleaned = blocks.filter((b) => !(b.type === "text" && !b.text.trim()));
+    const isToolResult = role === "user"
+      && cleaned.length > 0
+      && cleaned.every((b) => b.type === "tool_result");
+    return {
+      uuid, ts,
+      kind: isToolResult
+        ? "tool_result"
+        : (role === "system" ? "system" : (role as "user" | "assistant")),
+      blocks: cleaned, raw,
+    };
+  }
+
+  // tool_call / tool_calls — codex sometimes records these as standalone
+  // ResponseItem entries rather than as content blocks of an assistant
+  // message. Treat them as assistant turns with a single tool_use block.
+  const toolCalls = (candidate.tool_calls as unknown[] | undefined) ?? [];
+  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+    const blocks: TranscriptContentBlock[] = toolCalls.map((tc) => {
+      const o = (tc ?? {}) as Record<string, unknown>;
+      const fn = (o.function as Record<string, unknown> | undefined) ?? {};
+      return {
+        type: "tool_use",
+        id: String(o.id ?? ""),
+        name: String((fn.name ?? o.name) ?? ""),
+        input: fn.arguments ?? o.arguments ?? o.input,
+      };
+    });
+    return { uuid, ts, kind: "assistant", blocks, raw };
+  }
+
+  return { uuid, ts, kind: "unknown", blocks: [], raw };
 }
 
 function parseBlock(block: unknown): TranscriptContentBlock {

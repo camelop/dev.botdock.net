@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Session } from "../api";
-import { SessionView, SessionConfigDialog } from "./SessionsPage";
+import { SessionView, SessionConfigDialog, isInteractiveAgent } from "./SessionsPage";
 import { AgentAvatar } from "./WarRoomPage";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
 import { relativeTime, fullTime } from "../lib/time";
@@ -68,7 +68,7 @@ export function SessionHubPage() {
   }, []);
 
   const pickDefault = (list: Session[]) => {
-    const pending = list.find((s) => s.status === "active" && s.agent_kind === "claude-code"
+    const pending = list.find((s) => s.status === "active" && isInteractiveAgent(s.agent_kind)
       && s.activity === "pending" && !isAcked(s.id, s.last_transcript_at));
     if (pending) return pending.id;
     const running = list.find((s) => s.status === "active");
@@ -151,7 +151,7 @@ export function SessionHubPage() {
     for (const s of sessions) {
       const isLive = s.status === "active" || s.status === "provisioning";
       const isPendingUnacked = s.status === "active"
-        && s.agent_kind === "claude-code"
+        && isInteractiveAgent(s.agent_kind)
         && s.activity === "pending"
         && !isAcked(s.id, s.last_transcript_at);
 
@@ -379,7 +379,7 @@ function SidebarRow(props: {
   onSaved: (s: Session) => void;
 }) {
   const { session: s, selected } = props;
-  const isPending = s.status === "active" && s.agent_kind === "claude-code" && s.activity === "pending";
+  const isPending = s.status === "active" && isInteractiveAgent(s.agent_kind) && s.activity === "pending";
   const acked = isPending && isAcked(s.id, s.last_transcript_at);
   const color = aliasColor(s.alias_color);
   const hasColor = !!color && color.name !== "none";

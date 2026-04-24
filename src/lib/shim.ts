@@ -229,7 +229,28 @@ CODEX_BIN=$(command -v codex)
 ESCAPED_BIN=$(printf '%s' "$CODEX_BIN" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"pre_codex\",\"bin\":\"$ESCAPED_BIN\"}" >> "$EVENTS"
 
+SESSION_EPOCH=$(date +%s)
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"codex\"}" >> "$EVENTS"
+
+# Background: wait a moment, then find the rollout jsonl that codex
+# just opened. Codex writes to
+#   $CODEX_HOME/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
+# (default $CODEX_HOME=$HOME/.codex). We filter by mtime > session start
+# so we don't pick up an older session file. The UUID is the trailing
+# 8-4-4-4-12 hex of the basename.
+(
+  sleep 2
+  ROLLOUT_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
+  if [ -d "$ROLLOUT_ROOT" ]; then
+    FILE=$(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' \
+             -newermt "@$SESSION_EPOCH" 2>/dev/null | head -1)
+    if [ -n "$FILE" ]; then
+      UUID=$(basename "$FILE" .jsonl \
+             | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)
+      printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"codex_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
+    fi
+  fi
+) &
 
 PROMPT=""
 SKIP_TRUST=""

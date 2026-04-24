@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Avatar from "boring-avatars";
 import { api, type Session } from "../api";
-import { SessionDetailModal } from "./SessionsPage";
+import { SessionDetailModal, isInteractiveAgent } from "./SessionsPage";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 import { relativeTime, fullTime } from "../lib/time";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
@@ -26,15 +26,17 @@ export function WarRoomPage() {
       const updates: Record<string, TranscriptTurn[]> = {};
       await Promise.all(
         list.map(async (s) => {
-          if (s.agent_kind !== "claude-code") return;
+          if (!isInteractiveAgent(s.agent_kind)) return;
           if (s.status === "exited" || s.status === "failed_to_start") {
             // Still fetch once in case transcript has history worth showing.
           }
           try {
             const r = await api.getSessionRecentTurns(s.id, 20);
-            // Server returns raw JSONL objects; parse into turns.
+            // Server returns raw JSONL objects; parse into turns. Codex
+            // sessions need the codex parser branch since their rollout
+            // shape differs from the CC JSONL.
             const jsonl = r.turns.map((t) => JSON.stringify(t)).join("\n");
-            updates[s.id] = parseTranscript(jsonl);
+            updates[s.id] = parseTranscript(jsonl, s.agent_kind === "codex" ? "codex" : "cc");
           } catch { /* drop per-session errors silently */ }
         }),
       );
@@ -52,7 +54,7 @@ export function WarRoomPage() {
   // for this particular transcript state.
   const needsAttention = sessions.filter(
     (s) => s.status === "active"
-      && s.agent_kind === "claude-code"
+      && isInteractiveAgent(s.agent_kind)
       && s.activity === "pending"
       && !isAcked(s.id, s.last_transcript_at),
   );
@@ -60,7 +62,7 @@ export function WarRoomPage() {
   // Order: needs-attention first, then other active, then everything else.
   const ordered = useMemo(() => {
     const score = (s: Session) => {
-      if (s.status === "active" && s.agent_kind === "claude-code"
+      if (s.status === "active" && isInteractiveAgent(s.agent_kind)
           && s.activity === "pending" && !isAcked(s.id, s.last_transcript_at)) return 0;
       if (s.status === "active") return 1;
       if (s.status === "provisioning") return 2;
@@ -189,7 +191,7 @@ export function WarRoomPage() {
 }
 
 function shortLabel(s: Session): string {
-  if (s.agent_kind === "claude-code") {
+  if (isInteractiveAgent(s.agent_kind)) {
     if (s.cmd) return s.cmd.length > 36 ? s.cmd.slice(0, 36) + "…" : s.cmd;
     return s.id;
   }
@@ -235,9 +237,9 @@ export function badgeState(s: Session, acked: boolean): AgentBadgeState {
   if (s.status === "exited") return "exited";
   if (s.status === "failed_to_start") return "failed";
   if (s.status === "provisioning") return "provisioning";
-  if (s.agent_kind === "claude-code" && s.activity === "syncing") return "syncing";
-  if (s.agent_kind === "claude-code" && s.activity === "pending") return acked ? "pending-acked" : "pending";
-  if (s.agent_kind === "claude-code" && s.activity === "running") return "running";
+  if (isInteractiveAgent(s.agent_kind) && s.activity === "syncing") return "syncing";
+  if (isInteractiveAgent(s.agent_kind) && s.activity === "pending") return acked ? "pending-acked" : "pending";
+  if (isInteractiveAgent(s.agent_kind) && s.activity === "running") return "running";
   return "active";
 }
 
@@ -263,7 +265,7 @@ function SessionCard(props: {
 }) {
   const { session: s, turns } = props;
   const summary = useMemo(() => summarizeTurns(turns), [turns]);
-  const isPending = s.status === "active" && s.agent_kind === "claude-code"
+  const isPending = s.status === "active" && isInteractiveAgent(s.agent_kind)
     && s.activity === "pending";
   const acked = isPending && isAcked(s.id, s.last_transcript_at);
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
-import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, type SessionDraft } from "./SessionsPage";
+import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, isInteractiveAgent, type SessionDraft } from "./SessionsPage";
 import { SessionNameChip } from "../components/SessionNameChip";
 import { SessionImportModal } from "../components/SessionImportModal";
 import { relativeTime, fullTime } from "../lib/time";
@@ -36,7 +36,7 @@ export function DashboardPage() {
   const active = sessions.filter((s) => s.status === "active").length;
   const pending = sessions.filter(
     (s) => s.status === "active"
-      && s.agent_kind === "claude-code"
+      && isInteractiveAgent(s.agent_kind)
       && s.activity === "pending"
       && !isAcked(s.id, s.last_transcript_at),
   ).length;
@@ -144,9 +144,9 @@ function DashboardPill({ session: s }: { session: Session }) {
   if (s.status === "exited") { label = "exited"; cls = ""; }
   else if (s.status === "failed_to_start") { label = "failed"; cls = "err"; }
   else if (s.status === "provisioning") { label = "provisioning"; cls = "warn"; }
-  else if (s.agent_kind === "claude-code" && s.activity === "syncing") { label = "syncing"; cls = "warn"; }
-  else if (s.agent_kind === "claude-code" && s.activity === "pending") { label = "pending"; cls = "warn"; }
-  else if (s.agent_kind === "claude-code" && s.activity === "running") { label = "running"; cls = "ok"; }
+  else if (isInteractiveAgent(s.agent_kind) && s.activity === "syncing") { label = "syncing"; cls = "warn"; }
+  else if (isInteractiveAgent(s.agent_kind) && s.activity === "pending") { label = "pending"; cls = "warn"; }
+  else if (isInteractiveAgent(s.agent_kind) && s.activity === "running") { label = "running"; cls = "ok"; }
   else { label = "active"; cls = "ok"; }
   return <span className={`pill ${cls}`}>{label}</span>;
 }
