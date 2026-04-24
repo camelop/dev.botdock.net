@@ -4,6 +4,11 @@ Only user-visible changes. Latest first. Before v1.0.0, each minor
 version gets one summary entry here; for line-level detail, read the
 commit log between the two adjacent tags.
 
+## v0.7.0 — 2026-04-24
+
+- Export / import a session — Export ships a zip (machine + key + logs + transcript), Import reads it back. Both BotDocks end up driving the same remote tmux.
+- Fixes: "+ New session" no longer freezes the UI during remote bootstrap; unhandled render crashes show a recovery screen instead of a blank page.
+
 ## v0.6.0 — 2026-04-23
 
 - Curate reusable context — a new Context section in the nav lets you
