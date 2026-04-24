@@ -150,9 +150,15 @@ export function freshDraft(machines: Machine[]): SessionDraft {
  * transcript at launch time). Falls back to "(no prompt)" when the CC
  * session was launched with no prompt at all.
  */
+/** Whether this agent drives a TUI we should embed via ttyd (vs the raw
+ *  log view). Currently claude-code and codex; generic-cmd shows Live log. */
+export function isInteractiveAgent(kind: Session["agent_kind"]): boolean {
+  return kind === "claude-code" || kind === "codex";
+}
+
 export function sessionCmdLabel(s: Pick<Session, "cmd" | "agent_kind">): string {
   if (s.cmd && s.cmd.length > 0) return s.cmd;
-  if (s.agent_kind === "claude-code") return "(no prompt)";
+  if (isInteractiveAgent(s.agent_kind)) return "(no prompt)";
   return "";
 }
 
@@ -1109,7 +1115,7 @@ export function SessionView(props: {
         {/* LEFT: terminal fills the column, SendInput collapses behind a toggle. */}
         <div className="session-left">
           <div className="terminal-fill">
-            {session?.agent_kind === "claude-code" ? (
+            {session && isInteractiveAgent(session.agent_kind) ? (
               <ClaudeTerminal
                 session={session}
                 fillParent
@@ -2571,7 +2577,7 @@ function Meta({ s }: { s: Session }) {
   const T = ({ t }: { t?: string }) => (
     <span title={fullTime(t)}>{relativeTime(t)}</span>
   );
-  const cmdLabel = s.agent_kind === "claude-code" ? "prompt" : "cmd";
+  const cmdLabel = isInteractiveAgent(s.agent_kind) ? "prompt" : "cmd";
   return (
     <div className="card" style={{ padding: 12, fontSize: 12.5 }}>
       <Row k="kind"><span className="mono">{s.agent_kind}</span></Row>
