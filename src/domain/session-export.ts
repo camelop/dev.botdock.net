@@ -28,7 +28,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DataDir, readToml } from "../storage/index.ts";
 import { readMachine, type Machine } from "./machines.ts";
-import { readSession } from "./sessions.ts";
+import { readSession, type Session } from "./sessions.ts";
 import { writeZip, type ZipEntry } from "../lib/zip-write.ts";
 import { BOTDOCK_VERSION } from "../version.ts";
 import { userInfo } from "node:os";
@@ -103,16 +103,14 @@ export function exportSession(
       path: `machines/${rewrittenName}.toml`,
       data: stringifyMachine(rewritten),
     });
-    // Also rewrite the session's `machine` reference to the new name.
-    const sessionRewritten = { ...session, machine: rewrittenName };
-    entries.push(...sessionDirEntries(dir, sessionId, sessionRewritten));
+    entries.push(...sessionDirEntries(dir, sessionId, session, rewrittenName));
   } else {
     const machineTomlPath = dir.machineFile(machine.name);
     entries.push({
       path: `machines/${machine.name}.toml`,
       data: readFileSync(machineTomlPath),
     });
-    entries.push(...sessionDirEntries(dir, sessionId));
+    entries.push(...sessionDirEntries(dir, sessionId, session));
   }
 
   // --- key dir ------------------------------------------------------------
@@ -149,23 +147,47 @@ export function exportSession(
 function sessionDirEntries(
   dir: DataDir,
   sessionId: string,
-  overrideSessionMeta?: Record<string, unknown>,
+  session: Session,
+  machineOverride?: string,
 ): ZipEntry[] {
   const sessionDir = join(dir.sessionsDir(), sessionId);
   if (!existsSync(sessionDir)) {
     throw new Error(`session dir missing on disk: ${sessionDir}`);
   }
+
+  // Build a sanitised session meta for the export. Two kinds of edits:
+  //   1. If the caller passed a rewritten machine name (local-machine
+  //      path), point the session at that instead of "local".
+  //   2. Strip every exporter-local piece of forward state. The ports
+  //      are pinned to the exporter's network namespace and re-using
+  //      them on the importing side gives the user a dead iframe; the
+  //      importer's setupSessionTerminal will allocate its own ports
+  //      against the same remote ttyd supervisor after import.
+  const sanitised: Record<string, unknown> = { ...session };
+  if (machineOverride) sanitised.machine = machineOverride;
+  delete sanitised.terminal_local_port;
+  delete sanitised.terminal_remote_port;
+  delete sanitised.filebrowser_local_port;
+  delete sanitised.filebrowser_remote_port;
+  delete sanitised.codeserver_local_port;
+  delete sanitised.codeserver_remote_port;
+  delete sanitised.codeserver_workdir;
+  // Drop any keys that ended up undefined (optional fields that were
+  // never set); writeToml would otherwise emit `key = undefined`.
+  for (const k of Object.keys(sanitised)) {
+    if (sanitised[k] === undefined) delete sanitised[k];
+  }
+
   const out: ZipEntry[] = [];
   for (const rel of walkRelFiles(sessionDir)) {
-    // Skip notes.md — the scratchpad is personal to the exporter. Anything
-    // else we ship (meta, events, raw.log, transcript.jsonl mirror, etc.)
+    // Skip notes.md — the scratchpad is personal to the exporter. Meta
+    // is always regenerated from `sanitised`; everything else (events,
+    // raw.log, transcript.jsonl mirror, etc.) ships as-is.
     if (rel === NOTES_FILENAME) continue;
-    if (rel === "meta.toml" && overrideSessionMeta) {
-      // Rewrite the session's machine reference to match the rewritten
-      // machine name on the import side.
+    if (rel === "meta.toml") {
       out.push({
         path: `sessions/${sessionId}/meta.toml`,
-        data: stringifyMetadata(overrideSessionMeta),
+        data: stringifyMetadata(sanitised),
       });
       continue;
     }

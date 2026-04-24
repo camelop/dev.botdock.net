@@ -3,9 +3,12 @@ bun.lockb
 *.log
 .DS_Store
 
-# local test data dir
+# local test data dirs — glob catches `my_test`, `my_test_2`, etc. BotDock
+# data dirs under the repo root include private/keys/**; they MUST NOT
+# get committed. v0.6.4 leaked a managed-local private key exactly
+# because this pattern wasn't broad enough — see git log for that fix.
 scratch/
-my_test/
+my_test*/
 
 # Vite build output
 web/dist/

@@ -216,9 +216,10 @@ export function SessionImportModal(props: {
             host you don't control.
           </AckLine>
           <AckLine checked={ack2} onChange={setAck2}>
-            Importing lets the exporter's tmux / ttyd run on the target
-            machine — don't import zips from sources you wouldn't let
-            execute code on your behalf.
+            This session runs on a machine the exporter gave you access
+            to — they own the host, they can read every keystroke you
+            send into the session, and they can tamper with the tmux at
+            any time. Only import from someone you trust with that.
           </AckLine>
           <AckLine checked={ack3} onChange={setAck3}>
             This BotDock instance may open outbound SSH tunnels to the

@@ -363,6 +363,22 @@ export function mountSessions(router: Router, dir: DataDir, poller: SessionPolle
       // from the UI's perspective — transcript / raw / events stream in
       // on the WebSocket, same as any locally-launched session.
       try { poller.watch(result.session_id); } catch { /* non-fatal */ }
+      // Stand up our own local SSH -L forward for the remote ttyd. The
+      // exporter's local port info was stripped at export time (it was
+      // pinned to their network namespace and would point at nothing
+      // on our side), so without this step the session's terminal iframe
+      // opens a dead port. The remote ttyd supervisor is already running
+      // — startSessionTerminal is idempotent and reuses it.
+      try {
+        const imported = readSession(dir, result.session_id);
+        if (imported.agent_kind === "claude-code" && imported.status === "active") {
+          setupSessionTerminal(dir, forwardManager, result.session_id).catch((err) => {
+            console.error(`[import ${result.session_id}] terminal setup failed:`, err);
+          });
+        }
+      } catch (e) {
+        console.error(`[import] post-apply terminal setup skipped:`, e);
+      }
       return json(result);
     } catch (e) {
       throw new HttpError(400, (e as Error).message || String(e));
