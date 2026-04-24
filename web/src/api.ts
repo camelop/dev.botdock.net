@@ -182,6 +182,8 @@ export type Session = {
   codex_session_uuid?: string;
   codex_skip_trust?: boolean;
   codex_resume_uuid?: string;
+  codex_sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  codex_approval?: "untrusted" | "on-request" | "on-failure" | "never";
   alias?: string;
   alias_color?: string;
   tags?: string[];
@@ -331,6 +333,13 @@ export const api = {
     request<{ sessions: CcSessionEntry[]; error?: string }>(
       `/api/machines/${encodeURIComponent(name)}/cc-sessions`,
     ),
+  /** Same shape as listCcSessions but scans ~/.codex/sessions for codex
+   *  rollouts. Wire-format-compatible with CcSessionEntry so the
+   *  ResumePicker can stay polymorphic. */
+  listCodexSessions: (name: string) =>
+    request<{ sessions: CcSessionEntry[]; error?: string }>(
+      `/api/machines/${encodeURIComponent(name)}/codex-sessions`,
+    ),
   startMachineTerminal: (name: string) =>
     request<{ forward: Forward; status: ForwardWithStatus["status"]; url: string }>(
       `/api/machines/${encodeURIComponent(name)}/terminal/start`, { method: "POST" },
@@ -365,6 +374,8 @@ export const api = {
     cc_agent_teams?: boolean;
     codex_skip_trust?: boolean;
     codex_resume_uuid?: string;
+    codex_sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+    codex_approval?: "untrusted" | "on-request" | "on-failure" | "never";
   }) => request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body) }),
   stopSession: (id: string) =>
     request<Session>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),

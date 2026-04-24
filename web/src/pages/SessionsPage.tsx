@@ -44,10 +44,14 @@ export type SessionDraft = {
    *  the semantic of cc_skip_trust for the codex approvals/sandbox stack. */
   codex_skip_trust: boolean;
   /** codex: if set, the shim runs `codex resume <uuid>` rather than a
-   *  fresh conversation. Not surfaced in the New Session modal yet —
-   *  field exists so P1 can switch on the resume picker without a
-   *  schema change. */
+   *  fresh conversation. */
   codex_resume_uuid?: string;
+  /** codex: maps to --sandbox <mode>. Empty = codex default. Ignored
+   *  if codex_skip_trust=true (yolo overrides sandbox/approvals). */
+  codex_sandbox: "" | "read-only" | "workspace-write" | "danger-full-access";
+  /** codex: maps to --ask-for-approval <mode>. Empty = codex default.
+   *  Ignored if codex_skip_trust=true. */
+  codex_approval: "" | "untrusted" | "on-request" | "on-failure" | "never";
 };
 
 const TRUST_PREF_KEY = "botdock:cc-skip-trust";
@@ -140,6 +144,8 @@ export function freshDraft(machines: Machine[]): SessionDraft {
     launch_command: "",
     cc_agent_teams: false,
     codex_skip_trust: loadCodexTrustPref(),
+    codex_sandbox: "",
+    codex_approval: "",
   };
 }
 
@@ -154,6 +160,36 @@ export function freshDraft(machines: Machine[]): SessionDraft {
  *  log view). Currently claude-code and codex; generic-cmd shows Live log. */
 export function isInteractiveAgent(kind: Session["agent_kind"]): boolean {
   return kind === "claude-code" || kind === "codex";
+}
+
+/** Compact pill showing which agent kind a session runs. Re-used in the
+ *  Dashboard's Recent table + Sessions list view's Kind column. The
+ *  background colors match the corner tag on AgentAvatar so the same
+ *  session reads the same way across all three surfaces. */
+export function AgentKindChip({ kind }: { kind: AgentKind }) {
+  const label = kind === "codex" ? "codex"
+    : kind === "claude-code" ? "claude code"
+    : "cmd";
+  const bg = kind === "codex" ? "#10a37f"
+    : kind === "claude-code" ? "#6aa4ff"
+    : "#6a7280";
+  return (
+    <span
+      className="mono"
+      title={kind}
+      style={{
+        display: "inline-block",
+        padding: "1px 8px",
+        background: bg,
+        color: "#0b1220",
+        borderRadius: 8,
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: 0.2,
+        whiteSpace: "nowrap",
+      }}
+    >{label}</span>
+  );
 }
 
 export function sessionCmdLabel(s: Pick<Session, "cmd" | "agent_kind">): string {
@@ -214,6 +250,7 @@ export function SessionsPage() {
             <thead>
               <tr>
                 <th>ID</th>
+                <th>Kind</th>
                 <th>Status</th>
                 <th>Machine</th>
                 <th>Cmd</th>
@@ -226,6 +263,7 @@ export function SessionsPage() {
               {sessions.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
                   <td><SessionNameChip session={s} /></td>
+                  <td><AgentKindChip kind={s.agent_kind} /></td>
                   <td><SessionPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionCmdLabel(s)}</td>
@@ -327,11 +365,13 @@ export function NewSessionModal(props: {
 
   const submit = async () => {
     setErr("");
-    if (draft.cc_resume_uuid && activeResumeUuids.has(draft.cc_resume_uuid)) {
+    const resumeUuid = draft.cc_resume_uuid ?? draft.codex_resume_uuid;
+    if (resumeUuid && activeResumeUuids.has(resumeUuid)) {
+      const agentName = draft.agent_kind === "codex" ? "codex" : "claude";
       const ok = confirm(
-        "The session you picked still has an active `claude` process in its workdir. "
-        + "If you resume now, claude will fork a new branch instead of continuing cleanly. "
-        + "Proceed anyway?"
+        `The session you picked still has an active \`${agentName}\` process in its workdir. `
+        + `If you resume now, ${agentName} will fork a new branch instead of continuing cleanly. `
+        + `Proceed anyway?`
       );
       if (!ok) return;
     }
@@ -339,7 +379,14 @@ export function NewSessionModal(props: {
     try {
       if (draft.agent_kind === "claude-code") saveTrustPref(draft.cc_skip_trust);
       if (draft.agent_kind === "codex")       saveCodexTrustPref(draft.codex_skip_trust);
-      const s = await api.createSession(draft);
+      // The createSession API expects the codex sandbox / approval enum
+      // OR undefined (not the empty-string sentinel we keep in the form
+      // state). Coerce here.
+      const s = await api.createSession({
+        ...draft,
+        codex_sandbox: draft.codex_sandbox || undefined,
+        codex_approval: draft.codex_approval || undefined,
+      });
       await props.onDone(s.id);
     } catch (e) {
       setErr(String((e as Error).message ?? e));
@@ -364,6 +411,7 @@ export function NewSessionModal(props: {
       {draft.agent_kind === "claude-code" && draft.machine && (
         <ResumePicker
           machine={draft.machine}
+          format="cc"
           selectedUuid={draft.cc_resume_uuid}
           onSelect={(entry) => {
             if (!entry) {
@@ -384,15 +432,38 @@ export function NewSessionModal(props: {
           onActiveUuidsChange={setActiveResumeUuids}
         />
       )}
+      {draft.agent_kind === "codex" && draft.machine && (
+        <ResumePicker
+          machine={draft.machine}
+          format="codex"
+          selectedUuid={draft.codex_resume_uuid}
+          onSelect={(entry) => {
+            if (!entry) {
+              patch({ codex_resume_uuid: undefined });
+              return;
+            }
+            // Same logic as the CC branch — picking a rollout overrides
+            // workdir to its cwd (codex resume only makes sense from
+            // there) and lifts the first user message into cmd as a
+            // table label.
+            patch({
+              codex_resume_uuid: entry.uuid,
+              workdir: entry.workdir,
+              cmd: entry.preview || "",
+            });
+          }}
+          onActiveUuidsChange={setActiveResumeUuids}
+        />
+      )}
 
       <WorkdirPicker
         machine={draft.machine}
         value={draft.workdir}
-        onChange={(v) => patch({ workdir: v, cc_resume_uuid: undefined })}
+        onChange={(v) => patch({ workdir: v, cc_resume_uuid: undefined, codex_resume_uuid: undefined })}
         onRegen={regenSlug}
       />
 
-      {!draft.cc_resume_uuid && (
+      {!(draft.cc_resume_uuid || draft.codex_resume_uuid) && (
         <label>
           <span>{draft.agent_kind === "generic-cmd" ? "Command" : "Initial prompt (optional)"}</span>
           <textarea
@@ -411,7 +482,9 @@ export function NewSessionModal(props: {
             ? "Resuming an existing conversation — BotDock runs `claude --resume <uuid>` in a fresh tmux."
             : "Runs the `claude` CLI inside tmux. Leave the prompt blank to start an empty conversation. Requires `claude` installed and authenticated on the remote.")
           : draft.agent_kind === "codex"
-            ? "Runs the `codex` CLI inside tmux. Leave the prompt blank to start empty. Requires `codex` installed and authenticated on the remote (OPENAI_API_KEY or `codex login`)."
+            ? (draft.codex_resume_uuid
+              ? "Resuming an existing rollout — BotDock runs `codex resume <uuid>` in a fresh tmux."
+              : "Runs the `codex` CLI inside tmux. Leave the prompt blank to start empty. Requires `codex` installed and authenticated on the remote (OPENAI_API_KEY or `codex login`).")
             : "The command runs inside a tmux session. BotDock creates the working directory if it doesn't exist."}
       </div>
       {draft.agent_kind === "claude-code" && (
@@ -459,6 +532,8 @@ export function NewSessionModal(props: {
         draft={draft}
         onLaunchCommand={(v) => patch({ launch_command: v })}
         onAgentTeams={(v) => patch({ cc_agent_teams: v })}
+        onCodexSandbox={(v) => patch({ codex_sandbox: v })}
+        onCodexApproval={(v) => patch({ codex_approval: v })}
       />
       {err && <div className="error-banner">{err}</div>}
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
@@ -481,22 +556,119 @@ function AdvancedSessionOptions(props: {
   draft: SessionDraft;
   onLaunchCommand: (v: string) => void;
   onAgentTeams: (v: boolean) => void;
+  onCodexSandbox: (v: SessionDraft["codex_sandbox"]) => void;
+  onCodexApproval: (v: SessionDraft["codex_approval"]) => void;
 }) {
   const { draft } = props;
   const [open, setOpen] = useState(false);
-  // Visual hint when an advanced option is non-default, so the user
-  // remembers they've tweaked something even when the section is folded.
-  const hasOverrides = (draft.launch_command && draft.launch_command.trim().length > 0)
-    || draft.cc_agent_teams;
 
-  // Advanced is claude-code-scoped for now (launch_command is CC-specific,
-  // agent_teams is a CC env var). Hide for generic-cmd.
-  if (draft.agent_kind !== "claude-code") return null;
+  if (draft.agent_kind === "claude-code") {
+    const hasOverrides =
+      (draft.launch_command && draft.launch_command.trim().length > 0)
+      || draft.cc_agent_teams;
+    return (
+      <AdvancedShell open={open} onOpen={setOpen} hasOverrides={hasOverrides}>
+        <label style={{ marginBottom: 10 }}>
+          <span>Launch command</span>
+          <input
+            value={draft.launch_command}
+            onChange={(e) => props.onLaunchCommand(e.target.value)}
+            placeholder="claude"
+            style={{ fontSize: 12 }}
+          />
+          <span className="muted" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
+            Word-split into argv. Leave empty for the default{" "}
+            <code className="mono">claude</code>. Example:{" "}
+            <code className="mono">claude --verbose</code>.
+          </span>
+        </label>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <input
+            id="cc-agent-teams"
+            type="checkbox"
+            checked={draft.cc_agent_teams}
+            onChange={(e) => props.onAgentTeams(e.target.checked)}
+            style={{ width: 16, height: 16, marginTop: 2, cursor: "pointer" }}
+          />
+          <label
+            htmlFor="cc-agent-teams"
+            style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0, cursor: "pointer", lineHeight: 1.5 }}
+          >
+            Use agent teams — sets{" "}
+            <code className="mono">CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</code>{" "}
+            in the remote environment before launching claude.
+          </label>
+        </div>
+      </AdvancedShell>
+    );
+  }
 
+  if (draft.agent_kind === "codex") {
+    const hasOverrides = !!draft.codex_sandbox || !!draft.codex_approval;
+    // Disable the sub-controls when "yolo" is on — that flag bypasses
+    // both sandbox AND approvals so the dropdowns would be misleading.
+    const yoloed = draft.codex_skip_trust;
+    return (
+      <AdvancedShell open={open} onOpen={setOpen} hasOverrides={hasOverrides}>
+        <label style={{ marginBottom: 10 }}>
+          <span>Sandbox mode</span>
+          <select
+            disabled={yoloed}
+            value={draft.codex_sandbox}
+            onChange={(e) => props.onCodexSandbox(e.target.value as SessionDraft["codex_sandbox"])}
+            style={{ fontSize: 12 }}
+          >
+            <option value="">(codex default)</option>
+            <option value="read-only">read-only</option>
+            <option value="workspace-write">workspace-write</option>
+            <option value="danger-full-access">danger-full-access</option>
+          </select>
+          <span className="muted" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
+            Maps to <code className="mono">--sandbox &lt;mode&gt;</code>. Ignored when
+            "Bypass approvals + sandbox" is on (yolo overrides this).
+          </span>
+        </label>
+        <label style={{ marginBottom: 10 }}>
+          <span>Ask for approval</span>
+          <select
+            disabled={yoloed}
+            value={draft.codex_approval}
+            onChange={(e) => props.onCodexApproval(e.target.value as SessionDraft["codex_approval"])}
+            style={{ fontSize: 12 }}
+          >
+            <option value="">(codex default)</option>
+            <option value="untrusted">untrusted</option>
+            <option value="on-request">on-request</option>
+            <option value="on-failure">on-failure</option>
+            <option value="never">never</option>
+          </select>
+          <span className="muted" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
+            Maps to <code className="mono">--ask-for-approval &lt;mode&gt;</code>. Ignored
+            when yolo is on.
+          </span>
+        </label>
+      </AdvancedShell>
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Shared collapsible shell for the Advanced Options panels. Header row +
+ * "customized" pill + bordered body that only renders when expanded.
+ * Keeps the per-agent renderers above focused on their actual fields.
+ */
+function AdvancedShell(props: {
+  open: boolean;
+  onOpen: (v: boolean) => void;
+  hasOverrides: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <div style={{ marginBottom: 8 }}>
       <div
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => props.onOpen(!props.open)}
         style={{
           display: "inline-flex", alignItems: "center", gap: 6,
           fontSize: 12, color: "var(--fg-dim)",
@@ -504,11 +676,11 @@ function AdvancedSessionOptions(props: {
           padding: "4px 0",
         }}
       >
-        <span>{open ? "▾" : "▸"}</span>
+        <span>{props.open ? "▾" : "▸"}</span>
         <span>Advanced</span>
-        {hasOverrides && <span className="pill" style={{ fontSize: 10, padding: "1px 6px" }}>customized</span>}
+        {props.hasOverrides && <span className="pill" style={{ fontSize: 10, padding: "1px 6px" }}>customized</span>}
       </div>
-      {open && (
+      {props.open && (
         <div
           style={{
             border: "1px solid var(--border)",
@@ -518,37 +690,7 @@ function AdvancedSessionOptions(props: {
             marginTop: 4,
           }}
         >
-          <label style={{ marginBottom: 10 }}>
-            <span>Launch command</span>
-            <input
-              value={draft.launch_command}
-              onChange={(e) => props.onLaunchCommand(e.target.value)}
-              placeholder="claude"
-              style={{ fontSize: 12 }}
-            />
-            <span className="muted" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
-              Word-split into argv. Leave empty for the default{" "}
-              <code className="mono">claude</code>. Example:{" "}
-              <code className="mono">claude --verbose</code>.
-            </span>
-          </label>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-            <input
-              id="cc-agent-teams"
-              type="checkbox"
-              checked={draft.cc_agent_teams}
-              onChange={(e) => props.onAgentTeams(e.target.checked)}
-              style={{ width: 16, height: 16, marginTop: 2, cursor: "pointer" }}
-            />
-            <label
-              htmlFor="cc-agent-teams"
-              style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0, cursor: "pointer", lineHeight: 1.5 }}
-            >
-              Use agent teams — sets{" "}
-              <code className="mono">CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</code>{" "}
-              in the remote environment before launching claude.
-            </label>
-          </div>
+          {props.children}
         </div>
       )}
     </div>
@@ -564,11 +706,16 @@ function AdvancedSessionOptions(props: {
  */
 function ResumePicker(props: {
   machine: string;
+  /** Which agent's transcript directory to scan and which API to call.
+   *  CC reads ~/.claude/projects via /cc-sessions; codex reads
+   *  ~/.codex/sessions via /codex-sessions. The two share the same
+   *  CcSessionEntry shape so the picker UI itself stays generic. */
+  format: "cc" | "codex";
   selectedUuid?: string;
   onSelect: (entry: CcSessionEntry | null) => void;
   onActiveUuidsChange: (uuids: Set<string>) => void;
 }) {
-  const { machine, selectedUuid } = props;
+  const { machine, format, selectedUuid } = props;
   const [sessions, setSessions] = useState<CcSessionEntry[] | null>(null);
   const [err, setErr] = useState<string>("");
   const [expanded, setExpanded] = useState(false);
@@ -578,7 +725,10 @@ function ResumePicker(props: {
     setErr("");
     if (!machine) return;
     let cancelled = false;
-    api.listCcSessions(machine).then((r) => {
+    const fetch = format === "codex"
+      ? api.listCodexSessions(machine)
+      : api.listCcSessions(machine);
+    fetch.then((r) => {
       if (cancelled) return;
       const list = r.sessions ?? [];
       setSessions(list);
@@ -591,7 +741,7 @@ function ResumePicker(props: {
       props.onActiveUuidsChange(new Set());
     });
     return () => { cancelled = true; };
-  }, [machine]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [machine, format]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = sessions?.find((s) => s.uuid === selectedUuid);
 
@@ -650,7 +800,7 @@ function ResumePicker(props: {
           {sessions === null && <div className="empty" style={{ padding: 16, fontSize: 12 }}>Loading…</div>}
           {sessions && sessions.length === 0 && (
             <div className="empty" style={{ padding: 16, fontSize: 12 }}>
-              No CC transcripts found on this machine.
+              No {format === "codex" ? "codex" : "CC"} transcripts found on this machine.
               {err ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{err}</div> : null}
             </div>
           )}

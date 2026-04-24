@@ -276,6 +276,127 @@ PY
     }
   });
 
+  /**
+   * Sibling of /cc-sessions for codex. Walks $CODEX_HOME/sessions/
+   * (default ~/.codex/sessions) recursively for rollout-*.jsonl files,
+   * pulls cwd from each rollout's session_meta line and the first real
+   * (non-envelope) user prompt from the response_item rows after it.
+   *
+   * `has_active_process` is heuristic: any `codex` process whose argv[0]
+   * basename matches "codex" and whose cwd matches a rollout's cwd is
+   * considered to still hold that conversation. The same trick CC uses
+   * — it errs on the side of "still live" when in doubt, which is the
+   * polite default for the resume-picker warning.
+   */
+  router.get("/api/machines/:name/codex-sessions", ({ params }) => {
+    if (!existsSync(dir.machineFile(params.name!))) throw new HttpError(404, "not found");
+    const machine = readMachine(dir, params.name!);
+    const script = `
+python3 - <<'PY'
+import json, os, re
+home = os.path.expanduser("~")
+codex_root = os.environ.get("CODEX_HOME") or os.path.join(home, ".codex")
+sessions_root = os.path.join(codex_root, "sessions")
+
+active_cwds = set()
+try:
+    pid_entries = os.listdir("/proc")
+except Exception:
+    pid_entries = []
+for pid in pid_entries:
+    if not pid.isdigit(): continue
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmd = f.read().replace(b"\\0", b" ").decode(errors="replace").strip()
+    except Exception:
+        continue
+    # Match argv[0] basename strictly so codex-related-tool processes
+    # don't get false-positive'd as a live codex.
+    first = cmd.split(" ", 1)[0] if cmd else ""
+    if os.path.basename(first) != "codex":
+        continue
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+    except Exception:
+        continue
+    active_cwds.add(cwd)
+
+uuid_re = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+envelope_re = re.compile(r"^\\s*<[a-zA-Z_][a-zA-Z0-9_]*>")
+
+out = []
+if os.path.isdir(sessions_root):
+    for root_dir, _dirs, files in os.walk(sessions_root):
+        for name in files:
+            if not name.startswith("rollout-") or not name.endswith(".jsonl"): continue
+            full = os.path.join(root_dir, name)
+            try:
+                st = os.stat(full)
+            except Exception:
+                continue
+            uuid_match = uuid_re.search(name)
+            uuid = uuid_match.group(0) if uuid_match else ""
+            cwd = None
+            preview = None
+            try:
+                with open(full, "r", errors="replace") as fh:
+                    for i, line in enumerate(fh):
+                        if i > 200: break
+                        line = line.strip()
+                        if not line: continue
+                        try:
+                            rec = json.loads(line)
+                        except Exception:
+                            continue
+                        env_type = rec.get("type")
+                        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+                        if not cwd and env_type == "session_meta" and isinstance(payload.get("cwd"), str):
+                            cwd = payload["cwd"]
+                        if not preview and env_type == "response_item":
+                            if payload.get("type") == "message" and payload.get("role") == "user":
+                                content = payload.get("content")
+                                if isinstance(content, list):
+                                    for blk in content:
+                                        if not isinstance(blk, dict): continue
+                                        if blk.get("type") not in ("input_text", "output_text", "text"):
+                                            continue
+                                        text = blk.get("text", "")
+                                        if not isinstance(text, str): continue
+                                        text = text.strip()
+                                        if not text: continue
+                                        # Skip auto-generated envelope rows.
+                                        if envelope_re.match(text):
+                                            continue
+                                        preview = text
+                                        break
+                        if cwd and preview: break
+            except Exception:
+                pass
+            out.append({
+                "uuid": uuid,
+                "workdir": cwd or "",
+                "mtime": int(st.st_mtime),
+                "size": st.st_size,
+                "preview": (preview or "")[:160],
+                "has_active_process": bool(cwd and cwd in active_cwds),
+            })
+
+out.sort(key=lambda x: -x["mtime"])
+print(json.dumps(out))
+PY
+`;
+    const r = sshExec(dir, machine, "bash -s", script, 15_000);
+    if (r.code !== 0) {
+      return json({ sessions: [], error: r.stderr.slice(0, 400) || `exit ${r.code}` });
+    }
+    try {
+      const sessions = JSON.parse(r.stdout.trim() || "[]") as unknown[];
+      return json({ sessions });
+    } catch (e) {
+      return json({ sessions: [], error: `parse: ${(e as Error).message}` });
+    }
+  });
+
   router.get("/api/machines/:name/installed", ({ params }) => {
     if (!existsSync(dir.machineFile(params.name!))) throw new HttpError(404, "not found");
     const m = readMachine(dir, params.name!);

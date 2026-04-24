@@ -255,26 +255,42 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"cod
 PROMPT=""
 SKIP_TRUST=""
 RESUME_UUID=""
+SANDBOX_MODE=""
+APPROVAL_MODE=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
 
-# SKIP_TRUST maps to codex's global --dangerously-bypass-approvals-and-sandbox
-# (alias --yolo). Matches the semantic user expectation set by cc_skip_trust:
-# the agent runs without per-tool approval prompts inside a workdir the user
-# has decided is OK to auto-accept in. Softer tiers (--full-auto, --sandbox)
-# aren't exposed in P0 — user can plumb them later via a launch_command
-# override like the claude-code path has.
+# Build codex flags. Three layers of precedence:
+#
+#   1. SKIP_TRUST=1 (the "yolo" toggle in the new-session modal) overrides
+#      everything else — passes --dangerously-bypass-approvals-and-sandbox
+#      and ignores SANDBOX_MODE / APPROVAL_MODE because that flag implies
+#      both. This matches the cc_skip_trust semantic.
+#
+#   2. SANDBOX_MODE / APPROVAL_MODE — set independently when the user
+#      picks a specific tier in the Advanced section of the modal. Either
+#      can be set without the other; codex falls back to its own default
+#      for whichever is empty.
+#
+#   3. Both empty — no flag passed; codex uses its baked-in defaults
+#      (workspace-write sandbox, on-request approvals as of CLI 0.125).
 FLAGS=""
 if [ -n "$SKIP_TRUST" ]; then
   FLAGS="--dangerously-bypass-approvals-and-sandbox"
+else
+  if [ -n "$SANDBOX_MODE" ]; then
+    FLAGS="$FLAGS --sandbox $SANDBOX_MODE"
+  fi
+  if [ -n "$APPROVAL_MODE" ]; then
+    FLAGS="$FLAGS --ask-for-approval $APPROVAL_MODE"
+  fi
 fi
 
 # codex has three invocation shapes:
 #   codex                  — interactive TUI, blank session
 #   codex "<prompt>"       — interactive TUI, seeded with initial prompt
 #   codex resume <uuid>    — attach to a previously-persisted rollout
-# Unquoted $FLAGS expansion is intentional so the flag word-splits into argv
-# when set, and disappears cleanly when empty.
+# Unquoted $FLAGS expansion is intentional so flag words split into argv.
 if [ -n "$RESUME_UUID" ]; then
   codex $FLAGS resume "$RESUME_UUID"
 elif [ -n "$PROMPT" ]; then
@@ -307,10 +323,16 @@ export function buildCmdB64(
     resumeUuid?: string;
     launchCommand?: string;
     agentTeams?: boolean;
-    /** codex-specific: maps to --dangerously-bypass-approvals-and-sandbox. */
+    /** codex: maps to --dangerously-bypass-approvals-and-sandbox (yolo). */
     codexSkipTrust?: boolean;
-    /** codex-specific: maps to `codex resume <uuid>`. */
+    /** codex: maps to `codex resume <uuid>`. */
     codexResumeUuid?: string;
+    /** codex: maps to --sandbox <mode>. Ignored if codexSkipTrust=true
+     *  (yolo overrides sandbox). */
+    codexSandbox?: "read-only" | "workspace-write" | "danger-full-access";
+    /** codex: maps to --ask-for-approval <mode>. Ignored if
+     *  codexSkipTrust=true. */
+    codexApproval?: "untrusted" | "on-request" | "on-failure" | "never";
   },
 ): string {
   let content: string;
@@ -325,7 +347,9 @@ export function buildCmdB64(
     content =
       `PROMPT=${shSingleQuote(cmd)}\n`
       + `SKIP_TRUST=${opts?.codexSkipTrust ? "1" : ""}\n`
-      + `RESUME_UUID=${shSingleQuote(opts?.codexResumeUuid ?? "")}\n`;
+      + `RESUME_UUID=${shSingleQuote(opts?.codexResumeUuid ?? "")}\n`
+      + `SANDBOX_MODE=${shSingleQuote(opts?.codexSandbox ?? "")}\n`
+      + `APPROVAL_MODE=${shSingleQuote(opts?.codexApproval ?? "")}\n`;
   } else {
     content = cmd;
   }

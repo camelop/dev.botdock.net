@@ -106,11 +106,16 @@ export type Session = {
    *  cc_skip_trust's semantics for the codex sandbox/approvals stack. */
   codex_skip_trust?: boolean;
   /** For codex: if set, the shim runs `codex resume <uuid>` to continue a
-   *  prior rollout on the remote instead of starting a fresh conversation.
-   *  Currently unused in P0 (UI doesn't yet offer the resume picker for
-   *  codex); the field exists so P1 can switch it on without another
-   *  schema change. */
+   *  prior rollout on the remote instead of starting a fresh conversation. */
   codex_resume_uuid?: string;
+  /** For codex: --sandbox <mode>. Maps to one of read-only,
+   *  workspace-write, danger-full-access. When unset, codex uses its own
+   *  default. Ignored if codex_skip_trust=true (yolo bypasses sandbox). */
+  codex_sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  /** For codex: --ask-for-approval <mode>. One of untrusted, on-request,
+   *  on-failure, never. When unset, codex uses its own default. Ignored
+   *  if codex_skip_trust=true. */
+  codex_approval?: "untrusted" | "on-request" | "on-failure" | "never";
 };
 
 export type SessionEvent = {
@@ -189,6 +194,8 @@ export function createSessionRecord(
     cc_agent_teams?: boolean;
     codex_skip_trust?: boolean;
     codex_resume_uuid?: string;
+    codex_sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+    codex_approval?: "untrusted" | "on-request" | "on-failure" | "never";
   },
 ): Session {
   const id = newSessionId();
@@ -209,6 +216,8 @@ export function createSessionRecord(
     ...(args.cc_agent_teams ? { cc_agent_teams: true } : {}),
     ...(args.codex_skip_trust ? { codex_skip_trust: true } : {}),
     ...(args.codex_resume_uuid ? { codex_resume_uuid: args.codex_resume_uuid } : {}),
+    ...(args.codex_sandbox ? { codex_sandbox: args.codex_sandbox } : {}),
+    ...(args.codex_approval ? { codex_approval: args.codex_approval } : {}),
   };
   const p = paths(dir, id);
   mkdirSync(p.base, { recursive: true });

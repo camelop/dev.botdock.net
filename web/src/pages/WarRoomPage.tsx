@@ -198,19 +198,70 @@ function shortLabel(s: Session): string {
   return s.id;
 }
 
-export function AgentAvatar({ session, size = 40, acked = false }: {
+/**
+ * Pick a boring-avatars variant + color palette per agent kind so the
+ * three kinds are visually distinct at a glance even before the badge
+ * dot is read. Codex / claude-code share the same orientation (avatars
+ * generated from session.id stay stable across sessions of the same
+ * kind), but the swirl-vs-wave silhouette + warmer-vs-cooler palette
+ * tells them apart in WarRoom / Hub / sidebar rows.
+ */
+function avatarStyleFor(kind: Session["agent_kind"]): {
+  variant: "beam" | "marble" | "pixel" | "sunset" | "ring" | "bauhaus";
+  palette: string[];
+} {
+  if (kind === "codex") {
+    return {
+      variant: "marble",
+      // OpenAI-leaning palette: greens + teals.
+      palette: ["#10a37f", "#1ec19a", "#7ed4b4", "#4bd0c7", "#2c5e54"],
+    };
+  }
+  if (kind === "claude-code") {
+    return {
+      variant: "beam",
+      // Original BotDock palette — kept to avoid re-shuffling the visuals
+      // existing users already remember for their CC sessions.
+      palette: AVATAR_PALETTE,
+    };
+  }
+  // generic-cmd
+  return {
+    variant: "pixel",
+    palette: ["#9aa1ad", "#c1c7d2", "#6a7280", "#4b525c", "#2f343d"],
+  };
+}
+
+export function AgentAvatar({ session, size = 40, acked = false, showKindTag = true }: {
   session: Session; size?: number; acked?: boolean;
+  /** Show the kind label in the top-right corner. Defaults to true.
+   *  Pass false for tiny avatars (sidebar rows) where there isn't
+   *  room for the chip without it overlapping. */
+  showKindTag?: boolean;
 }) {
   const state = badgeState(session, acked);
   const badgeSize = Math.max(14, Math.round(size * 0.38));
+  const style = avatarStyleFor(session.agent_kind);
+  const kindLabel = session.agent_kind === "codex" ? "codex"
+    : session.agent_kind === "claude-code" ? "cc"
+    : "cmd";
   return (
-    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+    <div
+      style={{ position: "relative", width: size, height: size, flexShrink: 0 }}
+      title={`${session.agent_kind} session`}
+    >
       <Avatar
         size={size}
         name={session.id}
-        variant="beam"
-        colors={AVATAR_PALETTE}
+        variant={style.variant}
+        colors={style.palette}
       />
+      {showKindTag && size >= 32 && (
+        <span
+          className={`agent-kind-tag kind-${session.agent_kind}`}
+          title={session.agent_kind}
+        >{kindLabel}</span>
+      )}
       <span
         title={badgeLabel(state)}
         className={`agent-badge state-${state}`}

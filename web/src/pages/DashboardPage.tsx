@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type KeyMeta, type Machine, type SecretMeta, type Session } from "../api";
-import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, isInteractiveAgent, type SessionDraft } from "./SessionsPage";
+import { SessionDetailModal, NewSessionModal, freshDraft, sessionCmdLabel, isInteractiveAgent, AgentKindChip, type SessionDraft } from "./SessionsPage";
 import { SessionNameChip } from "../components/SessionNameChip";
 import { SessionImportModal } from "../components/SessionImportModal";
 import { relativeTime, fullTime } from "../lib/time";
@@ -87,6 +87,7 @@ export function DashboardPage() {
               {recent.map((s) => (
                 <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => setSelected(s.id)}>
                   <td><SessionNameChip session={s} /></td>
+                  <td><AgentKindChip kind={s.agent_kind} /></td>
                   <td><DashboardPill session={s} /></td>
                   <td>{s.machine}</td>
                   <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

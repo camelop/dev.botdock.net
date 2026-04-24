@@ -77,6 +77,8 @@ export async function launchSession(
     agentTeams: s.cc_agent_teams,
     codexSkipTrust: s.codex_skip_trust,
     codexResumeUuid: s.codex_resume_uuid,
+    codexSandbox: s.codex_sandbox,
+    codexApproval: s.codex_approval,
   });
   const bootstrap = provisioningScript({
     workdir: s.workdir,
