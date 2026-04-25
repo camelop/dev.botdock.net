@@ -267,15 +267,54 @@ function SessionSidebar(props: SidebarCommonProps & {
   const setCollapsed = (next: boolean) => { setCollapsedState(next); saveSidebarCollapsed(next); };
   const width = collapsed ? 56 : 280;
 
-  // When collapsed, drop group titles + tag headers and render every
-  // session as a single avatar-only row. Order matches the expanded view
-  // so the user's eye can still rely on position.
-  const flatList: Session[] = collapsed ? [
-    ...grouped.needsAttention,
-    ...grouped.tagGroups.flatMap((g) => g.sessions),
-    ...grouped.active,
-    ...grouped.other,
-  ] : [];
+  // alive = sessions still backed by a live tmux. Drives the "Sessions (x/y)"
+  // header so the user knows at a glance how many are working without
+  // expanding the sidebar.
+  const everySession = useMemo(() => {
+    const seen = new Set<string>();
+    const all: Session[] = [];
+    for (const s of [
+      ...grouped.needsAttention,
+      ...grouped.tagGroups.flatMap((g) => g.sessions),
+      ...grouped.active,
+      ...grouped.other,
+    ]) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      all.push(s);
+    }
+    return all;
+  }, [grouped]);
+  const aliveCount = everySession.filter(
+    (s) => s.status === "active" || s.status === "provisioning",
+  ).length;
+  const totalCount = everySession.length;
+
+  // When collapsed, only render sessions whose containing group is
+  // currently *expanded*. Per-group collapsed state is read from the
+  // same localStorage keys the Group component uses, so toggling a
+  // group while the sidebar is full also affects what the avatar
+  // strip shows. Dedup by session id (a tagged session would otherwise
+  // show twice — under its tag group AND under "Active").
+  const flatList: Session[] = useMemo(() => {
+    if (!collapsed) return [];
+    const isOpen = (title: string, defaultCollapsed: boolean) =>
+      !loadGroupCollapsed(title, defaultCollapsed);
+    const seen = new Set<string>();
+    const list: Session[] = [];
+    const push = (s: Session) => {
+      if (seen.has(s.id)) return;
+      seen.add(s.id);
+      list.push(s);
+    };
+    if (isOpen("Needs attention", false)) grouped.needsAttention.forEach(push);
+    for (const g of grouped.tagGroups) {
+      if (isOpen(`# ${g.tag}`, false)) g.sessions.forEach(push);
+    }
+    if (isOpen("Active", false)) grouped.active.forEach(push);
+    if (isOpen("Other", true)) grouped.other.forEach(push);
+    return list;
+  }, [collapsed, grouped]);
 
   return (
     <div
@@ -290,17 +329,35 @@ function SessionSidebar(props: SidebarCommonProps & {
         transition: "width 120ms ease",
       }}
     >
-      <button
-        className="secondary"
-        onClick={() => setCollapsed(!collapsed)}
-        title={collapsed ? "Expand sidebar" : "Collapse to avatars only"}
+      <div
         style={{
-          margin: 8,
-          padding: "4px 8px",
-          fontSize: 12,
-          alignSelf: collapsed ? "center" : "flex-end",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 10px",
+          justifyContent: collapsed ? "center" : "space-between",
         }}
-      >{collapsed ? "▸" : "◂"}</button>
+      >
+        {!collapsed && (
+          <span
+            className="muted"
+            style={{
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Sessions <span style={{ opacity: 0.7 }}>({aliveCount}/{totalCount})</span>
+          </span>
+        )}
+        <button
+          className="secondary"
+          onClick={() => setCollapsed(!collapsed)}
+          title={collapsed ? "Expand sidebar" : "Collapse to avatars only"}
+          style={{ padding: "4px 8px", fontSize: 12 }}
+        >{collapsed ? "▸" : "◂"}</button>
+      </div>
       {collapsed ? (
         flatList.map((s, i) => (
           <SidebarRow

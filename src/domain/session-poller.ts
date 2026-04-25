@@ -64,7 +64,29 @@ function pollScript(
   const validateStanza = `
 TX_INVALIDATED=0
 if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
-  if ! head -n 20 "$TX_PATH" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\""; then
+  # Recovery for the v0.7.11 self-heal bug: any TX_PATH that lives under
+  # a CC project's subagents/ subdir is a sub-conversation jsonl, never
+  # the main transcript. Older self-heal accepted them because their cwd
+  # matches the project; clear so the new self-heal (which excludes
+  # subagents/) re-discovers the top-level file.
+  case "$TX_PATH" in
+    */subagents/*)
+      printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
+      TX_PATH=""
+      TX_INVALIDATED=1
+      ;;
+  esac
+fi
+if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
+  # Be conservative — only invalidate when we have *positive* evidence the
+  # cwd is wrong. Older builds invalidated on "cwd not matching", which
+  # also fires when the file's first 20 lines have no cwd field at all
+  # (CC's first lines are often permission-mode / file-history-snapshot
+  # rows with no cwd) — that nuked every CC session's local transcript on
+  # first poll after the v0.7.11 upgrade.
+  HEAD20=$(head -n 20 "$TX_PATH" 2>/dev/null)
+  if printf '%s' "$HEAD20" | grep -q -F '"cwd":' \\
+     && ! printf '%s' "$HEAD20" | grep -q -F "\\"cwd\\":\\"$WORKDIR\\""; then
     printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
     TX_PATH=""
     TX_INVALIDATED=1
@@ -78,6 +100,13 @@ fi
   // either-session's-epoch matches BOTH files) and pick the wrong one,
   // cross-wiring their transcripts. Bug surfaced by user 2026-04-25.
   if (agentKind === "claude-code") {
+    // -not -path '*/subagents/*' filter: CC's project dir layout is
+    //   ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl              (main)
+    //   ~/.claude/projects/<encoded-cwd>/<uuid>/subagents/agent-<hex>.jsonl
+    //                                                              (sub-conversation)
+    // Subagent jsonls write the SAME cwd as their parent, so an unfiltered
+    // find -newermt cwd-grep happily picks the first 5 KB sub-conversation
+    // it sees and pins the daemon to it forever. Always exclude.
     selfHeal = `
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/projects" ]; then
   while IFS= read -r cand; do
@@ -85,7 +114,7 @@ if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/proje
     head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
       && { TX_PATH="$cand"; break; }
   done <<TX_FIND_EOF
-$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
+$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@${startedEpoch}" 2>/dev/null)
 TX_FIND_EOF
 fi
 `;
