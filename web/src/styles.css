@@ -333,27 +333,27 @@ pre.code {
   color: #0e1116;
 }
 
-/* Kind chip in the top-right corner of an AgentAvatar — opposite the
- * state badge (bottom-right). Tells codex / claude-code / generic-cmd
- * sessions apart at a glance even before reading the boring-avatars
- * silhouette. */
+/* Kind tag in the top-right corner of an AgentAvatar — opposite the
+ * state badge (bottom-right). A small colored circle holding the
+ * agent's icon (sparkles / bot / terminal). Tells codex / claude-code
+ * / generic-cmd sessions apart at a glance even before reading the
+ * boring-avatars silhouette. */
 .agent-kind-tag {
   position: absolute;
   top: -4px;
   right: -4px;
-  padding: 1px 5px;
-  border-radius: 7px;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  line-height: 1.4;
-  border: 1.5px solid var(--bg-elev);
-  white-space: nowrap;
+  border-radius: 50%;
+  border: 2px solid var(--bg-elev);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
   pointer-events: none;
+  color: #0b1220;
 }
-.agent-kind-tag.kind-claude-code { background: #6aa4ff; color: #0b1220; }
-.agent-kind-tag.kind-codex       { background: #10a37f; color: #0b1220; }
-.agent-kind-tag.kind-generic-cmd { background: #6a7280; color: #0b1220; }
+.agent-kind-tag.kind-claude-code { background: #6aa4ff; }
+.agent-kind-tag.kind-codex       { background: #10a37f; }
+.agent-kind-tag.kind-generic-cmd { background: #6a7280; }
 .agent-badge.state-active      { background: var(--ok); }
 .agent-badge.state-exited      { background: #4a5160; color: var(--fg-dim); }
 .agent-badge.state-failed      { background: var(--danger); color: #2a0a0a; }

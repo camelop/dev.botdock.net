@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Avatar from "boring-avatars";
 import { api, type Session } from "../api";
-import { SessionDetailModal, isInteractiveAgent } from "./SessionsPage";
+import { SessionDetailModal, isInteractiveAgent, AgentKindIcon } from "./SessionsPage";
 import { parseTranscript, type TranscriptTurn } from "../lib/transcript";
 import { relativeTime, fullTime } from "../lib/time";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
@@ -242,9 +242,9 @@ export function AgentAvatar({ session, size = 40, acked = false, showKindTag = t
   const state = badgeState(session, acked);
   const badgeSize = Math.max(14, Math.round(size * 0.38));
   const style = avatarStyleFor(session.agent_kind);
-  const kindLabel = session.agent_kind === "codex" ? "codex"
-    : session.agent_kind === "claude-code" ? "cc"
-    : "cmd";
+  // Tag scales with avatar but stays readable on small avatars.
+  const tagSize = Math.max(14, Math.round(size * 0.38));
+  const tagIconSize = Math.max(9, Math.round(tagSize * 0.65));
   return (
     <div
       style={{ position: "relative", width: size, height: size, flexShrink: 0 }}
@@ -260,7 +260,10 @@ export function AgentAvatar({ session, size = 40, acked = false, showKindTag = t
         <span
           className={`agent-kind-tag kind-${session.agent_kind}`}
           title={session.agent_kind}
-        >{kindLabel}</span>
+          style={{ width: tagSize, height: tagSize }}
+        >
+          <AgentKindIcon kind={session.agent_kind} size={tagIconSize} />
+        </span>
       )}
       <span
         title={badgeLabel(state)}

@@ -162,33 +162,85 @@ export function isInteractiveAgent(kind: Session["agent_kind"]): boolean {
   return kind === "claude-code" || kind === "codex";
 }
 
-/** Compact pill showing which agent kind a session runs. Re-used in the
- *  Dashboard's Recent table + Sessions list view's Kind column. The
- *  background colors match the corner tag on AgentAvatar so the same
- *  session reads the same way across all three surfaces. */
+/** Single-glyph SVG marker per agent kind. Lucide-style stroke icons,
+ *  inlined so we don't pull a whole icon library in for three glyphs.
+ *  Uses currentColor so the parent decides the tint — the chip below
+ *  sets it to a dark-on-bright color, and the avatar corner badge uses
+ *  the same trick. */
+export function AgentKindIcon({
+  kind,
+  size = 14,
+}: { kind: AgentKind; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none" as const,
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+  if (kind === "claude-code") {
+    // Sparkles — large 4-point star + small accent; suggests "AI / magic".
+    return (
+      <svg {...common}>
+        <path d="M9.94 15.5A2 2 0 0 0 8.5 14.06L2.36 12.48a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z" />
+        <path d="M20 3v4" />
+        <path d="M22 5h-4" />
+      </svg>
+    );
+  }
+  if (kind === "codex") {
+    // Bot head + antenna; reads as "another agent".
+    return (
+      <svg {...common}>
+        <path d="M12 8V4H8" />
+        <rect width="16" height="12" x="4" y="8" rx="2" />
+        <path d="M2 14h2" />
+        <path d="M20 14h2" />
+        <path d="M15 13v2" />
+        <path d="M9 13v2" />
+      </svg>
+    );
+  }
+  // generic-cmd → terminal prompt `>_`.
+  return (
+    <svg {...common}>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" x2="20" y1="19" y2="19" />
+    </svg>
+  );
+}
+
+/** Compact icon-in-a-pill showing which agent kind a session runs.
+ *  Re-used in the Dashboard's Recent table + Sessions list view's Kind
+ *  column. The background color matches the corner tag on AgentAvatar
+ *  so the same session reads the same way across surfaces. */
 export function AgentKindChip({ kind }: { kind: AgentKind }) {
-  const label = kind === "codex" ? "codex"
-    : kind === "claude-code" ? "claude code"
-    : "cmd";
   const bg = kind === "codex" ? "#10a37f"
     : kind === "claude-code" ? "#6aa4ff"
     : "#6a7280";
+  const label = kind === "codex" ? "codex"
+    : kind === "claude-code" ? "claude-code"
+    : "generic-cmd";
   return (
     <span
-      className="mono"
-      title={kind}
+      title={label}
       style={{
-        display: "inline-block",
-        padding: "1px 8px",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
         background: bg,
         color: "#0b1220",
-        borderRadius: 8,
-        fontSize: 10,
-        fontWeight: 600,
-        letterSpacing: 0.2,
-        whiteSpace: "nowrap",
+        borderRadius: 6,
       }}
-    >{label}</span>
+    >
+      <AgentKindIcon kind={kind} size={14} />
+    </span>
   );
 }
 
