@@ -263,24 +263,67 @@ function SessionSidebar(props: SidebarCommonProps & {
   };
 }) {
   const { grouped, ...rest } = props;
+  const [collapsed, setCollapsedState] = useState<boolean>(() => loadSidebarCollapsed());
+  const setCollapsed = (next: boolean) => { setCollapsedState(next); saveSidebarCollapsed(next); };
+  const width = collapsed ? 56 : 280;
+
+  // When collapsed, drop group titles + tag headers and render every
+  // session as a single avatar-only row. Order matches the expanded view
+  // so the user's eye can still rely on position.
+  const flatList: Session[] = collapsed ? [
+    ...grouped.needsAttention,
+    ...grouped.tagGroups.flatMap((g) => g.sessions),
+    ...grouped.active,
+    ...grouped.other,
+  ] : [];
+
   return (
     <div
       className="scroll-panel"
       style={{
-        width: 280,
-        flex: "0 0 280px",
+        width,
+        flex: `0 0 ${width}px`,
         borderRight: "1px solid var(--border)",
         background: "var(--bg-elev)",
         display: "flex",
         flexDirection: "column",
+        transition: "width 120ms ease",
       }}
     >
-      <Group title="Needs attention" sessions={grouped.needsAttention} {...rest} tone="warn" />
-      {grouped.tagGroups.map((g) => (
-        <Group key={g.tag} title={`# ${g.tag}`} sessions={g.sessions} {...rest} />
-      ))}
-      <Group title="Active" sessions={grouped.active} {...rest} />
-      <Group title="Other" sessions={grouped.other} {...rest} collapsedByDefault />
+      <button
+        className="secondary"
+        onClick={() => setCollapsed(!collapsed)}
+        title={collapsed ? "Expand sidebar" : "Collapse to avatars only"}
+        style={{
+          margin: 8,
+          padding: "4px 8px",
+          fontSize: 12,
+          alignSelf: collapsed ? "center" : "flex-end",
+        }}
+      >{collapsed ? "▸" : "◂"}</button>
+      {collapsed ? (
+        flatList.map((s, i) => (
+          <SidebarRow
+            key={`${s.id}:${i}`}
+            session={s}
+            selected={props.selectedId === s.id}
+            onClick={() => props.onSelect(s.id)}
+            onAck={() => props.onAck(s)}
+            onUnack={() => props.onUnack(s)}
+            onSaved={props.onSaved}
+            compact
+          />
+        ))
+      ) : (
+        <>
+          <Group title="Needs attention" sessions={grouped.needsAttention} {...rest} tone="warn" />
+          {grouped.tagGroups.map((g) => (
+            <Group key={g.tag} title={`# ${g.tag}`} sessions={g.sessions} {...rest} />
+          ))}
+          <Group title="Active" sessions={grouped.active} {...rest} />
+          <Group title="Other" sessions={grouped.other} {...rest} collapsedByDefault />
+        </>
+      )}
     </div>
   );
 }
@@ -298,6 +341,14 @@ function loadGroupCollapsed(title: string, fallback: boolean): boolean {
 }
 function saveGroupCollapsed(title: string, collapsed: boolean): void {
   try { localStorage.setItem(GROUP_COLLAPSED_KEY(title), collapsed ? "1" : "0"); } catch {}
+}
+
+const SIDEBAR_COLLAPSED_KEY = "botdock:hub-sidebar-collapsed";
+function loadSidebarCollapsed(): boolean {
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; }
+}
+function saveSidebarCollapsed(v: boolean): void {
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0"); } catch {}
 }
 
 function Group(props: SidebarCommonProps & {
@@ -377,8 +428,11 @@ function SidebarRow(props: {
   onAck: () => void;
   onUnack: () => void;
   onSaved: (s: Session) => void;
+  /** Avatar-only mode for the collapsed sidebar — drops the name / meta
+   *  / Ack button. Tooltip carries the info instead. */
+  compact?: boolean;
 }) {
-  const { session: s, selected } = props;
+  const { session: s, selected, compact } = props;
   const isPending = s.status === "active" && isInteractiveAgent(s.agent_kind) && s.activity === "pending";
   const acked = isPending && isAcked(s.id, s.last_transcript_at);
   const color = aliasColor(s.alias_color);
@@ -390,6 +444,38 @@ function SidebarRow(props: {
   const [editing, setEditing] = useState(false);
   const selectionBg = selected ? "rgba(106,164,255,0.12)" : "transparent";
   const selectionBorder = color?.accent ?? "var(--accent)";
+  const titleText = `${s.alias ?? s.id}${s.cmd ? " — " + s.cmd : ""}\n${s.machine} · ${relativeTime(s.last_transcript_at ?? s.started_at ?? s.created_at)}\n(double-click for config)`;
+
+  if (compact) {
+    return (
+      <>
+        <div
+          onClick={props.onClick}
+          onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          title={titleText}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "6px 0",
+            cursor: "pointer",
+            background: selected ? selectionBg : "transparent",
+            borderLeft: selected
+              ? `4px solid ${selectionBorder}`
+              : `3px solid ${hasColor ? (color!.accent) : "transparent"}`,
+            boxShadow: selected ? `inset 0 0 0 1px ${selectionBorder}` : undefined,
+          }}
+        >
+          <AgentAvatar session={s} size={32} acked={acked} />
+        </div>
+        {editing && (
+          <SessionConfigDialog
+            session={s}
+            onClose={() => setEditing(false)}
+            onSaved={(next) => { props.onSaved(next); setEditing(false); }}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <>

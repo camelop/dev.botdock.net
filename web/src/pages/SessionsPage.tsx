@@ -124,6 +124,17 @@ function saveNotesFont(v: number): void {
   try { localStorage.setItem(NOTES_FONT_KEY, String(v)); } catch {}
 }
 
+// Workspace-only: collapse the right config / transcript / events pane
+// so the terminal can fill the width. Persisted globally — there's only
+// ever one workspace open.
+const WORKSPACE_RIGHT_COLLAPSED_KEY = "botdock:workspace-right-collapsed";
+function loadWorkspaceRightCollapsed(): boolean {
+  try { return localStorage.getItem(WORKSPACE_RIGHT_COLLAPSED_KEY) === "1"; } catch { return false; }
+}
+function saveWorkspaceRightCollapsed(v: boolean): void {
+  try { localStorage.setItem(WORKSPACE_RIGHT_COLLAPSED_KEY, v ? "1" : "0"); } catch {}
+}
+
 // Shared "toggle button is currently active" styling — picked once so the
 // Notes / Keyboard / FileBrowser left-side toggles all look the same when
 // their thing is on. Colored border + inset ring + subtle tint.
@@ -1122,6 +1133,17 @@ export function SessionView(props: {
   // Same pattern for code-server.
   const [csState, setCsState] = useState<FbState>("idle");
   const [csErr, setCsErr] = useState<string>("");
+  // Workspace-only right-pane collapse. Modal mode never collapses — the
+  // modal exists specifically to show the meta panel, so hiding it would
+  // leave a half-empty modal.
+  const canCollapseRight = !props.inModal;
+  const [rightCollapsed, setRightCollapsedState] = useState<boolean>(
+    () => canCollapseRight && loadWorkspaceRightCollapsed(),
+  );
+  const setRightCollapsed = (next: boolean) => {
+    setRightCollapsedState(next);
+    saveWorkspaceRightCollapsed(next);
+  };
 
   // WebSocket carries events + raw + session-meta deltas. Transcript is
   // NOT streamed anymore — TranscriptView pulls it a page at a time via
@@ -1420,7 +1442,30 @@ export function SessionView(props: {
         {/* RIGHT: title / meta / transcript / events — scrolls independently.
             Close is pinned to the top-right corner (doesn't fight for horizontal
             space with the title). Deactivate / Delete sit on their own row
-            below the header so the meta never gets clipped. */}
+            below the header so the meta never gets clipped.
+            Workspace mode can collapse this whole pane so the terminal fills
+            the width — replace it with a thin sliver carrying just an expand
+            chevron. Modal mode never collapses (the meta is the point). */}
+        {canCollapseRight && rightCollapsed ? (
+          <div
+            style={{
+              flex: "0 0 28px",
+              borderLeft: "1px solid var(--border)",
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "center",
+              padding: "12px 0",
+              background: "var(--bg-elev)",
+            }}
+          >
+            <button
+              className="secondary"
+              onClick={() => setRightCollapsed(false)}
+              title="Show config / transcript / events panel"
+              style={{ padding: "4px 6px", fontSize: 12 }}
+            >◂</button>
+          </div>
+        ) : (
         <div className="session-right scroll-panel">
           {/* Title + all action buttons live on one row. Title ellipsizes so
               Deactivate / × never get pushed to a new line. */}
@@ -1463,6 +1508,14 @@ export function SessionView(props: {
               <button className="secondary" style={{ fontSize: 12, padding: "4px 12px", flexShrink: 0 }} onClick={onDelete}>
                 Delete
               </button>
+            )}
+            {canCollapseRight && (
+              <button
+                className="secondary"
+                onClick={() => setRightCollapsed(true)}
+                title="Hide this panel — give the terminal full width"
+                style={{ padding: "4px 10px", fontSize: 13, flexShrink: 0 }}
+              >▸</button>
             )}
             {props.onClose && (
               <button
@@ -1511,6 +1564,7 @@ export function SessionView(props: {
           <h2>Events</h2>
           <EventsTable events={events} />
         </div>
+        )}
         {notesOpen && session && notesRect && (
           <NotesPanel
             sessionId={props.id}
