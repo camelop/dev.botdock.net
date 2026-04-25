@@ -78,15 +78,29 @@ if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
   esac
 fi
 if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
-  # Be conservative — only invalidate when we have *positive* evidence the
-  # cwd is wrong. Older builds invalidated on "cwd not matching", which
-  # also fires when the file's first 20 lines have no cwd field at all
-  # (CC's first lines are often permission-mode / file-history-snapshot
-  # rows with no cwd) — that nuked every CC session's local transcript on
-  # first poll after the v0.7.11 upgrade.
   HEAD20=$(head -n 20 "$TX_PATH" 2>/dev/null)
+  # Be conservative on cwd — only invalidate when we have *positive*
+  # evidence the cwd is wrong. Older builds invalidated on "cwd not
+  # matching", which also fires when the file's first 20 lines have no
+  # cwd field at all (CC's first lines are often permission-mode /
+  # file-history-snapshot rows with no cwd) — that nuked every CC
+  # session's local transcript on first poll after the v0.7.11 upgrade.
   if printf '%s' "$HEAD20" | grep -q -F '"cwd":' \\
      && ! printf '%s' "$HEAD20" | grep -q -F "\\"cwd\\":\\"$WORKDIR\\""; then
+    printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
+    TX_PATH=""
+    TX_INVALIDATED=1
+  fi
+fi
+if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
+  # Spawned-subagent / agent-teams-team-member jsonls always begin with
+  # the orchestrator-injected envelope:
+  #   {"type":"user","message":{"role":"user","content":"<system>\\nYou are ...
+  # A real user-driven main session never has that exact substring. If
+  # we landed on one of these spawn jsonls, clear it so self-heal can
+  # pick the orchestrator's main jsonl instead.
+  if head -n 20 "$TX_PATH" 2>/dev/null \\
+     | grep -q -F '"role":"user","content":"<system>'; then
     printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
     TX_PATH=""
     TX_INVALIDATED=1
@@ -100,22 +114,40 @@ fi
   // either-session's-epoch matches BOTH files) and pick the wrong one,
   // cross-wiring their transcripts. Bug surfaced by user 2026-04-25.
   if (agentKind === "claude-code") {
-    // -not -path '*/subagents/*' filter: CC's project dir layout is
-    //   ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl              (main)
-    //   ~/.claude/projects/<encoded-cwd>/<uuid>/subagents/agent-<hex>.jsonl
-    //                                                              (sub-conversation)
-    // Subagent jsonls write the SAME cwd as their parent, so an unfiltered
-    // find -newermt cwd-grep happily picks the first 5 KB sub-conversation
-    // it sees and pins the daemon to it forever. Always exclude.
+    // CC project-dir layout has three failure modes for naive self-heal:
+    //   1. ~/.claude/projects/<dir>/<uuid>/subagents/agent-<hex>.jsonl
+    //      Task-tool sub-conversations. Excluded via -not -path.
+    //   2. Multiple top-level <uuid>.jsonl files in the same project
+    //      dir, all with matching cwd: every Task spawn that opens a
+    //      "named agent" prompt creates a new top-level jsonl, and
+    //      --experimental-agent-teams gives every team member its own
+    //      top-level jsonl too. The first user message of every one of
+    //      these spawn jsonls is the orchestrator's
+    //      `"<system>\\nYou are <agent>..."` envelope; the orchestrator's
+    //      OWN jsonl has the user's actual typed prompt as its first
+    //      user message. Skip candidates whose head matches the spawn
+    //      signature.
+    //   3. Among the remaining real-user-driven candidates, pick the
+    //      one with the latest mtime — that's the file CC is currently
+    //      writing to.
     selfHeal = `
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/projects" ]; then
+  BEST_PATH=""
+  BEST_MTIME=0
   while IFS= read -r cand; do
     [ -f "$cand" ] || continue
-    head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
-      && { TX_PATH="$cand"; break; }
+    HEAD20=$(head -n 20 "$cand" 2>/dev/null)
+    printf '%s' "$HEAD20" | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" || continue
+    printf '%s' "$HEAD20" | grep -q -F '"role":"user","content":"<system>' \\
+      && continue
+    M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+    [ "$M" -gt "$BEST_MTIME" ] || continue
+    BEST_PATH="$cand"
+    BEST_MTIME="$M"
   done <<TX_FIND_EOF
 $(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@${startedEpoch}" 2>/dev/null)
 TX_FIND_EOF
+  TX_PATH="$BEST_PATH"
 fi
 `;
   } else if (agentKind === "codex") {

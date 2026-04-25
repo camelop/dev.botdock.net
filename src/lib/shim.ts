@@ -90,22 +90,32 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"cla
 SESSION_CWD=$(pwd)
 (
   sleep 2
-  FILE=""
+  # Pick the latest-mtime jsonl whose first 20 lines:
+  #   - carry "cwd":"$SESSION_CWD" (avoids cross-talk between concurrent
+  #     sessions in different workdirs — without this, two sessions racing
+  #     to spawn would both pick the first-newer file half the time)
+  #   - aren't a Task / agent-teams spawn (those open with the orchestrator-
+  #     injected "<system>\nYou are <agent>..." envelope as the first user
+  #     message; the orchestrator's OWN jsonl has the user's typed prompt)
+  #   - aren't under a subagents/ subdir (sub-conversation jsonls)
+  BEST_FILE=""
+  BEST_MTIME=0
   while IFS= read -r cand; do
     [ -f "$cand" ] || continue
-    # First line carries a cwd field (older CC versions) or message-with-
-    # cwd (newer). Substring-match is enough — paths can't appear inside
-    # message content because CC escapes them, and a false match would
-    # require a literal $SESSION_CWD inside a different session's first-
-    # line content, which doesn't happen in practice.
-    head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
-      && { FILE="$cand"; break; }
+    HEAD20=$(head -n 20 "$cand" 2>/dev/null)
+    printf '%s' "$HEAD20" | grep -q -F "\"cwd\":\"$SESSION_CWD\"" || continue
+    printf '%s' "$HEAD20" | grep -q -F '"role":"user","content":"<system>' \
+      && continue
+    M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+    [ "$M" -gt "$BEST_MTIME" ] || continue
+    BEST_FILE="$cand"
+    BEST_MTIME="$M"
   done <<EOF
-$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
+$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@$SESSION_EPOCH" 2>/dev/null)
 EOF
-  if [ -n "$FILE" ]; then
-    UUID=$(basename "$FILE" .jsonl)
-    printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"cc_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
+  if [ -n "$BEST_FILE" ]; then
+    UUID=$(basename "$BEST_FILE" .jsonl)
+    printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"cc_session\",\"file\":\"$BEST_FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
   fi
 ) &
 
