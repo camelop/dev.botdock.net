@@ -4,6 +4,13 @@ Only user-visible changes. Latest first. Before v1.0.0, each minor
 version gets one summary entry here; for line-level detail, read the
 commit log between the two adjacent tags.
 
+## v0.8.0 — 2026-04-25
+
+- Run an OpenAI **codex** session from the New Session modal — same flow as Claude Code, with resume picker, embedded terminal, and live transcript. The codex CLI installs on the remote on first use, so a fresh machine works out of the box.
+- Pick a codex sandbox + approval policy at launch, or skip them for a yolo run.
+- Tell agent kinds apart at a glance — every Workspace avatar wears a small Anthropic / OpenAI mark in the corner, and Dashboard recent + Sessions list view each gain a Kind column.
+- Fixes: two sessions on the same machine no longer mix up each other's transcripts; new sessions no longer hang on "Waiting for … JSONL".
+
 ## v0.7.0 — 2026-04-24
 
 - Export / import a session — Export ships a zip (machine + key + logs + transcript), Import reads it back. Both BotDocks end up driving the same remote tmux.
