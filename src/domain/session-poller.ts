@@ -49,17 +49,22 @@ function pollScript(
   // Self-heal command per agent. Generic-cmd has no transcript file, so
   // we skip scanning entirely. CC scans ~/.claude/projects; codex scans
   // $CODEX_HOME/sessions (default ~/.codex/sessions).
-  // Validate the existing TX_PATH every tick — if its first-line cwd
-  // doesn't match this session's workdir, we know a previous build's
-  // race-prone discovery (or another session's shim) planted the wrong
-  // file in meta. Emit TX_PATH_INVALIDATED so the daemon-side apply()
-  // can clear meta + offsets + truncate the local mirror; THIS tick we
-  // skip both transcript-read and self-heal so we don't ingest one more
+  // Validate the existing TX_PATH every tick — if the file's first
+  // ~20 lines don't include a cwd field matching this session's workdir
+  // we know a previous build's race-prone discovery (or another
+  // session's shim) planted the wrong file in meta. Scan 20 lines, not
+  // just 1: CC's first jsonl line is often a session-init / system /
+  // summary record without a top-level cwd; the field shows up on the
+  // user/assistant message rows that come right after. Codex's
+  // session_meta is line 1 so this is no harder for it.
+  // Emit TX_PATH_INVALIDATED so the daemon-side apply() can clear meta
+  // + offsets + truncate the local mirror; THIS tick we skip both the
+  // transcript-read and the self-heal so we don't ingest one more
   // chunk of cross-talk before the reset takes effect.
   const validateStanza = `
 TX_INVALIDATED=0
 if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
-  if ! head -n 1 "$TX_PATH" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\""; then
+  if ! head -n 20 "$TX_PATH" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\""; then
     printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
     TX_PATH=""
     TX_INVALIDATED=1
@@ -91,7 +96,7 @@ if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ]; then
   if [ -d "$CODEX_ROOT" ]; then
     while IFS= read -r cand; do
       [ -f "$cand" ] || continue
-      head -n 1 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
+      head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
         && { TX_PATH="$cand"; break; }
     done <<TX_FIND_EOF
 $(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)

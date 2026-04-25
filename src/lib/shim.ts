@@ -98,7 +98,7 @@ SESSION_CWD=$(pwd)
     # message content because CC escapes them, and a false match would
     # require a literal $SESSION_CWD inside a different session's first-
     # line content, which doesn't happen in practice.
-    head -n 1 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
+    head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
       && { FILE="$cand"; break; }
   done <<EOF
 $(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
@@ -264,7 +264,7 @@ SESSION_CWD=$(pwd)
     FILE=""
     while IFS= read -r cand; do
       [ -f "$cand" ] || continue
-      head -n 1 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
+      head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
         && { FILE="$cand"; break; }
     done <<EOF
 $(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)

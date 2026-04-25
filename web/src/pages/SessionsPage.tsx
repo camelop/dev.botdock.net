@@ -1957,12 +1957,14 @@ function TranscriptView({ sessionId, hasFile, transcriptSize, lastTranscriptAt, 
   }, [showRaw, sessionId]);
 
   if (!hasFile) {
+    const agentName = format === "codex" ? "codex" : "Claude";
+    const fileName = format === "codex" ? "rollout JSONL" : "transcript JSONL";
     return (
       <>
         <h2>Transcript</h2>
         <div className="card" style={{ padding: 16 }}>
           <div className="muted" style={{ fontSize: 13 }}>
-            Waiting for Claude to create its JSONL — should appear a second or two after the session starts.
+            Waiting for {agentName} to create its {fileName} — usually shows up a few seconds after the session starts.
           </div>
         </div>
       </>
