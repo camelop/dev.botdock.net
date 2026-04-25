@@ -225,9 +225,12 @@ export function AgentKindIcon({
  *  column. The background color matches the corner tag on AgentAvatar
  *  so the same session reads the same way across surfaces. */
 export function AgentKindChip({ kind }: { kind: AgentKind }) {
-  const bg = kind === "codex" ? "#10a37f"
-    : kind === "claude-code" ? "#6aa4ff"
-    : "#6a7280";
+  // Keep brand marks at their official colors on a neutral white chip —
+  // matches the corner tag on AgentAvatar so the same session reads the
+  // same way across surfaces.
+  const fg = kind === "codex" ? "#000000"
+    : kind === "claude-code" ? "#D97757"
+    : "#4a5160";
   const label = kind === "codex" ? "codex"
     : kind === "claude-code" ? "claude-code"
     : "generic-cmd";
@@ -240,8 +243,8 @@ export function AgentKindChip({ kind }: { kind: AgentKind }) {
         justifyContent: "center",
         width: 22,
         height: 22,
-        background: bg,
-        color: "#0b1220",
+        background: "#ffffff",
+        color: fg,
         borderRadius: 6,
       }}
     >

@@ -349,11 +349,16 @@ pre.code {
   justify-content: center;
   line-height: 0;
   pointer-events: none;
-  color: #0b1220;
+  background: #ffffff;
 }
-.agent-kind-tag.kind-claude-code { background: #6aa4ff; }
-.agent-kind-tag.kind-codex       { background: #10a37f; }
-.agent-kind-tag.kind-generic-cmd { background: #6a7280; }
+/* Keep each brand mark at its official color on a white chip — the
+ * brands are recognizable by their own palette (Anthropic orange, OpenAI
+ * black), and overriding with our own background tint just neutralizes
+ * that recognition. generic-cmd has no upstream brand so it falls back
+ * to a neutral slate. */
+.agent-kind-tag.kind-claude-code { color: #D97757; }
+.agent-kind-tag.kind-codex       { color: #000000; }
+.agent-kind-tag.kind-generic-cmd { color: #4a5160; }
 .agent-badge.state-active      { background: var(--ok); }
 .agent-badge.state-exited      { background: #4a5160; color: var(--fg-dim); }
 .agent-badge.state-failed      { background: var(--danger); color: #2a0a0a; }
