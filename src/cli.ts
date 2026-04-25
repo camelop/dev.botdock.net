@@ -3,6 +3,7 @@ import { runKey } from "./commands/key.ts";
 import { runMachine } from "./commands/machine.ts";
 import { runSecret } from "./commands/secret.ts";
 import { runServe } from "./commands/serve.ts";
+import { runStart, defaultClientHome } from "./commands/start.ts";
 import { BOTDOCK_VERSION } from "./version.ts";
 
 const USAGE = `botdock — local agent command center
@@ -11,14 +12,17 @@ Usage:
   botdock [--home <dir>] <command> [...]
 
 Commands:
+  start                      init (if needed) + spawn a background serve
+                             at ~/.botdock/client-default + open browser
   init [dir]                 scaffold a BotDock data directory
   key <cmd> [...]            manage SSH keys
   machine <cmd> [...]        manage machines
   secret <cmd> [...]         manage secrets
-  serve [--dev]              run the web API + UI server
+  serve [--dev]              run the web API + UI server (foreground)
 
 Global options:
-  --home <dir>               BotDock data directory (default: $BOTDOCK_HOME or cwd)
+  --home <dir>               BotDock data directory (default: $BOTDOCK_HOME or cwd;
+                             \`start\` defaults to ~/.botdock/client-default)
   -h, --help                 show this message
   -v, --version              print version
 
@@ -61,7 +65,15 @@ async function main(argv: string[]): Promise<number> {
     return cmd ? 0 : (help ? 0 : 2);
   }
 
-  const resolvedHome = home ?? process.env.BOTDOCK_HOME ?? process.cwd();
+  // For `start` the implicit default is ~/.botdock/client-default rather
+  // than cwd — `botdock start` should be a one-shot launcher, not "run
+  // BotDock against whatever directory I happen to be in". Pass the
+  // explicit-vs-default distinction through so start can pick its own
+  // default when neither --home nor BOTDOCK_HOME was provided.
+  const homeWasExplicit = !!home || !!process.env.BOTDOCK_HOME;
+  const resolvedHome = home ?? process.env.BOTDOCK_HOME ?? (
+    cmd === "start" ? defaultClientHome() : process.cwd()
+  );
 
   switch (cmd) {
     case "init":    return runInit({ home: resolvedHome, args: rest });
@@ -69,6 +81,7 @@ async function main(argv: string[]): Promise<number> {
     case "machine": return runMachine({ home: resolvedHome, args: rest });
     case "secret":  return runSecret({ home: resolvedHome, args: rest });
     case "serve":   return runServe({ home: resolvedHome, args: rest });
+    case "start":   return runStart({ home: resolvedHome, homeWasExplicit, args: rest });
     default:
       process.stderr.write(`unknown command: ${cmd}\n\n${USAGE}`);
       return 2;
