@@ -49,6 +49,23 @@ function pollScript(
   // Self-heal command per agent. Generic-cmd has no transcript file, so
   // we skip scanning entirely. CC scans ~/.claude/projects; codex scans
   // $CODEX_HOME/sessions (default ~/.codex/sessions).
+  // Validate the existing TX_PATH every tick — if its first-line cwd
+  // doesn't match this session's workdir, we know a previous build's
+  // race-prone discovery (or another session's shim) planted the wrong
+  // file in meta. Emit TX_PATH_INVALIDATED so the daemon-side apply()
+  // can clear meta + offsets + truncate the local mirror; THIS tick we
+  // skip both transcript-read and self-heal so we don't ingest one more
+  // chunk of cross-talk before the reset takes effect.
+  const validateStanza = `
+TX_INVALIDATED=0
+if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
+  if ! head -n 1 "$TX_PATH" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\""; then
+    printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
+    TX_PATH=""
+    TX_INVALIDATED=1
+  fi
+fi
+`;
   let selfHeal = "";
   // Both agents' self-heal probes have to match the rollout's first-line
   // cwd against $WORKDIR — otherwise two concurrent sessions on the same
@@ -57,7 +74,7 @@ function pollScript(
   // cross-wiring their transcripts. Bug surfaced by user 2026-04-25.
   if (agentKind === "claude-code") {
     selfHeal = `
-if [ -z "$TX_PATH" ] && [ -d "$HOME/.claude/projects" ]; then
+if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/projects" ]; then
   while IFS= read -r cand; do
     [ -f "$cand" ] || continue
     head -n 1 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
@@ -69,7 +86,7 @@ fi
 `;
   } else if (agentKind === "codex") {
     selfHeal = `
-if [ -z "$TX_PATH" ]; then
+if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ]; then
   CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
   if [ -d "$CODEX_ROOT" ]; then
     while IFS= read -r cand; do
@@ -82,7 +99,14 @@ TX_FIND_EOF
   fi
 fi
 `;
+  } else {
+    // generic-cmd: no transcript file at all, so the validate stanza
+    // above already cleared TX_PATH if anything weird was set, and we
+    // skip self-heal entirely. The TX_INVALIDATED guard isn't needed
+    // here but the variable still has to be set for the reader below.
+    selfHeal = "";
   }
+  selfHeal = validateStanza + selfHeal;
   return `
 set -u
 WORKDIR=${shQ(workdir)}
@@ -144,6 +168,14 @@ type Report = {
    * poller's self-discovery may surface a path here even when we launched
    * without cc_session_file set. */
   txPath: string;
+  /** When the script detected a stale TX_PATH whose first-line cwd doesn't
+   *  match this session's workdir, it emits TX_PATH_INVALIDATED with the
+   *  old wrong path. The daemon must clear meta + truncate the local
+   *  transcript mirror + reset offsets so the next tick's self-heal can
+   *  start fresh from the right file. Recovery path for the v0.7.x
+   *  transcript-cross-talk bug; the validation runs every tick so it
+   *  also self-corrects future regressions. */
+  txPathInvalidated?: string;
 };
 
 function parseReport(text: string): Report | null {
@@ -156,6 +188,8 @@ function parseReport(text: string): Report | null {
   const transcriptSize = sizesMatch[4] !== undefined ? Number(sizesMatch[4]) : 0;
   const txPathMatch = /^TX_PATH=(.*)$/m.exec(text);
   const txPath = (txPathMatch?.[1] ?? "").trim();
+  const invalidatedMatch = /^TX_PATH_INVALIDATED=(.*)$/m.exec(text);
+  const txPathInvalidated = invalidatedMatch ? (invalidatedMatch[1] ?? "").trim() : undefined;
   const evStart = text.indexOf("---EVENTS-B64---\n");
   const rawStart = text.indexOf("\n---RAW-B64---\n");
   const txStart = text.indexOf("\n---TRANSCRIPT-B64---\n");
@@ -177,6 +211,7 @@ function parseReport(text: string): Report | null {
     rawDelta: rawB64 ? Buffer.from(rawB64, "base64") : Buffer.alloc(0),
     transcriptDelta: txB64 ? Buffer.from(txB64, "base64").toString("utf8") : "",
     txPath,
+    txPathInvalidated,
   };
 }
 
@@ -272,6 +307,22 @@ export class SessionPoller extends EventEmitter {
 
   private apply(s: Session, report: Report): void {
     let changed = false;
+
+    // Stale-transcript recovery. The bash script flagged that the
+    // currently-pinned TX_PATH belongs to a DIFFERENT session (its
+    // first-line cwd doesn't match this session's workdir). Wipe the
+    // local mirror, drop meta, reset offsets — next tick will self-
+    // heal cleanly. Audit-log the event so the user knows why their
+    // session's transcript page count just dropped to zero.
+    if (report.txPathInvalidated) {
+      this.invalidateStaleTranscript(s, report.txPathInvalidated);
+      // Re-read the session: the meta we just wrote is what subsequent
+      // logic compares against (the in-memory `s` is stale). Continue
+      // applying events / raw deltas this tick — they're not affected
+      // by the wrong TX_PATH.
+      s = readSession(this.dir, s.id);
+      changed = true;
+    }
 
     // Snapshot offsets before any updateSession() call. With the chunk cap
     // in pollScript(), the delta may be smaller than remote_size - offset
@@ -444,6 +495,45 @@ export class SessionPoller extends EventEmitter {
     }
 
     if (changed) this.emit("update", s.id);
+  }
+
+  /**
+   * Recovery for the v0.7.x transcript-cross-talk bug: clear meta's
+   * agent-session pointer + transcript offsets, truncate the local
+   * mirror so subsequent pollScript ticks start clean from the right
+   * file. Always logs an info event so the audit trail explains the
+   * sudden page-count drop in the UI.
+   */
+  private invalidateStaleTranscript(s: Session, wrongPath: string): void {
+    const fs = require("node:fs") as typeof import("node:fs");
+    try {
+      const local = this.dir.path("sessions", s.id, "transcript.ndjson");
+      try { fs.truncateSync(local, 0); } catch (e) {
+        // ENOENT is fine — the next append will create the file.
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+    } catch (e) {
+      console.error(`[poller ${s.id}] could not truncate stale transcript:`, e);
+    }
+    const patch: Partial<Session> = {
+      remote_transcript_offset: 0,
+      remote_transcript_size: 0,
+    };
+    if (s.agent_kind === "claude-code") {
+      patch.cc_session_file = undefined;
+      patch.cc_session_uuid = undefined;
+    } else if (s.agent_kind === "codex") {
+      patch.codex_session_file = undefined;
+      patch.codex_session_uuid = undefined;
+    }
+    updateSession(this.dir, s.id, patch);
+    appendEvent(this.dir, s.id, {
+      ts: new Date().toISOString(),
+      kind: "info",
+      subject: "transcript-invalidated",
+      previous_path: wrongPath,
+      reason: "first-line cwd did not match this session's workdir; another session's transcript was being mirrored here",
+    });
   }
 }
 
