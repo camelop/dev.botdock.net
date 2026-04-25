@@ -82,7 +82,7 @@ fi
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/projects" ]; then
   while IFS= read -r cand; do
     [ -f "$cand" ] || continue
-    head -n 1 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
+    head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
       && { TX_PATH="$cand"; break; }
   done <<TX_FIND_EOF
 $(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
@@ -118,6 +118,16 @@ WORKDIR=${shQ(workdir)}
 case "$WORKDIR" in
   "~")   WORKDIR="$HOME" ;;
   "~/"*) WORKDIR="$HOME$(printf '%s' "$WORKDIR" | cut -c2-)" ;;
+esac
+# Strip a trailing slash so the cwd grep below matches the JSONL value
+# exactly. CC and codex both write \`pwd\` of their process, which never
+# carries a trailing slash for non-root paths. Without this strip,
+# user-supplied workdirs like "~/foo/" never matched against
+# "cwd":"/home/.../foo" and the transcript discovery never adopted any
+# candidate — symptom was the UI hanging on "Waiting for ... JSONL".
+case "$WORKDIR" in
+  /) ;;
+  */) WORKDIR="\${WORKDIR%/}" ;;
 esac
 SDIR="$WORKDIR/.botdock/session"
 EV_PATH="$SDIR/events.ndjson"
