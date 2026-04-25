@@ -80,14 +80,29 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"pre_claude\",\"bin\":\"$ESCAPED_BIN\
 SESSION_EPOCH=$(date +%s)
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"claude-code\"}" >> "$EVENTS"
 
-# Background: wait a moment, then find the transcript jsonl that claude just
-# opened. ~/.claude/projects/<dir-hash>/<uuid>.jsonl is the layout as of
-# current claude-code versions; we filter by mtime > session start so we
-# don't pick up an older session file.
+# Background: wait a moment, then find the transcript jsonl that claude
+# just opened. Layout: ~/.claude/projects/<dir-hash>/<uuid>.jsonl. We
+# filter by mtime > session start AND match the first line's cwd against
+# this session's $PWD — without the cwd filter, two CC sessions launched
+# concurrently against different workdirs both see two new jsonls under
+# ~/.claude/projects/ and head -1 picks the wrong one ~half the time,
+# cross-wiring their transcripts.
+SESSION_CWD=$(pwd)
 (
   sleep 2
-  FILE=$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null \
-         | head -1)
+  FILE=""
+  while IFS= read -r cand; do
+    [ -f "$cand" ] || continue
+    # First line carries a cwd field (older CC versions) or message-with-
+    # cwd (newer). Substring-match is enough — paths can't appear inside
+    # message content because CC escapes them, and a false match would
+    # require a literal $SESSION_CWD inside a different session's first-
+    # line content, which doesn't happen in practice.
+    head -n 1 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
+      && { FILE="$cand"; break; }
+  done <<EOF
+$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
+EOF
   if [ -n "$FILE" ]; then
     UUID=$(basename "$FILE" .jsonl)
     printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"cc_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
@@ -235,15 +250,25 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"cod
 # Background: wait a moment, then find the rollout jsonl that codex
 # just opened. Codex writes to
 #   $CODEX_HOME/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
-# (default $CODEX_HOME=$HOME/.codex). We filter by mtime > session start
-# so we don't pick up an older session file. The UUID is the trailing
-# 8-4-4-4-12 hex of the basename.
+# (default $CODEX_HOME=$HOME/.codex). Filter by mtime > session start
+# AND match the rollout's first-line session_meta payload.cwd against
+# this session's $PWD. Without the cwd filter, two concurrent codex
+# sessions both see each other's new rollouts and head -1 cross-wires
+# the transcripts. The UUID is the trailing 8-4-4-4-12 hex group of
+# the basename.
+SESSION_CWD=$(pwd)
 (
   sleep 2
   ROLLOUT_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
   if [ -d "$ROLLOUT_ROOT" ]; then
-    FILE=$(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' \
-             -newermt "@$SESSION_EPOCH" 2>/dev/null | head -1)
+    FILE=""
+    while IFS= read -r cand; do
+      [ -f "$cand" ] || continue
+      head -n 1 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
+        && { FILE="$cand"; break; }
+    done <<EOF
+$(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
+EOF
     if [ -n "$FILE" ]; then
       UUID=$(basename "$FILE" .jsonl \
              | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)

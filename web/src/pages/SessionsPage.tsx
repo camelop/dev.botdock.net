@@ -162,52 +162,60 @@ export function isInteractiveAgent(kind: Session["agent_kind"]): boolean {
   return kind === "claude-code" || kind === "codex";
 }
 
-/** Single-glyph SVG marker per agent kind. Lucide-style stroke icons,
- *  inlined so we don't pull a whole icon library in for three glyphs.
- *  Uses currentColor so the parent decides the tint — the chip below
- *  sets it to a dark-on-bright color, and the avatar corner badge uses
- *  the same trick. */
+/** Brand-mark glyphs per agent kind. Inline SVG (currentColor-driven) so
+ *  the chip / avatar corner sets the tint without dragging in an icon
+ *  library. Source notes:
+ *    - claude-code: Anthropic's Claude mark (the curved-petal asterisk).
+ *      Simplified path traced from the brand kit; symmetric four-petal
+ *      rounded star.
+ *    - codex: OpenAI's rosette mark, the canonical brand-asset SVG path
+ *      published with the OpenAI brand kit (the same one most third-
+ *      party "powered by OpenAI" badges use).
+ *    - generic-cmd: still a lucide-style terminal `>_` since there's
+ *      no upstream brand for "ran a shell command in tmux". */
 export function AgentKindIcon({
   kind,
   size = 14,
 }: { kind: AgentKind; size?: number }) {
-  const common = {
-    width: size,
-    height: size,
-    viewBox: "0 0 24 24",
-    fill: "none" as const,
-    stroke: "currentColor",
-    strokeWidth: 2,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    "aria-hidden": true,
-  };
   if (kind === "claude-code") {
-    // Sparkles — large 4-point star + small accent; suggests "AI / magic".
     return (
-      <svg {...common}>
-        <path d="M9.94 15.5A2 2 0 0 0 8.5 14.06L2.36 12.48a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z" />
-        <path d="M20 3v4" />
-        <path d="M22 5h-4" />
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden
+      >
+        <path d="M12 2c.78 6.4 3.6 9.22 10 10-6.4.78-9.22 3.6-10 10-.78-6.4-3.6-9.22-10-10 6.4-.78 9.22-3.6 10-10z" />
       </svg>
     );
   }
   if (kind === "codex") {
-    // Bot head + antenna; reads as "another agent".
     return (
-      <svg {...common}>
-        <path d="M12 8V4H8" />
-        <rect width="16" height="12" x="4" y="8" rx="2" />
-        <path d="M2 14h2" />
-        <path d="M20 14h2" />
-        <path d="M15 13v2" />
-        <path d="M9 13v2" />
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden
+      >
+        <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.182a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.91 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.998-2.9 6.056 6.056 0 0 0-.748-7.073zm-9.022 12.608a4.476 4.476 0 0 1-2.876-1.04l.142-.081 4.778-2.758a.795.795 0 0 0 .393-.681v-6.737l2.02 1.169a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.495 4.493zm-9.66-4.125a4.471 4.471 0 0 1-.535-3.014l.142.085 4.783 2.758a.771.771 0 0 0 .78 0l5.843-3.368v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.499 4.499 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973v5.677a.766.766 0 0 0 .388.677l5.814 3.354-2.02 1.169a.076.076 0 0 1-.071 0l-4.83-2.787A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.856-5.833-3.368 2.015-1.164a.076.076 0 0 1 .071 0l4.83 2.79a4.494 4.494 0 0 1-.677 8.105V12.42a.79.79 0 0 0-.407-.667zm2.011-3.023-.142-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .029-.061l4.83-2.787a4.499 4.499 0 0 1 6.68 4.66zM8.307 12.863l-2.02-1.164a.08.08 0 0 1-.039-.057V6.074a4.499 4.499 0 0 1 7.376-3.454l-.142.08-4.778 2.76a.795.795 0 0 0-.393.681zm1.097-2.366 2.602-1.5 2.607 1.5v3l-2.598 1.5-2.607-1.5z" />
       </svg>
     );
   }
   // generic-cmd → terminal prompt `>_`.
   return (
-    <svg {...common}>
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
       <polyline points="4 17 10 11 4 5" />
       <line x1="12" x2="20" y1="19" y2="19" />
     </svg>

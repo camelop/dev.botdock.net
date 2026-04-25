@@ -50,11 +50,21 @@ function pollScript(
   // we skip scanning entirely. CC scans ~/.claude/projects; codex scans
   // $CODEX_HOME/sessions (default ~/.codex/sessions).
   let selfHeal = "";
+  // Both agents' self-heal probes have to match the rollout's first-line
+  // cwd against $WORKDIR — otherwise two concurrent sessions on the same
+  // machine both see each other's just-created jsonls (mtime-newer-than-
+  // either-session's-epoch matches BOTH files) and pick the wrong one,
+  // cross-wiring their transcripts. Bug surfaced by user 2026-04-25.
   if (agentKind === "claude-code") {
     selfHeal = `
 if [ -z "$TX_PATH" ] && [ -d "$HOME/.claude/projects" ]; then
-  TX_PATH=$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null \\
-            | head -1)
+  while IFS= read -r cand; do
+    [ -f "$cand" ] || continue
+    head -n 1 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
+      && { TX_PATH="$cand"; break; }
+  done <<TX_FIND_EOF
+$(find "$HOME/.claude/projects" -name '*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
+TX_FIND_EOF
 fi
 `;
   } else if (agentKind === "codex") {
@@ -62,8 +72,13 @@ fi
 if [ -z "$TX_PATH" ]; then
   CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
   if [ -d "$CODEX_ROOT" ]; then
-    TX_PATH=$(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' \\
-              -newermt "@${startedEpoch}" 2>/dev/null | head -1)
+    while IFS= read -r cand; do
+      [ -f "$cand" ] || continue
+      head -n 1 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
+        && { TX_PATH="$cand"; break; }
+    done <<TX_FIND_EOF
+$(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
+TX_FIND_EOF
   fi
 fi
 `;
