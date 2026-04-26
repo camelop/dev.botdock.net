@@ -4,6 +4,7 @@ import { runMachine } from "./commands/machine.ts";
 import { runSecret } from "./commands/secret.ts";
 import { runServe } from "./commands/serve.ts";
 import { runStart, defaultClientHome } from "./commands/start.ts";
+import { runStop } from "./commands/stop.ts";
 import { BOTDOCK_VERSION } from "./version.ts";
 
 const USAGE = `botdock — local agent command center
@@ -14,6 +15,8 @@ Usage:
 Commands:
   start                      init (if needed) + spawn a background serve
                              at ~/.botdock/client-default + open browser
+  stop                       stop the daemon started by \`botdock start\`
+                             (drains SSH forwards before exit)
   init [dir]                 scaffold a BotDock data directory
   key <cmd> [...]            manage SSH keys
   machine <cmd> [...]        manage machines
@@ -22,7 +25,7 @@ Commands:
 
 Global options:
   --home <dir>               BotDock data directory (default: $BOTDOCK_HOME or cwd;
-                             \`start\` defaults to ~/.botdock/client-default)
+                             \`start\` / \`stop\` default to ~/.botdock/client-default)
   -h, --help                 show this message
   -v, --version              print version
 
@@ -71,8 +74,9 @@ async function main(argv: string[]): Promise<number> {
   // explicit-vs-default distinction through so start can pick its own
   // default when neither --home nor BOTDOCK_HOME was provided.
   const homeWasExplicit = !!home || !!process.env.BOTDOCK_HOME;
+  const startCmds = new Set(["start", "stop"]);
   const resolvedHome = home ?? process.env.BOTDOCK_HOME ?? (
-    cmd === "start" ? defaultClientHome() : process.cwd()
+    startCmds.has(cmd) ? defaultClientHome() : process.cwd()
   );
 
   switch (cmd) {
@@ -82,6 +86,7 @@ async function main(argv: string[]): Promise<number> {
     case "secret":  return runSecret({ home: resolvedHome, args: rest });
     case "serve":   return runServe({ home: resolvedHome, args: rest });
     case "start":   return runStart({ home: resolvedHome, homeWasExplicit, args: rest });
+    case "stop":    return runStop({ home: resolvedHome, homeWasExplicit, args: rest });
     default:
       process.stderr.write(`unknown command: ${cmd}\n\n${USAGE}`);
       return 2;

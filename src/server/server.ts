@@ -37,7 +37,16 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-export function startServer(opts: { home: string; dev?: boolean }): BunServer {
+export interface StartServerResult {
+  server: BunServer;
+  /** Exposed so `botdock serve`'s shutdown handler can drain SSH
+   *  forwards before the process exits (otherwise `botdock stop` leaves
+   *  zombie ssh -L children that block the listening ports until they
+   *  notice the parent's gone). */
+  forwardManager: ForwardManager;
+}
+
+export function startServer(opts: { home: string; dev?: boolean }): StartServerResult {
   const dir = new DataDir(opts.home);
   if (!existsSync(dir.configFile())) {
     throw new Error(`${opts.home} is not a BotDock data dir (missing config.toml). Run \`botdock init\` first.`);
@@ -417,7 +426,7 @@ export function startServer(opts: { home: string; dev?: boolean }): BunServer {
     },
   });
 
-  return server;
+  return { server, forwardManager };
 }
 
 function serveStatic(distDir: string, pathname: string): Response {
