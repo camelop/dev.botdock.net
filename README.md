@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.botdock.net/">Website</a>
+  <a href="https://botdock.net/">Website</a>
   ·
   <a href="https://www.youtube.com/watch?v=JdU34YknC2A">Demo</a>
   ·
