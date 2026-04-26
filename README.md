@@ -122,4 +122,4 @@ User-visible changes: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
-MIT. © 2026 BotDock. All rights reserved.
+[Apache License 2.0](LICENSE). © 2026 BotDock. All rights reserved.
