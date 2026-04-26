@@ -271,18 +271,29 @@ SESSION_CWD=$(pwd)
   sleep 2
   ROLLOUT_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
   if [ -d "$ROLLOUT_ROOT" ]; then
-    FILE=""
+    # Pick the latest-mtime rollout whose first-line session_meta carries
+    # "cwd":"$SESSION_CWD". Naive head-1 picked the first cwd-match find
+    # returned, which is essentially random when the user has run codex
+    # in this workdir before — every prior rollout still matches cwd, so
+    # we'd pin to a stale conversation instead of the one codex JUST
+    # opened. mtime-latest is what "the rollout codex is currently
+    # writing" looks like on disk.
+    BEST_FILE=""
+    BEST_MTIME=0
     while IFS= read -r cand; do
       [ -f "$cand" ] || continue
-      head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
-        && { FILE="$cand"; break; }
+      head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" || continue
+      M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+      [ "$M" -gt "$BEST_MTIME" ] || continue
+      BEST_FILE="$cand"
+      BEST_MTIME="$M"
     done <<EOF
 $(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
 EOF
-    if [ -n "$FILE" ]; then
-      UUID=$(basename "$FILE" .jsonl \
+    if [ -n "$BEST_FILE" ]; then
+      UUID=$(basename "$BEST_FILE" .jsonl \
              | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)
-      printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"codex_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
+      printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"codex_session\",\"file\":\"$BEST_FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
     fi
   fi
 ) &

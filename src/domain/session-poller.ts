@@ -151,17 +151,28 @@ TX_FIND_EOF
 fi
 `;
   } else if (agentKind === "codex") {
+    // Same shape as CC's self-heal but for codex's rollout layout. Pick
+    // the latest-mtime rollout whose first-line session_meta carries the
+    // matching cwd — that's the file codex is actively writing. Without
+    // mtime-latest, prior rollouts in the same workdir all match cwd
+    // and the first hit (essentially random find order) wins.
     selfHeal = `
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ]; then
   CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
   if [ -d "$CODEX_ROOT" ]; then
+    BEST_PATH=""
+    BEST_MTIME=0
     while IFS= read -r cand; do
       [ -f "$cand" ] || continue
-      head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
-        && { TX_PATH="$cand"; break; }
+      head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" || continue
+      M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+      [ "$M" -gt "$BEST_MTIME" ] || continue
+      BEST_PATH="$cand"
+      BEST_MTIME="$M"
     done <<TX_FIND_EOF
 $(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
 TX_FIND_EOF
+    TX_PATH="$BEST_PATH"
   fi
 fi
 `;
