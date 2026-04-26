@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BotDock — Your Multi-Machine Agent Workspace</title>
+  <meta name="description" content="Track and interact with all your claude-code / codex agent sessions in one page. BotDock is an early-stage open-source workspace for multi-machine AI coding agents." />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <meta property="og:title" content="BotDock — Your Multi-Machine Agent Workspace" />
+  <meta property="og:description" content="Track and interact with all your claude-code / codex agent sessions in one page." />
+  <meta property="og:image" content="screenshots/f0.png" />
+  <meta property="og:type" content="website" />
+
+  <!-- Geist: modern variable font; Geist Mono for inline code blocks. Both
+       weights below 400 are kept off the request because the design uses
+       400/500/600/700/800 only — fewer bytes, faster first paint. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" />
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --bg-elev: #161616;
+      --bg-panel: #1c1c1c;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --fg: #f6f6f6;
+      --fg-dim: rgba(255, 255, 255, 0.62);
+      --fg-mute: rgba(255, 255, 255, 0.42);
+      --orange: #ff7a3d;
+      --orange-soft: rgba(255, 122, 61, 0.16);
+      --orange-strong: #ff8c52;
+      --shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
+      font-feature-settings: "ss01", "cv11";
+      font-size: 16px;
+      line-height: 1.6;
+      letter-spacing: -0.005em;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    code, pre, .mono {
+      font-family: "Geist Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", monospace;
+      font-feature-settings: "ss01";
+    }
+
+    body {
+      background:
+        radial-gradient(1200px 600px at 50% -200px, rgba(255, 122, 61, 0.08), transparent 70%),
+        var(--bg);
+      min-height: 100vh;
+    }
+
+    a { color: var(--orange-strong); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ------------- HEADER / NAV ------------- */
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .nav-brand img { width: 32px; height: 32px; }
+    .nav-brand span { font-size: 18px; }
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      font-size: 14px;
+    }
+    .nav-links a {
+      color: var(--fg-dim);
+      text-decoration: none;
+    }
+    .nav-links a:hover { color: var(--orange-strong); }
+
+    /* ------------- HERO ------------- */
+    .hero {
+      padding: 56px 0 32px;
+      text-align: center;
+    }
+    .hero img.logo {
+      width: 88px;
+      height: 88px;
+      margin-bottom: 18px;
+    }
+    .hero h1 {
+      font-size: clamp(40px, 7.5vw, 84px);
+      line-height: 1;
+      letter-spacing: -0.04em;
+      margin: 0 0 18px;
+      font-weight: 800;
+    }
+    .hero h2.subtitle {
+      font-size: clamp(22px, 3.6vw, 38px);
+      line-height: 1.18;
+      letter-spacing: -0.02em;
+      font-weight: 600;
+      margin: 0 0 18px;
+      color: var(--fg);
+    }
+    .hero h2.subtitle .accent { color: var(--orange); }
+    .hero p.tagline {
+      font-size: clamp(15px, 2vw, 19px);
+      color: var(--fg-dim);
+      max-width: 720px;
+      margin: 0 auto 32px;
+    }
+
+    /* ------------- VIDEO ------------- */
+    .video-wrap {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      aspect-ratio: 16 / 9;
+      background: #000;
+    }
+    .video-wrap iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+    .video-caption {
+      text-align: center;
+      font-size: 13px;
+      color: var(--fg-mute);
+      margin-bottom: 48px;
+    }
+
+    /* ------------- INSTALL ------------- */
+    section { padding: 56px 0; }
+    section h2 {
+      font-size: clamp(24px, 3.5vw, 34px);
+      letter-spacing: -0.02em;
+      font-weight: 800;
+      margin: 0 0 8px;
+    }
+    section p.section-lead {
+      color: var(--fg-dim);
+      margin: 0 0 28px;
+      max-width: 720px;
+    }
+
+    .install-box {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: var(--shadow);
+    }
+    .install-box code {
+      flex: 1;
+      font-family: "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", monospace;
+      font-size: 14px;
+      color: var(--fg);
+      overflow-x: auto;
+      white-space: nowrap;
+      padding: 4px 0;
+    }
+    .copy-btn {
+      flex-shrink: 0;
+      background: transparent;
+      color: var(--fg-dim);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .copy-btn:hover { color: var(--orange); border-color: var(--orange); }
+    .copy-btn.copied { color: var(--orange); border-color: var(--orange); background: var(--orange-soft); }
+
+    .disclaimer-inline {
+      font-size: 12px;
+      color: var(--fg-mute);
+      margin-top: 14px;
+      text-align: center;
+    }
+
+    /* ------------- QUICK START ------------- */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-top: 8px;
+    }
+    .step {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px 22px;
+      position: relative;
+    }
+    .step .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--orange);
+      color: #0a0a0a;
+      font-weight: 800;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .step h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .step p {
+      margin: 0;
+      font-size: 14px;
+      color: var(--fg-dim);
+      line-height: 1.55;
+    }
+    .step code {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 1px 6px;
+      font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+      font-size: 12.5px;
+      color: var(--orange-strong);
+    }
+    .tip-box {
+      margin-top: 24px;
+      background: var(--orange-soft);
+      border: 1px solid rgba(255, 122, 61, 0.32);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      font-size: 14px;
+      color: var(--fg);
+    }
+    .tip-box strong { color: var(--orange-strong); }
+
+    /* ------------- FEATURES ------------- */
+    .feature {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 36px;
+      align-items: center;
+      padding: 36px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .feature:last-child { border-bottom: none; }
+    .feature.alt { grid-template-columns: 1.4fr 1fr; }
+    .feature.alt .feature-text { order: 2; }
+    .feature.alt .feature-media { order: 1; }
+
+    .feature-text h3 {
+      font-size: clamp(18px, 2.4vw, 22px);
+      margin: 0 0 12px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .feature-text p {
+      color: var(--fg-dim);
+      margin: 0 0 18px;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .feature-media {
+      display: grid;
+      gap: 14px;
+    }
+    .feature-shot {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--bg-elev);
+      box-shadow: var(--shadow);
+      cursor: zoom-in;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .feature-shot:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
+    }
+    .feature-shot img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Lightbox: full-viewport overlay that opens when a screenshot is
+     * clicked. Image scales to fit while preserving aspect ratio; click
+     * anywhere or hit Esc to dismiss. */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      cursor: zoom-out;
+      padding: 24px;
+      animation: lb-fade 160ms ease;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+    }
+    .lightbox-close {
+      position: absolute;
+      top: 18px;
+      right: 22px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--fg);
+      border: 1px solid var(--border-strong);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      font-size: 18px;
+      cursor: pointer;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lightbox-close:hover { background: var(--orange); color: #0a0a0a; border-color: var(--orange); }
+    @keyframes lb-fade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      margin: 4px 8px 0 0;
+    }
+    .pill:hover {
+      color: var(--orange);
+      border-color: var(--orange);
+      text-decoration: none;
+    }
+    .pill::before {
+      content: "▶";
+      font-size: 9px;
+      color: var(--orange);
+    }
+
+    /* ------------- DISCUSSION ------------- */
+    .cta-box {
+      text-align: center;
+      background: linear-gradient(180deg, var(--bg-elev), var(--bg-panel));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+    }
+    .cta-box h2 { margin-top: 0; }
+    .cta-box p { color: var(--fg-dim); max-width: 520px; margin: 0 auto 24px; }
+    .cta-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--orange);
+      color: #0a0a0a;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 22px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .cta-btn:hover {
+      background: var(--orange-strong);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+
+    /* ------------- FOOTER ------------- */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0 48px;
+      text-align: center;
+      color: var(--fg-mute);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    footer .disclaimer {
+      max-width: 720px;
+      margin: 0 auto 14px;
+    }
+    footer .repo-link {
+      color: var(--fg-dim);
+    }
+    footer .copyright {
+      color: var(--fg-mute);
+      font-size: 12px;
+      margin: 14px 0 0;
+      letter-spacing: 0.02em;
+    }
+
+    /* ------------- MOBILE ------------- */
+    @media (max-width: 768px) {
+      .container { padding: 0 18px; }
+      section { padding: 40px 0; }
+      .nav-links { display: none; }
+      .hero { padding: 36px 0 24px; }
+      .steps { grid-template-columns: 1fr; }
+      .feature, .feature.alt {
+        grid-template-columns: 1fr;
+        gap: 20px;
+        padding: 28px 0;
+      }
+      .feature.alt .feature-text { order: 0; }
+      .feature.alt .feature-media { order: 1; }
+      .install-box { padding: 12px 14px; }
+      .install-box code { font-size: 12.5px; }
+      .copy-btn { padding: 5px 10px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <div class="nav-brand">
+        <img src="logo.png" alt="BotDock logo" />
+        <span>BotDock</span>
+      </div>
+      <div class="nav-links">
+        <a href="#install">Install</a>
+        <a href="#quickstart">Quick start</a>
+        <a href="#features">Features</a>
+        <a href="https://github.com/camelop/dev.botdock.net" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <img src="logo.png" alt="BotDock logo" class="logo" />
+      <h1>BotDock</h1>
+      <h2 class="subtitle">Your <span class="accent">Multi-Machine</span> Agent Workspace</h2>
+      <p class="tagline">Track and interact with all your claude-code / codex agent sessions in one page.</p>
+    </header>
+
+    <div class="video-wrap">
+      <iframe
+        src="https://www.youtube-nocookie.com/embed/JdU34YknC2A?autoplay=1&mute=1&loop=1&playlist=JdU34YknC2A&controls=1&modestbranding=1&rel=0&playsinline=1"
+        title="BotDock demo"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowfullscreen
+        loading="eager"></iframe>
+    </div>
+    <p class="video-caption">↑ One-page workspace for every claude-code / codex session you run.</p>
+
+    <section id="install">
+      <h2>Install</h2>
+      <p class="section-lead">One-line installer for macOS / Linux. Re-run the same command to upgrade.</p>
+      <div class="install-box">
+        <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/camelop/dev.botdock.net/main/install.sh | bash</code>
+        <button class="copy-btn" onclick="copyInstall(this)">Copy</button>
+      </div>
+      <p class="disclaimer-inline">
+        ⚠ BotDock is an <strong>early-stage prototype for research / personal use only</strong>.
+        Do not run it in production environments or expose it to untrusted networks.
+      </p>
+    </section>
+
+    <section id="quickstart">
+      <h2>Quick start</h2>
+      <p class="section-lead">3 steps to your own agent dashboard &mdash; in about a minute.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>Install &amp; launch</h3>
+          <p>
+            Run the installer above, then start the daemon with
+            <code>botdock start</code> &mdash; it spins up a background server at
+            <code>~/.botdock/client-default</code> and opens the UI in your browser.
+            Prefer to keep state in a specific directory? Use <code>botdock serve</code> from inside it.
+          </p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>Add a machine</h3>
+          <p>
+            Generate an SSH key, register a target machine (with optional jump-host chain
+            and credentials), and run the built-in connection test until it goes green.
+          </p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>Start agents</h3>
+          <p>
+            Spawn claude-code or codex sessions on any registered machine and drive them
+            from one workspace &mdash; transcript, terminal, file browser, and notes side by side.
+          </p>
+        </div>
+      </div>
+      <div class="tip-box">
+        <strong>Backups:</strong>
+        Use the per-session <em>Export</em> button to ship a single session's machine + key + logs +
+        transcript as a portable zip. To back up everything, copy the data dir
+        (<code>~/.botdock/client-default</code> by default) wholesale.
+      </div>
+    </section>
+
+    <section id="features">
+      <h2>What it does</h2>
+      <p class="section-lead">A single page that follows every session you run on every machine.</p>
+
+      <div class="feature">
+        <div class="feature-text">
+          <h3>Manage Claude-code / codex sessions across machines, in one workspace</h3>
+          <p>
+            Spin up agent sessions on any registered machine and watch them all from a single
+            three-column workspace &mdash; sidebar, terminal, transcript &mdash; without juggling
+            tmux panes or SSH terminals.
+          </p>
+          <a class="pill" href="https://youtu.be/JdU34YknC2A?t=315" target="_blank" rel="noopener">See in action</a>
+        </div>
+        <div class="feature-media">
+          <div class="feature-shot" onclick="openLightbox(this)"><img src="screenshots/f0.png" alt="Multi-machine workspace overview" loading="lazy" /></div>
+        </div>
+      </div>
+
+      <div class="feature alt">
+        <div class="feature-text">
+          <h3>Enhanced agent TUI experience &mdash; status tracking and tagging</h3>
+          <p>
+            Every session carries a status pill (running / pending / syncing / exited),
+            optional alias and accent color, and free-form tags. The dashboard surfaces what
+            <em>needs your attention</em> first and tucks the rest away.
+          </p>
+          <a class="pill" href="https://youtu.be/JdU34YknC2A?t=371" target="_blank" rel="noopener">See in action</a>
+        </div>
+        <div class="feature-media">
+          <div class="feature-shot" onclick="openLightbox(this)"><img src="screenshots/f1.png" alt="Status tracking and tagging" loading="lazy" /></div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-text">
+          <h3>One-click access to your working directory &mdash; cloud-drive UI &amp; VS Code</h3>
+          <p>
+            Spawn a per-session <strong>filebrowser</strong> or <strong>VS Code</strong> server,
+            scoped to the session's workdir, with one click. Both run on the remote machine
+            and reverse-proxy through BotDock so you stay in one tab.
+          </p>
+          <a class="pill" href="https://youtu.be/JdU34YknC2A?t=566" target="_blank" rel="noopener">File browser</a>
+          <a class="pill" href="https://youtu.be/JdU34YknC2A?t=531" target="_blank" rel="noopener">VS Code</a>
+        </div>
+        <div class="feature-media">
+          <div class="feature-shot" onclick="openLightbox(this)"><img src="screenshots/f2a.png" alt="Cloud-drive file browser" loading="lazy" /></div>
+          <div class="feature-shot" onclick="openLightbox(this)"><img src="screenshots/f2b.png" alt="VS Code in the browser" loading="lazy" /></div>
+        </div>
+      </div>
+
+      <div class="feature alt">
+        <div class="feature-text">
+          <h3>Prepare context once, reuse it everywhere</h3>
+          <p>
+            Curate reusable context centrally &mdash; markdown snippets, git repos with deploy
+            keys, arbitrary file bundles &mdash; and push it into any session's workdir on demand.
+            Personal coding preferences and project repos travel with you.
+          </p>
+          <a class="pill" href="https://youtu.be/JdU34YknC2A?t=227" target="_blank" rel="noopener">Personal preferences</a>
+          <a class="pill" href="https://youtu.be/JdU34YknC2A?t=419" target="_blank" rel="noopener">Repo linking</a>
+        </div>
+        <div class="feature-media">
+          <div class="feature-shot" onclick="openLightbox(this)"><img src="screenshots/f3.png" alt="Context push" loading="lazy" /></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="cta-box">
+        <h2>Shape what ships next</h2>
+        <p>
+          BotDock is built around the features its users actually want. Got an idea, a pain point,
+          or a session pattern we should support? Open a feature request &mdash; the next release
+          probably picks from the issue queue.
+        </p>
+        <a class="cta-btn" href="https://github.com/camelop/dev.botdock.net/issues/new?template=feature_request.md" target="_blank" rel="noopener">
+          Open a feature request →
+        </a>
+      </div>
+    </section>
+
+    <footer>
+      <p class="disclaimer">
+        BotDock is an early-stage research prototype. A significant portion of the codebase
+        is generated by coding agents and the project is iterated on rapidly &mdash; expect
+        bugs, breaking changes, and rough edges. Use at your own risk; not intended for
+        production deployments.
+      </p>
+      <p class="repo-link">
+        <a href="https://github.com/camelop/dev.botdock.net" target="_blank" rel="noopener">github.com/camelop/dev.botdock.net</a>
+      </p>
+      <p class="copyright">&copy; 2026 BotDock. All rights reserved.</p>
+    </footer>
+  </div>
+
+  <!-- Lightbox overlay — populated on click, dismissed on click / Esc. -->
+  <div class="lightbox" id="lightbox" onclick="closeLightbox()" role="dialog" aria-modal="true" aria-hidden="true">
+    <button class="lightbox-close" type="button" aria-label="Close">&times;</button>
+    <img id="lightbox-img" alt="" />
+  </div>
+
+  <script>
+    function openLightbox(el) {
+      const src = el.querySelector('img')?.getAttribute('src');
+      const alt = el.querySelector('img')?.getAttribute('alt') || '';
+      if (!src) return;
+      const lb = document.getElementById('lightbox');
+      const img = document.getElementById('lightbox-img');
+      img.src = src;
+      img.alt = alt;
+      lb.classList.add('open');
+      lb.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeLightbox() {
+      const lb = document.getElementById('lightbox');
+      lb.classList.remove('open');
+      lb.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      // Drop the src so memory isn't held; a re-open re-assigns it.
+      document.getElementById('lightbox-img').removeAttribute('src');
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.getElementById('lightbox').classList.contains('open')) {
+        closeLightbox();
+      }
+    });
+
+    function copyInstall(btn) {
+      const cmd = document.getElementById('install-cmd').textContent.trim();
+      const restore = () => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      };
+      const showOk = () => {
+        btn.textContent = 'Copied ✓';
+        btn.classList.add('copied');
+        clearTimeout(btn._t);
+        btn._t = setTimeout(restore, 1800);
+      };
+      const showFail = () => {
+        btn.textContent = 'Press ⌘C';
+        clearTimeout(btn._t);
+        btn._t = setTimeout(restore, 1800);
+      };
+      // Modern path. navigator.clipboard requires HTTPS or localhost; on
+      // GitHub Pages we have HTTPS so this is the common case.
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmd).then(showOk, () => fallback());
+      } else {
+        fallback();
+      }
+      function fallback() {
+        // execCommand path for old browsers / non-secure contexts.
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = cmd;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          ok ? showOk() : showFail();
+        } catch {
+          showFail();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
