@@ -80,47 +80,13 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"pre_claude\",\"bin\":\"$ESCAPED_BIN\
 SESSION_EPOCH=$(date +%s)
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"claude-code\"}" >> "$EVENTS"
 
-# Background: wait a moment, then find the transcript jsonl that claude
-# just opened. Layout: ~/.claude/projects/<dir-hash>/<uuid>.jsonl. We
-# filter by mtime > session start AND match the first line's cwd against
-# this session's $PWD — without the cwd filter, two CC sessions launched
-# concurrently against different workdirs both see two new jsonls under
-# ~/.claude/projects/ and head -1 picks the wrong one ~half the time,
-# cross-wiring their transcripts.
-SESSION_CWD=$(pwd)
-(
-  sleep 2
-  # Pick the latest-mtime jsonl whose first 20 lines:
-  #   - carry "cwd":"$SESSION_CWD" (avoids cross-talk between concurrent
-  #     sessions in different workdirs — without this, two sessions racing
-  #     to spawn would both pick the first-newer file half the time)
-  #   - aren't a Task / agent-teams spawn (those open with the orchestrator-
-  #     injected "<system>\nYou are <agent>..." envelope as the first user
-  #     message; the orchestrator's OWN jsonl has the user's typed prompt)
-  #   - aren't under a subagents/ subdir (sub-conversation jsonls)
-  BEST_FILE=""
-  BEST_MTIME=0
-  while IFS= read -r cand; do
-    [ -f "$cand" ] || continue
-    HEAD20=$(head -n 20 "$cand" 2>/dev/null)
-    printf '%s' "$HEAD20" | grep -q -F "\"cwd\":\"$SESSION_CWD\"" || continue
-    printf '%s' "$HEAD20" | grep -q -F '"role":"user","content":"<system>' \
-      && continue
-    M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
-    [ "$M" -gt "$BEST_MTIME" ] || continue
-    BEST_FILE="$cand"
-    BEST_MTIME="$M"
-  done <<EOF
-$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@$SESSION_EPOCH" 2>/dev/null)
-EOF
-  if [ -n "$BEST_FILE" ]; then
-    UUID=$(basename "$BEST_FILE" .jsonl)
-    printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"cc_session\",\"file\":\"$BEST_FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
-  fi
-) &
-
-# Run claude with the initial prompt (if provided). cmd.sh is sourced to
-# pick up shell-quoted args; its content is a few assignments like:
+# Source cmd.sh BEFORE discovery so $RESUME_UUID is available to the
+# probe — for resumed sessions the existing jsonl's mtime may be days
+# old until claude writes a fresh turn, so the mtime-newer-than-epoch
+# filter alone misses it. With RESUME_UUID known, we can look up by
+# basename and skip the mtime filter entirely.
+#
+# cmd.sh is just shell-quoted variable assignments:
 #   PROMPT='...'
 #   SKIP_TRUST=1    (optional — folder-trust auto-accept)
 #   RESUME_UUID=... (optional — resume an existing CC jsonl via --resume)
@@ -133,6 +99,57 @@ LAUNCH_CMD=""
 AGENT_TEAMS=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
+
+# Background: wait a moment, then find the transcript jsonl that claude
+# just opened. Layout: ~/.claude/projects/<dir-hash>/<uuid>.jsonl.
+SESSION_CWD=$(pwd)
+(
+  sleep 2
+  FILE=""
+  if [ -n "$RESUME_UUID" ]; then
+    # Resumed session — claude opens the existing jsonl whose basename
+    # matches the UUID. Don't filter by mtime: the file may not have
+    # been written to since the user's last turn (could be days ago),
+    # and we still want to mirror its history. Still verify cwd to
+    # avoid adopting a stray same-UUID file (CC scopes UUIDs by project
+    # dir, but the symlinked-home edge case is cheap to defend against).
+    CAND=$(find "$HOME/.claude/projects" -type f -name "\${RESUME_UUID}.jsonl" -not -path '*/subagents/*' 2>/dev/null | head -1)
+    if [ -n "$CAND" ] && [ -f "$CAND" ]; then
+      head -n 20 "$CAND" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" \
+        && FILE="$CAND"
+    fi
+  fi
+  if [ -z "$FILE" ]; then
+    # Fresh session (or resumed-but-UUID-not-found): pick the latest-mtime
+    # jsonl whose first 20 lines:
+    #   - carry "cwd":"$SESSION_CWD" (avoids cross-talk between concurrent
+    #     sessions in different workdirs)
+    #   - aren't a Task / agent-teams spawn (those open with the orchestrator-
+    #     injected "<system>\nYou are <agent>..." envelope as the first user
+    #     message; the orchestrator's OWN jsonl has the user's typed prompt)
+    #   - aren't under a subagents/ subdir (sub-conversation jsonls)
+    BEST_FILE=""
+    BEST_MTIME=0
+    while IFS= read -r cand; do
+      [ -f "$cand" ] || continue
+      HEAD20=$(head -n 20 "$cand" 2>/dev/null)
+      printf '%s' "$HEAD20" | grep -q -F "\"cwd\":\"$SESSION_CWD\"" || continue
+      printf '%s' "$HEAD20" | grep -q -F '"role":"user","content":"<system>' \
+        && continue
+      M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+      [ "$M" -gt "$BEST_MTIME" ] || continue
+      BEST_FILE="$cand"
+      BEST_MTIME="$M"
+    done <<EOF
+$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@$SESSION_EPOCH" 2>/dev/null)
+EOF
+    FILE="$BEST_FILE"
+  fi
+  if [ -n "$FILE" ]; then
+    UUID=$(basename "$FILE" .jsonl)
+    printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"cc_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
+  fi
+) &
 
 # Pre-accept claude's folder-trust prompt for this workdir. This writes
 # projects.<cwd>.hasTrustDialogAccepted = true into ~/.claude.json so the
@@ -257,47 +274,11 @@ printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"pre_codex\",\"bin\":\"$ESCAPED_BIN\"
 SESSION_EPOCH=$(date +%s)
 printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"started\",\"pid\":$$,\"agent\":\"codex\"}" >> "$EVENTS"
 
-# Background: wait a moment, then find the rollout jsonl that codex
-# just opened. Codex writes to
-#   $CODEX_HOME/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
-# (default $CODEX_HOME=$HOME/.codex). Filter by mtime > session start
-# AND match the rollout's first-line session_meta payload.cwd against
-# this session's $PWD. Without the cwd filter, two concurrent codex
-# sessions both see each other's new rollouts and head -1 cross-wires
-# the transcripts. The UUID is the trailing 8-4-4-4-12 hex group of
-# the basename.
-SESSION_CWD=$(pwd)
-(
-  sleep 2
-  ROLLOUT_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
-  if [ -d "$ROLLOUT_ROOT" ]; then
-    # Pick the latest-mtime rollout whose first-line session_meta carries
-    # "cwd":"$SESSION_CWD". Naive head-1 picked the first cwd-match find
-    # returned, which is essentially random when the user has run codex
-    # in this workdir before — every prior rollout still matches cwd, so
-    # we'd pin to a stale conversation instead of the one codex JUST
-    # opened. mtime-latest is what "the rollout codex is currently
-    # writing" looks like on disk.
-    BEST_FILE=""
-    BEST_MTIME=0
-    while IFS= read -r cand; do
-      [ -f "$cand" ] || continue
-      head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" || continue
-      M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
-      [ "$M" -gt "$BEST_MTIME" ] || continue
-      BEST_FILE="$cand"
-      BEST_MTIME="$M"
-    done <<EOF
-$(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
-EOF
-    if [ -n "$BEST_FILE" ]; then
-      UUID=$(basename "$BEST_FILE" .jsonl \
-             | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)
-      printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"codex_session\",\"file\":\"$BEST_FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
-    fi
-  fi
-) &
-
+# Source cmd.sh BEFORE discovery so $RESUME_UUID is known to the probe.
+# For resumed codex sessions the existing rollout's mtime is usually old
+# (codex appends only when the user types a turn, which may be hours
+# after the resume), so mtime-newer-than-epoch alone misses it. With the
+# UUID known we can look up the rollout by basename instead.
 PROMPT=""
 SKIP_TRUST=""
 RESUME_UUID=""
@@ -305,6 +286,55 @@ SANDBOX_MODE=""
 APPROVAL_MODE=""
 # shellcheck disable=SC1091
 . "$DIR/cmd.sh"
+
+# Background: wait a moment, then find the rollout jsonl that codex
+# just opened. Codex writes to
+#   $CODEX_HOME/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
+# (default $CODEX_HOME=$HOME/.codex).
+SESSION_CWD=$(pwd)
+(
+  sleep 2
+  ROLLOUT_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
+  if [ -d "$ROLLOUT_ROOT" ]; then
+    FILE=""
+    if [ -n "$RESUME_UUID" ]; then
+      # Resumed session — basename ends in -<RESUME_UUID>.jsonl regardless
+      # of which date dir it's under. Don't filter by mtime: the file may
+      # not have been touched since the prior session ended, and we
+      # still want to mirror its history.
+      CAND=$(find "$ROLLOUT_ROOT" -type f -name "rollout-*-\${RESUME_UUID}.jsonl" 2>/dev/null | head -1)
+      if [ -n "$CAND" ] && [ -f "$CAND" ]; then
+        FILE="$CAND"
+      fi
+    fi
+    if [ -z "$FILE" ]; then
+      # Fresh session (or resumed-but-UUID-not-found): pick the latest-
+      # mtime rollout whose first-line session_meta carries the matching
+      # cwd. Naive head-1 picks the first cwd-match find returns, which
+      # is essentially random when the user has run codex in this workdir
+      # before — every prior rollout still matches cwd. mtime-latest is
+      # what "the rollout codex is currently writing" looks like on disk.
+      BEST_FILE=""
+      BEST_MTIME=0
+      while IFS= read -r cand; do
+        [ -f "$cand" ] || continue
+        head -n 20 "$cand" 2>/dev/null | grep -q -F "\"cwd\":\"$SESSION_CWD\"" || continue
+        M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+        [ "$M" -gt "$BEST_MTIME" ] || continue
+        BEST_FILE="$cand"
+        BEST_MTIME="$M"
+      done <<EOF
+$(find "$ROLLOUT_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@$SESSION_EPOCH" 2>/dev/null)
+EOF
+      FILE="$BEST_FILE"
+    fi
+    if [ -n "$FILE" ]; then
+      UUID=$(basename "$FILE" .jsonl \
+             | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)
+      printf '%s\n' "{\"ts\":\"$(ts)\",\"kind\":\"codex_session\",\"file\":\"$FILE\",\"uuid\":\"$UUID\"}" >> "$EVENTS"
+    fi
+  fi
+) &
 
 # Build codex flags. Three layers of precedence:
 #

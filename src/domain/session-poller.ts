@@ -44,6 +44,12 @@ function pollScript(
    *  path if the shim's discovery helper missed it. */
   startedEpoch: number,
   agentKind: string,
+  /** Resume UUID, when the user launched the session by attaching to an
+   *  existing CC / codex conversation. When set, self-heal can locate
+   *  the file by basename match and skip the mtime-newer-than-epoch
+   *  filter (the resumed file may not have been written to since the
+   *  previous session ended). */
+  resumeUuid: string | undefined,
 ): string {
   const txSrcQ = transcriptFile ? shQ(transcriptFile) : "''";
   // Self-heal command per agent. Generic-cmd has no transcript file, so
@@ -113,6 +119,9 @@ fi
   // machine both see each other's just-created jsonls (mtime-newer-than-
   // either-session's-epoch matches BOTH files) and pick the wrong one,
   // cross-wiring their transcripts. Bug surfaced by user 2026-04-25.
+  // resumeUuid is shell-injected into the script template; quote-defensive
+  // at the boundary so a hostile UUID can't escape into command position.
+  const resumeUuidQ = resumeUuid ? shQ(resumeUuid) : "''";
   if (agentKind === "claude-code") {
     // CC project-dir layout has three failure modes for naive self-heal:
     //   1. ~/.claude/projects/<dir>/<uuid>/subagents/agent-<hex>.jsonl
@@ -130,49 +139,73 @@ fi
     //   3. Among the remaining real-user-driven candidates, pick the
     //      one with the latest mtime — that's the file CC is currently
     //      writing to.
+    //
+    // For resumed sessions (RESUME_UUID set) the file is named
+    // `<uuid>.jsonl`; we look it up by basename and skip the mtime
+    // filter, since the resumed file may not have been touched since
+    // the prior session ended.
     selfHeal = `
+RESUME_UUID=${resumeUuidQ}
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/projects" ]; then
-  BEST_PATH=""
-  BEST_MTIME=0
-  while IFS= read -r cand; do
-    [ -f "$cand" ] || continue
-    HEAD20=$(head -n 20 "$cand" 2>/dev/null)
-    printf '%s' "$HEAD20" | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" || continue
-    printf '%s' "$HEAD20" | grep -q -F '"role":"user","content":"<system>' \\
-      && continue
-    M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
-    [ "$M" -gt "$BEST_MTIME" ] || continue
-    BEST_PATH="$cand"
-    BEST_MTIME="$M"
-  done <<TX_FIND_EOF
-$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@${startedEpoch}" 2>/dev/null)
-TX_FIND_EOF
-  TX_PATH="$BEST_PATH"
-fi
-`;
-  } else if (agentKind === "codex") {
-    // Same shape as CC's self-heal but for codex's rollout layout. Pick
-    // the latest-mtime rollout whose first-line session_meta carries the
-    // matching cwd — that's the file codex is actively writing. Without
-    // mtime-latest, prior rollouts in the same workdir all match cwd
-    // and the first hit (essentially random find order) wins.
-    selfHeal = `
-if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ]; then
-  CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
-  if [ -d "$CODEX_ROOT" ]; then
+  if [ -n "$RESUME_UUID" ]; then
+    CAND=$(find "$HOME/.claude/projects" -type f -name "\${RESUME_UUID}.jsonl" -not -path '*/subagents/*' 2>/dev/null | head -1)
+    if [ -n "$CAND" ] && [ -f "$CAND" ]; then
+      head -n 20 "$CAND" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" \\
+        && TX_PATH="$CAND"
+    fi
+  fi
+  if [ -z "$TX_PATH" ]; then
     BEST_PATH=""
     BEST_MTIME=0
     while IFS= read -r cand; do
       [ -f "$cand" ] || continue
-      head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" || continue
+      HEAD20=$(head -n 20 "$cand" 2>/dev/null)
+      printf '%s' "$HEAD20" | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" || continue
+      printf '%s' "$HEAD20" | grep -q -F '"role":"user","content":"<system>' \\
+        && continue
       M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
       [ "$M" -gt "$BEST_MTIME" ] || continue
       BEST_PATH="$cand"
       BEST_MTIME="$M"
     done <<TX_FIND_EOF
-$(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
+$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -newermt "@${startedEpoch}" 2>/dev/null)
 TX_FIND_EOF
     TX_PATH="$BEST_PATH"
+  fi
+fi
+`;
+  } else if (agentKind === "codex") {
+    // Same shape as CC's self-heal but for codex's rollout layout. For
+    // resumed sessions, look up by basename ('rollout-*-<uuid>.jsonl').
+    // For fresh ones, pick the latest-mtime rollout whose first-line
+    // session_meta carries the matching cwd — that's the file codex
+    // is actively writing.
+    selfHeal = `
+RESUME_UUID=${resumeUuidQ}
+if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ]; then
+  CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
+  if [ -d "$CODEX_ROOT" ]; then
+    if [ -n "$RESUME_UUID" ]; then
+      CAND=$(find "$CODEX_ROOT" -type f -name "rollout-*-\${RESUME_UUID}.jsonl" 2>/dev/null | head -1)
+      if [ -n "$CAND" ] && [ -f "$CAND" ]; then
+        TX_PATH="$CAND"
+      fi
+    fi
+    if [ -z "$TX_PATH" ]; then
+      BEST_PATH=""
+      BEST_MTIME=0
+      while IFS= read -r cand; do
+        [ -f "$cand" ] || continue
+        head -n 20 "$cand" 2>/dev/null | grep -q -F "\\"cwd\\":\\"$WORKDIR\\"" || continue
+        M=$(stat -c '%Y' "$cand" 2>/dev/null) || continue
+        [ "$M" -gt "$BEST_MTIME" ] || continue
+        BEST_PATH="$cand"
+        BEST_MTIME="$M"
+      done <<TX_FIND_EOF
+$(find "$CODEX_ROOT" -type f -name 'rollout-*.jsonl' -newermt "@${startedEpoch}" 2>/dev/null)
+TX_FIND_EOF
+      TX_PATH="$BEST_PATH"
+    fi
   fi
 fi
 `;
@@ -370,6 +403,9 @@ export class SessionPoller extends EventEmitter {
       const transcriptFile = s.agent_kind === "codex"
         ? s.codex_session_file
         : s.cc_session_file;
+      const resumeUuid = s.agent_kind === "codex"
+        ? s.codex_resume_uuid
+        : s.cc_resume_uuid;
       const script = pollScript(
         s.workdir,
         s.tmux_session,
@@ -379,6 +415,7 @@ export class SessionPoller extends EventEmitter {
         s.remote_transcript_offset ?? 0,
         isFinite(startedEpoch) ? startedEpoch : 0,
         s.agent_kind,
+        resumeUuid,
       );
       const r = sshExec(this.dir, machine, "bash -s", script, 15_000);
       if (r.code !== 0) {
