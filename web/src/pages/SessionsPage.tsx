@@ -2711,11 +2711,21 @@ export function SessionConfigDialog({ session, onClose, onSaved }: {
 
   const save = async () => {
     setSaving(true); setErr("");
+    // Pending text in the tag input — treat Save as an implicit Enter
+    // and finalize it before sending. Same normalization rules as
+    // addTag (trim / lowercase / 32-char cap / dedupe / 16-tag cap).
+    let finalTags = tags;
+    const pending = tagDraft.trim().toLowerCase().slice(0, 32);
+    if (pending && !finalTags.includes(pending) && finalTags.length < 16) {
+      finalTags = [...finalTags, pending];
+      setTags(finalTags);
+      setTagDraft("");
+    }
     try {
       const next = await api.updateSessionMeta(session.id, {
         alias: alias.trim(),
         alias_color: color === "none" ? "" : color,
-        tags,
+        tags: finalTags,
       });
       onSaved(next);
       onClose();
