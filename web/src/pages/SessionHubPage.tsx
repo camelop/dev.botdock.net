@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Session } from "../api";
-import { SessionView, SessionConfigDialog, isInteractiveAgent } from "./SessionsPage";
+import { api, type Machine, type Session } from "../api";
+import { SessionView, SessionConfigDialog, NewSessionModal, freshDraft, isInteractiveAgent, type SessionDraft } from "./SessionsPage";
 import { AgentAvatar } from "./WarRoomPage";
 import { isAcked, ackSession, unackSession } from "../lib/acks";
 import { relativeTime, fullTime } from "../lib/time";
@@ -40,6 +40,12 @@ export function SessionHubPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [tick, setTick] = useState(0);  // force re-read of localStorage acks
+  // Machines list + new-session draft mirror the Dashboard's New Session
+  // entry point, surfaced from the sidebar header so the user can spawn
+  // a session without leaving the workspace.
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [draft, setDraft] = useState<SessionDraft | null>(null);
+  const openNew = () => setDraft((cur) => cur ?? freshDraft(machines));
 
   const [err, setErr] = useState<string>("");
 
@@ -47,6 +53,10 @@ export function SessionHubPage() {
     try {
       const list = await api.listSessions();
       setSessions(list);
+      // Refresh the machine list every poll too — cheap, and keeps the
+      // "+ New session" affordance in sync if the user added a machine
+      // in another tab while the workspace was open.
+      api.listMachines().then(setMachines).catch(() => {});
       setErr("");
       // Only react to *disappearance* of the current selection. When cur is
       // null we leave it null so the preselect effect below can consume a
@@ -212,6 +222,8 @@ export function SessionHubPage() {
         onAck={onAck}
         onUnack={onUnack}
         onSaved={onSaved}
+        onNew={openNew}
+        canNew={machines.length > 0}
       />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         {err && (
@@ -230,10 +242,32 @@ export function SessionHubPage() {
             className="empty"
             style={{ padding: 60, textAlign: "center", width: "100%" }}
           >
-            No sessions yet. Create one from the Dashboard or Sessions → List.
+            {machines.length === 0
+              ? "No machines registered yet. Add one from Machines → Machines, then start a session here."
+              : (
+                <>
+                  No sessions yet. <button
+                    onClick={openNew}
+                    style={{ marginLeft: 6 }}
+                  >+ New session</button>
+                </>
+              )}
           </div>
         )}
       </div>
+      {draft && (
+        <NewSessionModal
+          machines={machines}
+          draft={draft}
+          onDraft={setDraft}
+          onCancel={() => setDraft(null)}
+          onDone={async (id) => {
+            setDraft(null);
+            await refresh();
+            setSelected(id);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -261,6 +295,13 @@ function SessionSidebar(props: SidebarCommonProps & {
     tagGroups: Array<{ tag: string; sessions: Session[] }>;
     other: Session[];
   };
+  /** Open the New Session modal — same flow as the dashboard's "+ New session"
+   *  button. Hidden in the collapsed sidebar (no room next to the toggle). */
+  onNew: () => void;
+  /** Whether new sessions can actually be created — at least one machine
+   *  must be registered. When false, the + button is shown disabled with a
+   *  hint, matching the dashboard's behavior. */
+  canNew: boolean;
 }) {
   const { grouped, ...rest } = props;
   const [collapsed, setCollapsedState] = useState<boolean>(() => loadSidebarCollapsed());
@@ -333,7 +374,7 @@ function SessionSidebar(props: SidebarCommonProps & {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 6,
           padding: "8px 10px",
           justifyContent: collapsed ? "center" : "space-between",
         }}
@@ -351,12 +392,28 @@ function SessionSidebar(props: SidebarCommonProps & {
             Sessions <span style={{ opacity: 0.7 }}>({aliveCount}/{totalCount})</span>
           </span>
         )}
-        <button
-          className="secondary"
-          onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? "Expand sidebar" : "Collapse to avatars only"}
-          style={{ padding: "4px 8px", fontSize: 12 }}
-        >{collapsed ? "▸" : "◂"}</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {!collapsed && (
+            <button
+              className="secondary"
+              onClick={props.onNew}
+              disabled={!props.canNew}
+              title={props.canNew ? "New session" : "Add a machine first"}
+              style={{
+                padding: "4px 9px",
+                fontSize: 14,
+                fontWeight: 600,
+                lineHeight: 1,
+              }}
+            >+</button>
+          )}
+          <button
+            className="secondary"
+            onClick={() => setCollapsed(!collapsed)}
+            title={collapsed ? "Expand sidebar" : "Collapse to avatars only"}
+            style={{ padding: "4px 8px", fontSize: 12 }}
+          >{collapsed ? "▸" : "◂"}</button>
+        </div>
       </div>
       {collapsed ? (
         flatList.map((s, i) => (
