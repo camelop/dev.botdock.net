@@ -67,7 +67,16 @@ function pollScript(
   // + offsets + truncate the local mirror; THIS tick we skip both the
   // transcript-read and the self-heal so we don't ingest one more
   // chunk of cross-talk before the reset takes effect.
+  //
+  // resumeUuid is shell-injected into the script template; quote-defensive
+  // at the boundary so a hostile UUID can't escape into command position.
+  // Declared up here (before validate) because validate uses it too — the
+  // resume case has its own staleness signal: an existing TX_PATH whose
+  // basename UUID doesn't match the session's resume UUID was almost
+  // certainly planted by a pre-v0.8.7 shim that didn't know about resume.
+  const resumeUuidQ = resumeUuid ? shQ(resumeUuid) : "''";
   const validateStanza = `
+RESUME_UUID=${resumeUuidQ}
 TX_INVALIDATED=0
 if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
   # Recovery for the v0.7.11 self-heal bug: any TX_PATH that lives under
@@ -77,6 +86,23 @@ if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ]; then
   # subagents/) re-discovers the top-level file.
   case "$TX_PATH" in
     */subagents/*)
+      printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
+      TX_PATH=""
+      TX_INVALIDATED=1
+      ;;
+  esac
+fi
+if [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ] && [ -n "$RESUME_UUID" ]; then
+  # If this session was launched by resuming a known UUID, the basename
+  # of the right transcript file MUST contain that UUID — for CC it's
+  # the whole basename, for codex it's the trailing 8-4-4-4-12 group.
+  # An old-shim build picked the file by mtime and could happily land
+  # on a different conversation's rollout in the same workdir; on
+  # daemon /upgrade we want that pin replaced. Self-heal (next block)
+  # then re-discovers by UUID basename match.
+  case "$(basename "$TX_PATH")" in
+    *"$RESUME_UUID"*) ;;
+    *)
       printf 'TX_PATH_INVALIDATED=%s\\n' "$TX_PATH"
       TX_PATH=""
       TX_INVALIDATED=1
@@ -119,9 +145,6 @@ fi
   // machine both see each other's just-created jsonls (mtime-newer-than-
   // either-session's-epoch matches BOTH files) and pick the wrong one,
   // cross-wiring their transcripts. Bug surfaced by user 2026-04-25.
-  // resumeUuid is shell-injected into the script template; quote-defensive
-  // at the boundary so a hostile UUID can't escape into command position.
-  const resumeUuidQ = resumeUuid ? shQ(resumeUuid) : "''";
   if (agentKind === "claude-code") {
     // CC project-dir layout has three failure modes for naive self-heal:
     //   1. ~/.claude/projects/<dir>/<uuid>/subagents/agent-<hex>.jsonl
@@ -145,7 +168,6 @@ fi
     // filter, since the resumed file may not have been touched since
     // the prior session ended.
     selfHeal = `
-RESUME_UUID=${resumeUuidQ}
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ] && [ -d "$HOME/.claude/projects" ]; then
   if [ -n "$RESUME_UUID" ]; then
     CAND=$(find "$HOME/.claude/projects" -type f -name "\${RESUME_UUID}.jsonl" -not -path '*/subagents/*' 2>/dev/null | head -1)
@@ -181,7 +203,6 @@ fi
     // session_meta carries the matching cwd — that's the file codex
     // is actively writing.
     selfHeal = `
-RESUME_UUID=${resumeUuidQ}
 if [ -z "$TX_PATH" ] && [ "$TX_INVALIDATED" = "0" ]; then
   CODEX_ROOT="\${CODEX_HOME:-$HOME/.codex}/sessions"
   if [ -d "$CODEX_ROOT" ]; then
