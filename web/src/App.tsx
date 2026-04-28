@@ -180,17 +180,18 @@ export function App() {
     <div className="app">
       {serverDown && <ServerDownOverlay />}
       <div className="topbar">
-        <a
+        <div
           className="brand"
-          href="https://github.com/camelop/dev.botdock.net"
-          target="_blank"
-          rel="noreferrer"
-          title="View BotDock on GitHub"
-          style={{ color: "inherit", textDecoration: "none" }}
+          role="button"
+          tabIndex={0}
+          onClick={() => setTab("hub")}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTab("hub"); } }}
+          title="Open Workspace"
+          style={{ cursor: "pointer", color: "inherit" }}
         >
           <BotdockLogo />
           <span>BotDock</span>
-        </a>
+        </div>
         <div className="tabs" ref={navRef}>
           {NAV.map((entry) => {
             if (isNavGroup(entry)) {
@@ -231,6 +232,21 @@ export function App() {
               </div>
             );
           })}
+          {/* Last nav slot — out-link to the GitHub repo. Sits to the
+              right of the Context dropdown so it reads as part of the
+              same row but visually marks itself as external with the
+              ↗ glyph. */}
+          <a
+            className="tab"
+            href="https://github.com/camelop/dev.botdock.net"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View BotDock on GitHub"
+            style={{ textDecoration: "none", color: "inherit" }}
+          >
+            GitHub
+            <span style={{ fontSize: 10, opacity: 0.7 }}>↗</span>
+          </a>
         </div>
         <div className="spacer" />
         <StatusBar status={status} err={err} />
