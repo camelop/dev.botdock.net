@@ -69,6 +69,15 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   // boot; the user clicks Start again and we either reattach to the existing
   // supervisor (startSession{Filebrowser,CodeServer} is idempotent) or spin
   // up a fresh one.
+  //
+  // Per-session terminals (ttyd) get the same wipe-and-rebuild treatment but
+  // we re-set-up eagerly because, unlike filebrowser / code-server, the
+  // terminal isn't opt-in — sessions expect it to "just work" after a
+  // restart. Without the wipe, a meta whose remote port no longer matches
+  // the live ttyd (e.g. because the prefix-match supervisor-naming bug
+  // before v0.9.2 silently rerouted ports) would survive forever and the
+  // iframe would 404 against the wrong --base-path.
+  const terminalsToReSetup: string[] = [];
   try {
     for (const s of listSessions(dir)) {
       const clear: Record<string, undefined> = {};
@@ -81,14 +90,26 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
         clear.codeserver_remote_port = undefined;
         clear.codeserver_workdir = undefined;
       }
+      const isInteractive = s.agent_kind === "claude-code" || s.agent_kind === "codex";
+      if (isInteractive && s.status === "active" &&
+          (s.terminal_local_port !== undefined || s.terminal_remote_port !== undefined)) {
+        clear.terminal_local_port = undefined;
+        clear.terminal_remote_port = undefined;
+        terminalsToReSetup.push(s.id);
+      }
       if (Object.keys(clear).length > 0) updateSession(dir, s.id, clear);
     }
-    // Also prune stale per-session embedded-tool forwards — they never had
-    // auto_start=true, so they're just disk clutter accumulating ports that
-    // the next Start would have overwritten anyway.
+    // Prune stale per-session forwards. Filebrowser / code-server are the
+    // simple case: never had auto_start=true so they're disk clutter the
+    // next Start would have overwritten anyway. Terminal forwards DID
+    // auto-start, but if the meta it points at has a stale remote_port
+    // (the prefix-match bug above) the auto-restart resurrects a
+    // wrong-target tunnel that 404s; safer to drop them and let
+    // setupSessionTerminal rebuild with a fresh probe.
     for (const f of listForwards(dir)) {
       if (f.managed_by === "system:session-filebrowser" ||
-          f.managed_by === "system:session-codeserver") {
+          f.managed_by === "system:session-codeserver" ||
+          f.managed_by === "system:session-terminal") {
         forwardManager.forget(f.name);
         deleteForward(dir, f.name);
       }
@@ -96,6 +117,21 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   } catch (err) {
     console.error("[boot] session tool cleanup failed:", err);
   }
+  // Fire-and-forget the terminal re-setup. setupSessionTerminal is
+  // idempotent on the remote (its startSessionTerminal probes for an
+  // existing supervisor with matching --base-path and returns the
+  // already-running port if it finds one), so the cost is one SSH
+  // round-trip per active interactive session at boot.
+  (async () => {
+    for (const id of terminalsToReSetup) {
+      try {
+        const { setupSessionTerminal } = await import("../domain/session-launcher.ts");
+        await setupSessionTerminal(dir, forwardManager, id);
+      } catch (err) {
+        console.error(`[boot] terminal re-setup for ${id} failed:`, err);
+      }
+    }
+  })();
 
   // Unique per-process ID. Surfaced in /api/status so the frontend can detect
   // daemon restarts (instance changes → page forces a full reload instead of

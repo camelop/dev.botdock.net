@@ -369,16 +369,23 @@ sed -i.bak "s|__TTYD_PATH__|$TTYD|" "$LAUNCHER" && rm -f "$LAUNCHER.bak"
 chmod +x "$LAUNCHER"
 
 # If our ttyd tmux session is already alive, discover its port from ps.
-if tmux has-session -t "$TMUX_NAME" 2>/dev/null; then
+# Use "=NAME" so tmux does an *exact* match — without the leading "=",
+# tmux falls back to prefix matching, and a session ttyd's supervisor
+# (botdock-ttyd-<sid>) prefix-matches "botdock-ttyd", which would make
+# this branch claim "machine ttyd is running" when really only a session
+# ttyd exists. Same reasoning for the kill-session below.
+if tmux has-session -t "=$TMUX_NAME" 2>/dev/null; then
   # "|| true" because grep -F returning 1 when the supervisor's ttyd has
   # died trips pipefail; we want an empty PORT + fall-through to respawn.
-  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -v grep \\
+  # Also filter by BASE_PATH so we don't pick up a session ttyd's port
+  # if the per-machine supervisor died but the session one is still up.
+  PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -F "$BASE_PATH" | grep -v grep \\
          | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1 || true)
   if [ -n "$PORT" ]; then
     echo "BOTDOCK_TTYD_ALREADY_RUNNING port=$PORT"
     exit 0
   fi
-  tmux kill-session -t "$TMUX_NAME" 2>/dev/null || true
+  tmux kill-session -t "=$TMUX_NAME" 2>/dev/null || true
 fi
 
 # Pick a free port in the 60000-60999 range.
@@ -408,8 +415,8 @@ done
 if [ "$ALIVE" != "1" ]; then
   # ttyd failed to bind. Capture the pane's output before tearing down so
   # the user can see what went wrong.
-  PANE_OUT=$(tmux capture-pane -p -t "$TMUX_NAME" 2>/dev/null || true)
-  tmux kill-session -t "$TMUX_NAME" 2>/dev/null || true
+  PANE_OUT=$(tmux capture-pane -p -t "=$TMUX_NAME" 2>/dev/null || true)
+  tmux kill-session -t "=$TMUX_NAME" 2>/dev/null || true
   echo "BOTDOCK_TTYD_FAILED port=$PORT" >&2
   echo "--- pane output ---" >&2
   printf '%s\\n' "$PANE_OUT" >&2
@@ -429,8 +436,12 @@ echo "BOTDOCK_TTYD_STARTED port=$PORT"
 }
 
 export function stopTerminal(dir: DataDir, machine: Machine): void {
+  // "=NAME" so tmux does exact-match — without it, the session-ttyd
+  // supervisors (botdock-ttyd-<sid>) prefix-match "botdock-ttyd" and
+  // would be slaughtered alongside the per-machine supervisor we
+  // actually want to stop.
   sshExec(dir, machine, "bash -s",
-    `tmux kill-session -t ${shQ(TERMINAL_TMUX_SESSION)} 2>/dev/null; echo ok`,
+    `tmux kill-session -t ${shQ("=" + TERMINAL_TMUX_SESSION)} 2>/dev/null; echo ok`,
     10_000);
 }
 
@@ -472,7 +483,7 @@ LAUNCH_EOF
 sed -i.bak "s|__TTYD_PATH__|$TTYD|" "$LAUNCHER" && rm -f "$LAUNCHER.bak"
 chmod +x "$LAUNCHER"
 
-if tmux has-session -t "$SUPER" 2>/dev/null; then
+if tmux has-session -t "=$SUPER" 2>/dev/null; then
   # "|| true" so a dead ttyd inside a live supervisor doesn't trip pipefail.
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$TTYD" | grep -F "$BASE_PATH" | grep -v grep \\
          | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1 || true)
@@ -480,7 +491,7 @@ if tmux has-session -t "$SUPER" 2>/dev/null; then
     echo "BOTDOCK_SESSION_TTYD_ALREADY_RUNNING port=$PORT"
     exit 0
   fi
-  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  tmux kill-session -t "=$SUPER" 2>/dev/null || true
 fi
 
 PORT=""
@@ -505,8 +516,8 @@ for i in 1 2 3 4 5 6; do
   fi
 done
 if [ "$ALIVE" != "1" ]; then
-  PANE_OUT=$(tmux capture-pane -p -t "$SUPER" 2>/dev/null || true)
-  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  PANE_OUT=$(tmux capture-pane -p -t "=$SUPER" 2>/dev/null || true)
+  tmux kill-session -t "=$SUPER" 2>/dev/null || true
   echo "BOTDOCK_SESSION_TTYD_FAILED port=$PORT" >&2
   echo "--- pane output ---" >&2
   printf '%s\\n' "$PANE_OUT" >&2
@@ -533,7 +544,7 @@ export function stopSessionTerminal(
 ): void {
   const supervisor = `botdock-ttyd-${sessionId}`;
   sshExec(dir, machine, "bash -s",
-    `tmux kill-session -t ${shQ(supervisor)} 2>/dev/null; echo ok`,
+    `tmux kill-session -t ${shQ("=" + supervisor)} 2>/dev/null; echo ok`,
     10_000);
 }
 
@@ -644,7 +655,12 @@ DB="$WORKDIR/.botdock/session/filebrowser.db"
 
 # Reuse an already-running supervisor if it's still up for this session —
 # idempotent Start call from the UI should be cheap.
-if tmux has-session -t "$SUPER" 2>/dev/null; then
+# "=NAME" forces tmux to do an exact match instead of its default
+# prefix-match — without it, "botdock-fb-<sid>" prefix-matches against
+# any other "botdock-fb-<sid>-…" extension that might exist in the
+# user's tmux server, with the symmetric kill-session below taking out
+# unrelated supervisors. Same fix as the per-machine ttyd block above.
+if tmux has-session -t "=$SUPER" 2>/dev/null; then
   # "|| true" so a dead filebrowser inside a live supervisor doesn't trip pipefail.
   PORT=$(ps -o args= -u "$USER" 2>/dev/null | grep -F "$FB" | grep -F "$DB" | grep -v grep \\
          | grep -oE '(-p|--port)[[:space:]]+[0-9]+' | awk '{print $2}' | head -1 || true)
@@ -652,7 +668,7 @@ if tmux has-session -t "$SUPER" 2>/dev/null; then
     echo "BOTDOCK_SESSION_FB_ALREADY_RUNNING port=$PORT"
     exit 0
   fi
-  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  tmux kill-session -t "=$SUPER" 2>/dev/null || true
 fi
 
 # Initialize the DB the first time we see this session. noauth + a single
@@ -690,8 +706,8 @@ for i in 1 2 3 4 5 6 7 8; do
   fi
 done
 if [ "$ALIVE" != "1" ]; then
-  PANE_OUT=$(tmux capture-pane -p -t "$SUPER" 2>/dev/null || true)
-  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  PANE_OUT=$(tmux capture-pane -p -t "=$SUPER" 2>/dev/null || true)
+  tmux kill-session -t "=$SUPER" 2>/dev/null || true
   echo "BOTDOCK_SESSION_FB_FAILED port=$PORT" >&2
   echo "--- pane output ---" >&2
   printf '%s\\n' "$PANE_OUT" >&2
@@ -718,7 +734,7 @@ export function stopSessionFilebrowser(
 ): void {
   const supervisor = `botdock-fb-${sessionId}`;
   sshExec(dir, machine, "bash -s",
-    `tmux kill-session -t ${shQ(supervisor)} 2>/dev/null; echo ok`,
+    `tmux kill-session -t ${shQ("=" + supervisor)} 2>/dev/null; echo ok`,
     10_000);
 }
 
@@ -846,7 +862,10 @@ case "$WORKDIR" in
 esac
 mkdir -p "$WORKDIR"
 
-if tmux has-session -t "$SUPER" 2>/dev/null; then
+# "=NAME" forces tmux exact-match — without it, "botdock-cs-<sid>" would
+# prefix-match against any "botdock-cs-<sid>-…" extension that happened
+# to exist, and the kill-session would clobber the wrong supervisor.
+if tmux has-session -t "=$SUPER" 2>/dev/null; then
   # Trailing "|| true" is load-bearing under set -euo pipefail: if the
   # supervisor tmux is still alive but its code-server process already
   # died, grep -F returns 1 (no match), pipefail propagates that as the
@@ -859,7 +878,7 @@ if tmux has-session -t "$SUPER" 2>/dev/null; then
     echo "BOTDOCK_SESSION_CS_ALREADY_RUNNING port=$PORT workdir=$WORKDIR"
     exit 0
   fi
-  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  tmux kill-session -t "=$SUPER" 2>/dev/null || true
 fi
 
 PORT=""
@@ -901,8 +920,8 @@ for i in \$(seq 1 30); do
   fi
 done
 if [ "$ALIVE" != "1" ]; then
-  PANE_OUT=$(tmux capture-pane -p -t "$SUPER" 2>/dev/null || true)
-  tmux kill-session -t "$SUPER" 2>/dev/null || true
+  PANE_OUT=$(tmux capture-pane -p -t "=$SUPER" 2>/dev/null || true)
+  tmux kill-session -t "=$SUPER" 2>/dev/null || true
   echo "BOTDOCK_SESSION_CS_FAILED port=$PORT" >&2
   echo "--- pane output ---" >&2
   printf '%s\\n' "$PANE_OUT" >&2
@@ -933,7 +952,7 @@ export function stopSessionCodeServer(
 ): void {
   const supervisor = `botdock-cs-${sessionId}`;
   sshExec(dir, machine, "bash -s",
-    `tmux kill-session -t ${shQ(supervisor)} 2>/dev/null; echo ok`,
+    `tmux kill-session -t ${shQ("=" + supervisor)} 2>/dev/null; echo ok`,
     10_000);
 }
 

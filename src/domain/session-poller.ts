@@ -264,7 +264,7 @@ EV_SIZE=0; [ -f "$EV_PATH" ] && EV_SIZE=$(wc -c < "$EV_PATH" | tr -d ' ')
 RAW_SIZE=0; [ -f "$RAW_PATH" ] && RAW_SIZE=$(wc -c < "$RAW_PATH" | tr -d ' ')
 TX_SIZE=0; [ -n "$TX_PATH" ] && [ -f "$TX_PATH" ] && TX_SIZE=$(wc -c < "$TX_PATH" | tr -d ' ')
 TMUX_ALIVE=0
-if tmux has-session -t ${shQ(tmuxName)} >/dev/null 2>&1; then TMUX_ALIVE=1; fi
+if tmux has-session -t ${shQ("=" + tmuxName)} >/dev/null 2>&1; then TMUX_ALIVE=1; fi
 # Cap how much we transport per tick so spawnSync's 1 MiB stdout buffer
 # doesn't ENOBUFS on a large backlog (resumed conversations can start
 # with a multi-MB jsonl). The client re-polls on the next tick and the

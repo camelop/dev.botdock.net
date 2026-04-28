@@ -391,20 +391,20 @@ export async function sendInputToSession(
     summaryKind = "keys";
     summary = payload.keys;
     for (const k of payload.keys) {
-      lines.push(`tmux send-keys -t ${shQ(s.tmux_session)} ${shQ(k)}`);
+      lines.push(`tmux send-keys -t ${shQ("=" + s.tmux_session)} ${shQ(k)}`);
     }
   } else {
     summaryKind = "text";
     summary = payload.text ?? "";
     const text = payload.text ?? "";
     if (text.length > 0) {
-      lines.push(`tmux send-keys -l -t ${shQ(s.tmux_session)} ${shQ(text)}`);
+      lines.push(`tmux send-keys -l -t ${shQ("=" + s.tmux_session)} ${shQ(text)}`);
     }
     // Explicit opt-in — prior default-on behavior was surprising (Send
     // typing "ls" into a Claude Code prompt would auto-submit). Enter now
     // has its own quick-key in the UI.
     if (payload.press_enter) {
-      lines.push(`tmux send-keys -t ${shQ(s.tmux_session)} Enter`);
+      lines.push(`tmux send-keys -t ${shQ("=" + s.tmux_session)} Enter`);
     }
   }
   lines.push(`echo BOTDOCK_SENT`);
@@ -432,9 +432,9 @@ export async function stopSession(dir: DataDir, id: string): Promise<Session> {
   const machine = readMachine(dir, s.machine);
   // Try Ctrl-C first, then kill the session outright.
   const script = [
-    `tmux send-keys -t ${shQ(s.tmux_session)} C-c 2>/dev/null || true`,
+    `tmux send-keys -t ${shQ("=" + s.tmux_session)} C-c 2>/dev/null || true`,
     `sleep 0.5`,
-    `tmux kill-session -t ${shQ(s.tmux_session)} 2>/dev/null || true`,
+    `tmux kill-session -t ${shQ("=" + s.tmux_session)} 2>/dev/null || true`,
     `echo BOTDOCK_STOPPED`,
   ].join("\n");
   sshExec(dir, machine, "bash -s", script, 15_000);
