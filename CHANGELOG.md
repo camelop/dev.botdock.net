@@ -4,6 +4,14 @@ Only user-visible changes. Latest first. Before v1.0.0, each minor
 version gets one summary entry here; for line-level detail, read the
 commit log between the two adjacent tags.
 
+## v0.9.0 — 2026-04-28
+
+- **`botdock start`** — one command from "fresh install" to "browser open on your dashboard": auto-inits `~/.botdock/client-default` if missing, spawns the server in the background, polls until it's ready, then opens the browser. `botdock stop` is the matching shutdown — it drains SSH forwards before exit, so reconnecting later doesn't fight zombie tunnels.
+- Workspace sidebar collapses to an avatar-only column with one click — group titles hide, names hide, hover tooltip carries the meta. The header gains a `Sessions (alive/total)` count and a `+` button (same flow as the dashboard's New Session). The right config / transcript / events pane has its own collapse arrow, so the terminal can fill the width when you need it to.
+- Tag input in Session Config now accepts pending text when you click Save — no need to press Enter first.
+- Click the BotDock logo in the topbar to jump back to the Workspace; the GitHub repo lives in its own nav button to the right of Context.
+- Fixes: long-history sessions no longer have their local transcripts truncated to (effectively) zero; sessions in busy workdirs no longer pin to a Task subagent's jsonl or an agent-teams team member's jsonl instead of the orchestrator's; resumed Claude Code / codex sessions now load their history right away.
+
 ## v0.8.0 — 2026-04-25
 
 - Run an OpenAI **codex** session from the New Session modal — same flow as Claude Code, with resume picker, embedded terminal, and live transcript. The codex CLI installs on the remote on first use, so a fresh machine works out of the box.
