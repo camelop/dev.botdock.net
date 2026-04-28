@@ -876,8 +876,18 @@ if [ -z "$PORT" ]; then echo "no free port on remote" >&2; exit 1; fi
 #   would block the editor from loading behind our reverse proxy.
 # --disable-telemetry / --disable-update-check: no background phone-home and
 #   no self-update fighting our package manager.
+#
+# Strip VS Code's "shell integration" env vars before launching code-server.
+# A prior VS Code Remote SSH connection often patches ~/.bashrc / ~/.zshrc
+# to export VSCODE_IPC_HOOK_CLI (and friends) pointing at an IPC socket
+# that no longer exists. tmux's spawned shell sources those dotfiles,
+# code-server inherits the var, tries to handshake with the dead "parent
+# VS Code" via the socket, gets ECONNREFUSED on the first turn, and
+# exits 0 without binding the HTTP port — looks indistinguishable from
+# "code-server is too slow" from the daemon's poll loop.
 tmux new-session -d -s "$SUPER" \\
-  "$CS --bind-addr 127.0.0.1:$PORT --auth none --disable-telemetry --disable-update-check --disable-workspace-trust $WORKDIR"
+  "unset VSCODE_IPC_HOOK_CLI VSCODE_GIT_IPC_HANDLE VSCODE_NLS_CONFIG VSCODE_INJECTION VSCODE_PID VSCODE_HANDLES_UNCAUGHT_ERRORS VSCODE_CWD ELECTRON_RUN_AS_NODE; \\
+   exec \\"$CS\\" --bind-addr 127.0.0.1:$PORT --auth none --disable-telemetry --disable-update-check --disable-workspace-trust \\"$WORKDIR\\""
 
 # code-server is slow to boot (spins up Node + loads extensions). Poll up
 # to ~15 seconds before declaring a failure.
