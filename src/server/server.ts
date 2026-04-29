@@ -60,7 +60,6 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   poller.resumeAll();
 
   const forwardManager = new ForwardManager(dir);
-  forwardManager.startAutoForwards();
 
   // Daemon restart: filebrowser / code-server state from a previous process
   // is stale — the remote supervisor tmux *might* still be alive on the
@@ -77,6 +76,14 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   // the live ttyd (e.g. because the prefix-match supervisor-naming bug
   // before v0.9.2 silently rerouted ports) would survive forever and the
   // iframe would 404 against the wrong --base-path.
+  //
+  // CRITICAL: this cleanup MUST run BEFORE forwardManager.startAutoForwards().
+  // The terminal forwards have auto_start=true; if startAutoForwards fires
+  // first, it spawns SSH children that bind the old local_port we're about
+  // to delete — and the new setupSessionTerminal then races those still-
+  // alive children for a free port, occasionally landing on the same port
+  // (findFreeLocalPort sees it free in the millisecond window between
+  // spawn+bind), then SSH-L on the new attempt fails with EADDRINUSE.
   const terminalsToReSetup: string[] = [];
   try {
     for (const s of listSessions(dir)) {
@@ -117,6 +124,12 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   } catch (err) {
     console.error("[boot] session tool cleanup failed:", err);
   }
+
+  // Now safe: the deleted-from-disk interactive forwards won't be picked
+  // up by startAutoForwards, so the rebuild has the local-port range to
+  // itself.
+  forwardManager.startAutoForwards();
+
   // Fire-and-forget the terminal re-setup. setupSessionTerminal is
   // idempotent on the remote (its startSessionTerminal probes for an
   // existing supervisor with matching --base-path and returns the
