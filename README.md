@@ -35,7 +35,9 @@ BotDock is a single-binary local server that pulls every Claude Code / codex ses
 curl -fsSL https://raw.githubusercontent.com/camelop/dev.botdock.net/main/install.sh | bash
 ```
 
-Re-run the same command to upgrade. Supported platforms: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`.
+Re-run the same command to upgrade. Supported platforms: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64`.
+
+Windows users can also grab the prebuilt `botdock-windows-x64.exe` from the release page directly — the daemon needs a working `ssh` / `ssh-keygen` on the system PATH (Windows 10/11 ship OpenSSH out of the box; install via *Settings → Optional features* if missing).
 
 Runtime prereqs on the machine running the daemon: `ssh`, `ssh-keygen`, `tmux`, `rsync` (the last is used for ＋Context push; BotDock will auto-install it on target machines if missing).
 

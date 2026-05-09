@@ -27,16 +27,33 @@ triple_for() {
     linux-arm64)  echo aarch64-unknown-linux-gnu ;;
     darwin-x64)   echo x86_64-apple-darwin ;;
     darwin-arm64) echo aarch64-apple-darwin ;;
+    # Windows source name has the .exe extension already; the matching
+    # Tauri sidecar target-triple keeps it.
+    windows-x64)  echo x86_64-pc-windows-msvc ;;
     *)            echo "" ;;
   esac
 }
 
+src_name_for() {
+  case "$1" in
+    windows-x64) echo "botdock-windows-x64.exe" ;;
+    *)           echo "botdock-$1" ;;
+  esac
+}
+
+dst_name_for() {
+  case "$1" in
+    windows-x64) echo "botdock-x86_64-pc-windows-msvc.exe" ;;
+    *)           echo "botdock-$(triple_for "$1")" ;;
+  esac
+}
+
 found_any=0
-for short in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-  src="$SRC_DIR/botdock-$short"
+for short in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
   triple="$(triple_for "$short")"
   if [ -z "$triple" ]; then continue; fi
-  dst="$DST_DIR/botdock-$triple"
+  src="$SRC_DIR/$(src_name_for "$short")"
+  dst="$DST_DIR/$(dst_name_for "$short")"
   if [ -f "$src" ]; then
     cp -f "$src" "$dst"
     chmod +x "$dst"

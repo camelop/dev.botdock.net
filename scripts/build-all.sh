@@ -10,6 +10,10 @@ TARGETS=(
   "bun-linux-arm64:botdock-linux-arm64"
   "bun-darwin-x64:botdock-darwin-x64"
   "bun-darwin-arm64:botdock-darwin-arm64"
+  # Bun only ships a Windows x64 target — no arm64 yet (as of Bun 1.x).
+  # Output keeps the .exe suffix so PE-aware tooling on Windows
+  # (Explorer, AV, Tauri's externalBin matcher) treats it correctly.
+  "bun-windows-x64:botdock-windows-x64.exe"
 )
 
 echo "[1/3] Installing deps (if needed)…"

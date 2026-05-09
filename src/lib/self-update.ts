@@ -24,7 +24,8 @@ import { BOTDOCK_VERSION } from "../version.ts";
 
 export type PlatformAsset =
   | "botdock-linux-x64" | "botdock-linux-arm64"
-  | "botdock-darwin-x64" | "botdock-darwin-arm64";
+  | "botdock-darwin-x64" | "botdock-darwin-arm64"
+  | "botdock-windows-x64.exe";
 
 export function currentPlatformAsset(): PlatformAsset {
   const plat = process.platform;
@@ -33,6 +34,10 @@ export function currentPlatformAsset(): PlatformAsset {
   if (plat === "linux"  && arch === "arm64")  return "botdock-linux-arm64";
   if (plat === "darwin" && arch === "x64")    return "botdock-darwin-x64";
   if (plat === "darwin" && arch === "arm64")  return "botdock-darwin-arm64";
+  // Bun's Windows target produces an .exe; the release pipeline ships
+  // it under that name and self-update needs the .exe suffix to land on
+  // an executable file Windows can spawn.
+  if (plat === "win32"  && arch === "x64")    return "botdock-windows-x64.exe";
   throw new Error(`unsupported platform for self-update: ${plat}/${arch}`);
 }
 
@@ -194,7 +199,13 @@ export async function applyUpdate(
     if (process.platform === "darwin") {
       spawnSync("xattr", ["-d", "com.apple.quarantine", newPath], { stdio: "ignore" });
     }
-    spawnSync("chmod", ["+x", newPath], { stdio: "ignore" });
+    // chmod is a no-op on Windows (NTFS doesn't use the POSIX bits) and
+    // there's no chmod binary in the default PATH on most Win10/11
+    // installs, so don't try to run it. The downloaded .exe is already
+    // executable as far as Windows is concerned.
+    if (process.platform !== "win32") {
+      spawnSync("chmod", ["+x", newPath], { stdio: "ignore" });
+    }
 
     setStatus({ phase: "preflight" });
     // Run the new binary with --version. If it crashes or mismatches we
@@ -235,14 +246,26 @@ export async function applyUpdate(
     // Give anyone polling /api/update/status a moment to see "restarting".
     await new Promise((r) => setTimeout(r, 250));
 
-    // Last act: execv. Same PID, same stdio, same TTY.
-    //
     // argv slicing: in a Bun-compiled binary process.argv is
     //   ["bun", "/$bunfs/root/<name>", ...userArgs]
     // so the user's real CLI args start at index 2. slice(1) would leak
     // the virtual /$bunfs entry in as a bogus positional — our own CLI
     // then rejects it with "unknown command".
     const cliArgs = process.argv.slice(2).filter((a) => !a.startsWith("/$bunfs/"));
+
+    if (process.platform === "win32") {
+      // Windows has no execv equivalent that preserves PID + stdio in
+      // the way our POSIX handoff does. Spawn the new binary detached,
+      // then exit — the frontend's instance_id-change detector will
+      // notice the daemon respawn and reload regardless of PID.
+      const child = spawnChild(execPath, cliArgs, { detached: true, stdio: "inherit" });
+      child.unref();
+      process.exit(0);
+      // process.exit doesn't return, but TS doesn't model that —
+      // throw to satisfy the `Promise<never>` return type.
+      throw new Error("unreachable");
+    }
+    // POSIX: true execv via FFI. Same PID, same stdio, same TTY.
     reexec(execPath, cliArgs);
     // Never reached on success.
   } catch (err) {
