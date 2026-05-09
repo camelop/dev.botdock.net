@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, extname } from "node:path";
 import type { Server } from "bun";
 type BunServer = Server<unknown>;
@@ -77,11 +77,22 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   // before v0.9.2 silently rerouted ports) would survive forever and the
   // iframe would 404 against the wrong --base-path.
   //
-  // CRITICAL: this cleanup MUST run BEFORE forwardManager.startAutoForwards().
-  // The terminal forwards have auto_start=true; if startAutoForwards fires
-  // first, it spawns SSH children that bind the old local_port we're about
-  // to delete — and the new setupSessionTerminal then races those still-
-  // alive children for a free port, occasionally landing on the same port
+  // The interactive-terminal rebuild below is a ONE-TIME migration to
+  // recover sessions whose terminal_remote_port was left pointing at
+  // the wrong ttyd by the v0.9.2 tmux-prefix-match bug. After it runs
+  // once and writes the sentinel, future boots trust meta + the auto-
+  // restored forwards — no more "Terminal didn't come up" stutter while
+  // the IIFE catches up.
+  const migrationsDir = join(opts.home, "migrations");
+  const terminalRebuildSentinel = join(migrationsDir, "v092-terminal-rebuild.done");
+  const needsTerminalRebuild = !existsSync(terminalRebuildSentinel);
+
+  // CRITICAL (when the rebuild does run): this cleanup MUST run BEFORE
+  // forwardManager.startAutoForwards(). The terminal forwards have
+  // auto_start=true; if startAutoForwards fires first, it spawns SSH
+  // children that bind the old local_port we're about to delete — and
+  // the new setupSessionTerminal then races those still-alive children
+  // for a free port, occasionally landing on the same port
   // (findFreeLocalPort sees it free in the millisecond window between
   // spawn+bind), then SSH-L on the new attempt fails with EADDRINUSE.
   const terminalsToReSetup: string[] = [];
@@ -98,25 +109,29 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
         clear.codeserver_workdir = undefined;
       }
       const isInteractive = s.agent_kind === "claude-code" || s.agent_kind === "codex";
-      if (isInteractive && s.status === "active" &&
+      if (needsTerminalRebuild && isInteractive && s.status === "active" &&
           (s.terminal_local_port !== undefined || s.terminal_remote_port !== undefined)) {
         clear.terminal_local_port = undefined;
         clear.terminal_remote_port = undefined;
         terminalsToReSetup.push(s.id);
       }
       if (Object.keys(clear).length > 0) updateSession(dir, s.id, clear);
+      // Flip status → provisioning while the rebuild is in flight so the
+      // UI shows "Provisioning remote ttyd + tunnel…" instead of the
+      // scary "Terminal didn't come up". Restored once the rebuild lands.
+      if (terminalsToReSetup[terminalsToReSetup.length - 1] === s.id) {
+        updateSession(dir, s.id, { status: "provisioning" });
+      }
     }
-    // Prune stale per-session forwards. Filebrowser / code-server are the
-    // simple case: never had auto_start=true so they're disk clutter the
-    // next Start would have overwritten anyway. Terminal forwards DID
-    // auto-start, but if the meta it points at has a stale remote_port
-    // (the prefix-match bug above) the auto-restart resurrects a
-    // wrong-target tunnel that 404s; safer to drop them and let
-    // setupSessionTerminal rebuild with a fresh probe.
+    // Prune stale per-session forwards. Filebrowser / code-server are
+    // unconditional cleanup (they're never auto_start so leftover entries
+    // are just disk clutter). Terminal forwards are only nuked when the
+    // one-time rebuild migration is running.
     for (const f of listForwards(dir)) {
+      const isTerm = f.managed_by === "system:session-terminal";
       if (f.managed_by === "system:session-filebrowser" ||
           f.managed_by === "system:session-codeserver" ||
-          f.managed_by === "system:session-terminal") {
+          (isTerm && needsTerminalRebuild)) {
         forwardManager.forget(f.name);
         deleteForward(dir, f.name);
       }
@@ -130,21 +145,41 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
   // itself.
   forwardManager.startAutoForwards();
 
-  // Fire-and-forget the terminal re-setup. setupSessionTerminal is
-  // idempotent on the remote (its startSessionTerminal probes for an
-  // existing supervisor with matching --base-path and returns the
-  // already-running port if it finds one), so the cost is one SSH
-  // round-trip per active interactive session at boot.
-  (async () => {
-    for (const id of terminalsToReSetup) {
-      try {
-        const { setupSessionTerminal } = await import("../domain/session-launcher.ts");
-        await setupSessionTerminal(dir, forwardManager, id);
-      } catch (err) {
-        console.error(`[boot] terminal re-setup for ${id} failed:`, err);
-      }
+  if (needsTerminalRebuild) {
+    // Write the sentinel up front so a partial-failure rebuild doesn't
+    // turn into a forever-retry on every boot. Operators with a truly
+    // stuck session can delete the file by hand.
+    try {
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(terminalRebuildSentinel,
+        `Recovery migration ran at ${new Date().toISOString()} — see CHANGELOG v0.9.2.\n`);
+    } catch (err) {
+      console.error("[boot] could not write terminal-rebuild sentinel:", err);
     }
-  })();
+    // Fire-and-forget the terminal re-setup. setupSessionTerminal is
+    // idempotent on the remote (its startSessionTerminal probes for an
+    // existing supervisor with matching --base-path and returns the
+    // already-running port if it finds one), so the cost is one SSH
+    // round-trip per active interactive session at boot.
+    (async () => {
+      for (const id of terminalsToReSetup) {
+        try {
+          const { setupSessionTerminal } = await import("../domain/session-launcher.ts");
+          await setupSessionTerminal(dir, forwardManager, id);
+          // Restore status now that the rebuild succeeded for this
+          // session. setupSessionTerminal updates terminal_local_port
+          // itself; status flip is what the UI watches.
+          updateSession(dir, id, { status: "active" });
+        } catch (err) {
+          console.error(`[boot] terminal re-setup for ${id} failed:`, err);
+          // On failure, restore status anyway so the user sees the
+          // "Terminal didn't come up" path with its recovery hint
+          // rather than a stuck "Provisioning…" spinner.
+          try { updateSession(dir, id, { status: "active" }); } catch {}
+        }
+      }
+    })();
+  }
 
   // Unique per-process ID. Surfaced in /api/status so the frontend can detect
   // daemon restarts (instance changes → page forces a full reload instead of
