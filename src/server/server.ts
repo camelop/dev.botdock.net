@@ -115,12 +115,20 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
         clear.terminal_remote_port = undefined;
         terminalsToReSetup.push(s.id);
       }
-      if (Object.keys(clear).length > 0) updateSession(dir, s.id, clear);
+      if (Object.keys(clear).length > 0) {
+        updateSession(dir, s.id, clear);
+        // Tell any open WS subscribers about the meta change. The poller
+        // only emits when its own tick runs (every few seconds) and
+        // wouldn't pick up these direct disk writes; without this nudge
+        // the frontend keeps showing stale state until the user reloads.
+        try { poller.emit("update", s.id); } catch {}
+      }
       // Flip status → provisioning while the rebuild is in flight so the
       // UI shows "Provisioning remote ttyd + tunnel…" instead of the
       // scary "Terminal didn't come up". Restored once the rebuild lands.
       if (terminalsToReSetup[terminalsToReSetup.length - 1] === s.id) {
         updateSession(dir, s.id, { status: "provisioning" });
+        try { poller.emit("update", s.id); } catch {}
       }
     }
     // Prune stale per-session forwards. Filebrowser / code-server are
@@ -177,6 +185,10 @@ export function startServer(opts: { home: string; dev?: boolean }): StartServerR
           // rather than a stuck "Provisioning…" spinner.
           try { updateSession(dir, id, { status: "active" }); } catch {}
         }
+        // Push the new meta (status + terminal_local_port) to any open
+        // WS subscriber so the iframe swap-in is immediate. Without
+        // this the user has to reload to see the freshly-bound port.
+        try { poller.emit("update", id); } catch {}
       }
     })();
   }
