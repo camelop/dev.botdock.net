@@ -36,6 +36,15 @@ function writeHubSessionToHash(id: string | null): void {
  *   middle = terminal + send-input (SessionView's left pane)
  *   right  = meta + transcript + events (SessionView's right pane)
  */
+/** A session is kept "warm" — its SessionView mounted, WS open, ttyd
+ *  iframe alive — for this long after it was last selected. Switching
+ *  back inside the window is instant; switch away for longer than this
+ *  and the next visit re-mounts cold. */
+const WARM_TTL_MS = 10 * 60 * 1000;
+/** How often the warm-pool sweeper runs. 30 s is plenty: TTL is in the
+ *  10-minute range and the sweep is essentially free. */
+const WARM_SWEEP_MS = 30_000;
+
 export function SessionHubPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -46,6 +55,14 @@ export function SessionHubPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [draft, setDraft] = useState<SessionDraft | null>(null);
   const openNew = () => setDraft((cur) => cur ?? freshDraft(machines));
+  // Warm pool: sessionId → epoch-ms of last selection. Every entry in
+  // the map gets its SessionView rendered (display: none for the ones
+  // that aren't currently selected) so its WebSocket, transcript state,
+  // and ttyd iframe stay alive across selection changes — clicking back
+  // and forth between sessions is instant. A periodic sweeper drops
+  // entries older than WARM_TTL_MS so we don't accumulate WS sockets
+  // for sessions the user has stopped looking at.
+  const [warm, setWarm] = useState<Map<string, number>>(() => new Map());
 
   const [err, setErr] = useState<string>("");
 
@@ -131,6 +148,39 @@ export function SessionHubPage() {
     writeHubSessionToHash(selected);
     try { localStorage.setItem(HUB_LAST_SELECTED_KEY, selected); } catch {}
   }, [selected]);
+
+  // Touch the warm pool whenever a session becomes selected — both adds
+  // a new entry and refreshes the lastSeen on a re-visit.
+  useEffect(() => {
+    if (!selected) return;
+    setWarm((cur) => {
+      const next = new Map(cur);
+      next.set(selected, Date.now());
+      return next;
+    });
+  }, [selected]);
+
+  // Sweeper: drop pool entries older than the TTL, plus any that point
+  // at a session that no longer exists on the daemon. The currently-
+  // selected session is always exempt — it's still on screen.
+  useEffect(() => {
+    const sweep = () => {
+      setWarm((cur) => {
+        const now = Date.now();
+        const liveIds = new Set(sessions.map((s) => s.id));
+        let changed = false;
+        const next = new Map(cur);
+        for (const [id, ts] of next) {
+          if (id === selected) continue;
+          if (!liveIds.has(id)) { next.delete(id); changed = true; continue; }
+          if (now - ts > WARM_TTL_MS) { next.delete(id); changed = true; }
+        }
+        return changed ? next : cur;
+      });
+    };
+    const h = window.setInterval(sweep, WARM_SWEEP_MS);
+    return () => window.clearInterval(h);
+  }, [sessions, selected]);
 
   // Pick up external hash changes — another tab, back/forward, or the
   // "Open in workspace" hand-off from a non-hub page. If the user arrows
@@ -232,10 +282,23 @@ export function SessionHubPage() {
           </div>
         )}
         {selected ? (
-          <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-            <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
-              <HubSessionView id={selected} onChange={refresh} />
-            </div>
+          // Render every warm-pool entry as a sibling. The currently-
+          // selected one fills the column; the rest are display:none —
+          // their WebSocket / transcript state / ttyd iframe all stay
+          // alive in the DOM so flipping back is instant.
+          <div style={{ flex: 1, minHeight: 0, position: "relative", display: "flex" }}>
+            {Array.from(warm.keys()).map((id) => (
+              <div
+                key={id}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: id === selected ? "flex" : "none",
+                }}
+              >
+                <HubSessionView id={id} onChange={refresh} />
+              </div>
+            ))}
           </div>
         ) : (
           <div

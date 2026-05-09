@@ -255,7 +255,16 @@ export function App() {
         {err && <div className="error-banner">connection error: {err}</div>}
         {tab === "dashboard" && <DashboardPage />}
         {tab === "warroom" && <WarRoomPage />}
-        {tab === "hub" && <SessionHubPage />}
+        {/* Hub is always-mounted — switching to another tab only hides
+            it. Cheap per-session WS connections + the embedded ttyd
+            iframe stay alive while the user is poking at Keys / Machines
+            / etc., so coming back to the Workspace is instant instead
+            of a "blank → reload → handshake" stutter. The internal LRU
+            in SessionHubPage decides which sessions stay warm; an idle
+            session ages out after a few minutes. */}
+        <div style={{ display: tab === "hub" ? "contents" : "none" }}>
+          <SessionHubPage />
+        </div>
         {tab === "sessions" && <SessionsPage />}
         {/* {tab === "budgets" && <CreditsPage />} */}
         {tab === "keys" && <KeysPage />}
