@@ -38,6 +38,18 @@ export function currentPlatformAsset(): PlatformAsset {
 
 const REPO = "camelop/dev.botdock.net";
 
+/**
+ * True when the daemon is running as a packaged sidecar (e.g. inside the
+ * Tauri desktop app). The host wrapper owns its own update flow there —
+ * downloading and execv-ing a new binary on top of the bundled one would
+ * corrupt the app bundle and leave the wrapper / sidecar versions out of
+ * sync. The frontend hides the install button when this is set; the
+ * apply path also throws as a defense-in-depth check.
+ */
+export function isSidecar(): boolean {
+  return process.env.BOTDOCK_SIDECAR === "1";
+}
+
 export type LatestInfo = {
   current: string;
   latest: string;
@@ -139,6 +151,12 @@ export async function applyUpdate(
   info: LatestInfo,
   opts: { stopForwards: StopForwardsFn },
 ): Promise<never> {
+  if (isSidecar()) {
+    throw new Error(
+      "self-update is disabled when running as a desktop-app sidecar — " +
+      "update the host application instead",
+    );
+  }
   if (inProgress) throw new Error("update already in progress");
   inProgress = true;
   status = {

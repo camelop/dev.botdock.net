@@ -3,13 +3,19 @@ import {
   checkLatest,
   applyUpdate,
   getUpdateStatus,
+  isSidecar,
 } from "../../lib/self-update.ts";
 import type { ForwardManager } from "../../domain/forward-manager.ts";
 
 export function mountUpdate(router: Router, forwardManager: ForwardManager): void {
   router.get("/api/update/check", async () => {
     try {
-      return json(await checkLatest());
+      // Tag the response with `sidecar: true` when this daemon was
+      // launched by a desktop wrapper. The frontend uses this to hide
+      // the in-app Install button — updates flow through the host's
+      // own updater there, not through our self-update path.
+      const result = await checkLatest();
+      return json({ ...result, sidecar: isSidecar() });
     } catch (e) {
       throw new HttpError(502, e instanceof Error ? e.message : String(e));
     }
@@ -22,6 +28,11 @@ export function mountUpdate(router: Router, forwardManager: ForwardManager): voi
   // process comes up on the same port, and the frontend's instance_id
   // restart detection picks up the change and reloads.
   router.post("/api/update/install", async () => {
+    if (isSidecar()) {
+      throw new HttpError(403,
+        "self-update is disabled when BotDock runs as a desktop-app sidecar; " +
+        "update the host application instead");
+    }
     const info = await checkLatest().catch((e) => {
       throw new HttpError(502, `check failed: ${e instanceof Error ? e.message : String(e)}`);
     });

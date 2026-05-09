@@ -1,0 +1,40 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "BotDock",
+  "version": "0.0.0",
+  "identifier": "net.botdock.desktop",
+  "build": {
+    "beforeDevCommand": "bash ../scripts/prepare-sidecar.sh",
+    "beforeBuildCommand": "bash ../scripts/prepare-sidecar.sh",
+    "frontendDist": "../public"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": []
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/botdock"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Multi-machine agent workspace",
+    "longDescription": "BotDock — track and interact with all your claude-code / codex agent sessions in one page."
+  },
+  "plugins": {
+    "shell": {
+      "sidecar": true,
+      "scope": [
+        {
+          "name": "binaries/botdock",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
+  }
+}

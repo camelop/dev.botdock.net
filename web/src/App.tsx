@@ -473,7 +473,21 @@ function UpdatePopover({ onClose, currentVersion }: { onClose: () => void; curre
               ? check.notes
               : <span className="muted">(release notes empty)</span>}
           </div>
-          <button onClick={install}>Install {check.tag}</button>
+          {/* When BotDock is running inside a desktop wrapper (Tauri /
+              Electron) the daemon binary lives inside the app bundle and
+              is updated atomically by the host application — replacing
+              it from this in-app button would corrupt the bundle. Show
+              the user the right place to look instead. */}
+          {check.sidecar ? (
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+              Update available — install it from the BotDock desktop app's
+              menu (or download a fresh build from the
+              {" "}<a href={`https://github.com/camelop/dev.botdock.net/releases/tag/${check.tag}`}
+                target="_blank" rel="noopener noreferrer">release page</a>).
+            </div>
+          ) : (
+            <button onClick={install}>Install {check.tag}</button>
+          )}
         </>
       )}
 

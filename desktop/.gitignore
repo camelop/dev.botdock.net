@@ -1,0 +1,11 @@
+# Tauri build artifacts
+src-tauri/target/
+
+# Sidecar binaries copied in by ./scripts/prepare-sidecar.sh.
+# Source-of-truth lives in <repo>/dist-bin/ and gets staged here at build
+# time; we don't commit them.
+src-tauri/binaries/
+
+# Tooling
+node_modules/
+.DS_Store

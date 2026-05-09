@@ -103,6 +103,10 @@ export type UpdateCheckResult = {
   asset_url: string | null;
   checksums_url: string | null;
   notes: string;
+  /** True when the daemon is running as a packaged sidecar (e.g. inside
+   *  the desktop app). The UI hides the in-app install button — updates
+   *  flow through the host application's own updater instead. */
+  sidecar?: boolean;
 };
 
 export type UpdatePhase =
