@@ -1394,9 +1394,15 @@ export function SessionView(props: {
                   />
                 ) : null}
                 onOpenInWorkspace={props.inModal ? () => {
-                  try { sessionStorage.setItem("botdock:hub-preselect", session.id); } catch {}
+                  // Encode the target session into the URL hash directly.
+                  // Used to also write a sessionStorage "preselect" hint
+                  // and set hash="hub", but since the Workspace tab is
+                  // always-mounted now (v0.9.4) the preselect-reading
+                  // effect only fires on first mount — subsequent hand-
+                  // offs needed the id in the hash to trigger the
+                  // SessionHubPage hashchange listener.
                   props.onClose?.();
-                  window.location.hash = "hub";
+                  window.location.hash = `hub/${encodeURIComponent(session.id)}`;
                 } : undefined}
               />
             ) : (
